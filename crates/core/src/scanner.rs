@@ -85,7 +85,9 @@ pub fn scan(cfg: &ScanConfig) -> Plan {
                     continue;
                 }
             }
-            let category = allowlist::category_for(safe.as_path(), &cfg.home);
+            let category = crate::categories::classify(safe.as_path(), &cfg.home)
+                .map(|c| c.id.to_string())
+                .unwrap_or_else(|| "other".to_string());
             plan.actions.push(PlannedAction {
                 path: safe,
                 size_bytes: meta.len(),

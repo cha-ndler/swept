@@ -7,6 +7,7 @@
 //! action is written to an append-only [`audit`] log.
 
 pub mod audit;
+pub mod categories;
 pub mod executor;
 pub mod plan;
 pub mod report;

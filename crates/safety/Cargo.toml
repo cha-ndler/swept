@@ -12,3 +12,4 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true

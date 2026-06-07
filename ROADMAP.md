@@ -15,6 +15,7 @@ of scope for the first production release; this milestone is a complete, safe CL
 - [x] Cleaner-category registry + Homebrew downloads (PR #4)
 - [x] Large-old-files finder (`--min-size`) (PR #5)
 - [x] Startup/login-items inspector (`macclean login-items`) (PR #6)
+- [x] Property tests for the safety kernel (proptest) (PR #7)
 
 ## Descoped
 - [~] Empty-Trash cleaner — **descoped.** `~/.Trash` is already a first-class
@@ -24,9 +25,6 @@ of scope for the first production release; this milestone is a complete, safe CL
   category model later if needed.)
 
 ## Backlog (in order)
-- [ ] **Property tests for the safety kernel** — `proptest` fuzzing the invariant
-  "no protected path ever yields a `SafePath`" and "allowlist ⊄ denylist". *Goal:
-  proptest cases pass in CI.*
 - [ ] **CI/release hardening** — bump `actions/checkout@v5`, add a release build
   job producing a `macclean` binary artifact, add a status badge. *Goal: CI green
   on the new workflow; artifact uploaded.*

@@ -29,9 +29,14 @@ specific fixes — not vague praise.
    obvious what will be removed, that it's a preview by default, and where the
    confirmation/undo affordances are? Flag anything that could cause an
    accidental delete or hide that nothing happens without consent.
-5. List findings as MUST-FIX (blocks pleasant/trustworthy) vs NICE-TO-HAVE, each
-   with the screenshot, the problem, and a concrete change (spacing, hierarchy,
-   copy, color, state handling, empty/loading/error states).
+5. **Push beyond "correct."** Correct + accessible is the floor. Explicitly judge
+   dimensions 9–10 (Distinctiveness & delight, Depth & motion): would this be
+   mistaken for a default Tailwind/admin-dashboard page? If yes, that is a
+   MUST-FIX for a prettification pass — call out the missing craft (type scale,
+   accent intent, iconography, a size visualization with character, layering/
+   depth, restrained motion) with concrete moves, not vague "make it nicer."
+6. List findings as MUST-FIX (blocks pleasant/trustworthy/distinctive) vs
+   NICE-TO-HAVE, each with the screenshot, the problem, and a concrete change.
 
 ## Output
 - A rubric scorecard (dimension → score → why).

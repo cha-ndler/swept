@@ -114,3 +114,37 @@ Default `Consent` is a dry run that mutates nothing.
 - `deletion-safety-reviewer` — adversarial review of any deletion/move diff against the 7-point contract. **Required** before presenting such a diff.
 - `verifier` — runs the real `cargo test` + `clippy` + `fmt` suite and reports the actual result. Use before claiming done.
 - `safety-architect` — design/plan a new cleaner or refactor so it fits the safety substrate before code is written.
+- `ux-critic` — vision reviewer for GUI screenshots; scores against `design/rubric.md` + `design/references/` and pushes for distinctiveness, not just correctness. Used by the prettification loop.
+
+## Autonomous loop conventions (lessons learned — don't relearn these)
+
+The project is developed by self-continuing agent loops (see `.claude/loops/`).
+Reusable prompts: `autonomous-dev-loop.md` and `prettify-loop.md` — paste either
+into a fresh session. Hard-won conventions baked into them:
+
+- **Confirm CI by conclusion, not the watcher.** `gh run watch --exit-status` can
+  return before the run finishes — always verify with `gh run view <id> --json
+  status,conclusion` (status=completed AND conclusion=success) before merging.
+- **Sync local main after every merge.** `gh pr merge` can drop you on a stale
+  local `main`; start each iteration with `git checkout -B main origin/main -q`.
+- **Verify the branch before committing and the push after.** A blocked `checkout`
+  can leave you on the wrong branch; `git rev-parse --abbrev-ref HEAD` first, and
+  if `git push` says "src refspec does not match", recreate the branch from
+  origin/main and cherry-pick.
+- **The deletion-guard hook is a deliberately FAIL-CLOSED substring guard** — it
+  blocks the destructive verbs as whole words *anywhere* in a Bash command. This
+  over-blocks benign commands that merely contain the words (branch names like
+  `feat/empty-X`, commit messages, PR bodies, jq filters), which is annoying but
+  safe. (A "command-position only" relaxation was reverted — the
+  `deletion-safety-reviewer` found it failed OPEN: env-var prefixes, subshells,
+  `$(...)`, and stray sandbox tokens all bypassed it.) **Convention, not a looser
+  guard:** in Bash commands avoid the bare verbs — write file content containing
+  them with the Write/Edit tools (not bash heredocs), and phrase commit messages /
+  branch names without them (e.g. "startup"/"login-items"/"dispose").
+- **Visual tasks pause for the human.** Anything a user SEES is built + critiqued
+  by the UX oracle, then opened as a PR with screenshots and a `needs input:` —
+  never auto-merged. Backend/harness/packaging tasks auto-merge on confirmed green.
+- **The UX oracle is how "pleasant" is made verifiable:** `cd crates/gui && npm
+  run ux` renders each screen headlessly → PNGs (`ux/screenshots/`) + axe a11y +
+  visual-regression. Critique the PNGs with `ux-critic` (or the Read tool — you
+  can see images) against `design/rubric.md`. It has caught real WCAG bugs.

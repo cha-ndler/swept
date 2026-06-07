@@ -14,14 +14,16 @@ of scope for the first production release; this milestone is a complete, safe CL
 - [x] `--json` structured scan output (PR #3)
 - [x] Cleaner-category registry + Homebrew downloads (PR #4)
 - [x] Large-old-files finder (`--min-size`) (PR #5)
+- [x] Startup/login-items inspector (`macclean login-items`) (PR #6)
+
+## Descoped
+- [~] Empty-Trash cleaner — **descoped.** `~/.Trash` is already a first-class
+  allowlist root + category, so `scan`/`clean` already cover it; a dedicated
+  emptier is largely redundant. (The one nuance — items already in the Trash
+  want permanent disposal rather than re-trashing — can be folded into the
+  category model later if needed.)
 
 ## Backlog (in order)
-- [ ] **Empty-Trash cleaner** — treat `~/.Trash` as a first-class cleaner with
-  its own count/size, plus `macclean empty-trash` convenience. *Goal: dry-run
-  default, consent-gated, audited; tested via DirSink.*
-- [ ] **Startup/login-items inspector** — read-only scan of `~/Library/
-  LaunchAgents` reporting enabled login items as performance recommendations.
-  *Goal: parses a fixture LaunchAgents dir; never modifies anything.*
 - [ ] **Property tests for the safety kernel** — `proptest` fuzzing the invariant
   "no protected path ever yields a `SafePath`" and "allowlist ⊄ denylist". *Goal:
   proptest cases pass in CI.*

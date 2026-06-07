@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand};
 
 use macclean_core::audit::AuditLog;
 use macclean_core::executor::{execute, Consent, SystemSink};
+use macclean_core::loginitems::{self, LoginItem};
 use macclean_core::plan::{Plan, MASS_DELETE_BYTES, MASS_DELETE_COUNT};
 use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, ScanConfig};
@@ -64,6 +65,12 @@ enum Cmd {
         /// (default: ~/Library/Application Support/macclean/audit.jsonl).
         #[arg(long)]
         audit: Option<PathBuf>,
+    },
+    /// List login items (LaunchAgents) — read-only startup review.
+    LoginItems {
+        /// Emit as JSON instead of a table.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -142,7 +149,44 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             );
             Ok(ExitCode::SUCCESS)
         }
+        Cmd::LoginItems { json } => {
+            let items = loginitems::scan_dir(&loginitems::default_dir(&home));
+            if json {
+                println!("{}", loginitems::to_json_pretty(&items));
+            } else {
+                print_login_items(&items);
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
+}
+
+fn print_login_items(items: &[LoginItem]) {
+    if items.is_empty() {
+        println!("No login items found in ~/Library/LaunchAgents.");
+        return;
+    }
+    println!("Login items (~/Library/LaunchAgents):");
+    for it in items {
+        let status = if it.disabled {
+            "disabled"
+        } else if it.run_at_load {
+            "runs at login"
+        } else {
+            "on demand"
+        };
+        println!(
+            "  {:<40} {:<14} {}",
+            it.label,
+            status,
+            it.program.as_deref().unwrap_or("-")
+        );
+    }
+    let active = items
+        .iter()
+        .filter(|i| i.run_at_load && !i.disabled)
+        .count();
+    println!("\n{active} item(s) run at login. Disable any you don't need to speed up startup.");
 }
 
 /// Build a scan config for `home`, applying the optional age and size filters.

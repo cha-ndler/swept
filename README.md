@@ -12,7 +12,10 @@ remove and acts only on explicit consent.
 
 ## Status
 
-Safety substrate complete and tested; CLI preview/clean working. GUI deferred.
+**v0.1.0** — safe CLI complete: dry-run-first `scan`/`clean` with category,
+age (`--older-than-days`) and size (`--min-size`) filters, JSON output, and a
+read-only `login-items` startup review. Built on a property-tested safety
+substrate. A native GUI is deferred to a later milestone.
 
 ## Build & test
 
@@ -25,17 +28,29 @@ cargo run -p macclean -- scan                            # read-only preview
 ## Usage
 
 ```bash
-macclean scan                 # preview junk in allowlisted locations (read-only)
-macclean scan --older-than-days 30    # only files untouched for 30+ days
-macclean clean                # preview (still no changes without --execute)
-macclean clean --execute      # move junk to the Trash (recoverable)
-macclean clean --execute --older-than-days 30   # only clean stale files
-macclean clean --execute --yes        # confirm a mass delete
-macclean clean --execute --permanent  # irreversible (per-action consent)
+macclean scan                          # preview junk in allowlisted locations (read-only)
+macclean scan --older-than-days 30     # only files untouched for 30+ days
+macclean scan --min-size 100M          # only large files (4096, 500K, 100M, 2G, 1TiB)
+macclean scan --json                   # machine-readable plan (for scripts / a GUI)
+
+macclean clean                         # preview (no changes without --execute)
+macclean clean --execute               # move junk to the Trash (recoverable)
+macclean clean --execute --older-than-days 30 --min-size 100M  # filters compose
+macclean clean --execute --yes         # confirm a mass delete
+macclean clean --execute --permanent   # irreversible (per-action consent)
+
+macclean login-items                   # read-only: what runs at login (also --json)
 ```
 
-Every planned and executed action is written to an append-only audit log
-(default `~/Library/Application Support/macclean/audit.jsonl`).
+Filters compose, the preview groups by category, and every planned and executed
+action is written to an append-only audit log (default
+`~/Library/Application Support/macclean/audit.jsonl`).
+
+## Install
+
+Grab the `macclean-macos` artifact from a CI run (or a tagged release), or build
+from source with `cargo build --release -p macclean` (binary at
+`target/release/macclean`).
 
 ## Safety model
 

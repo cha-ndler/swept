@@ -9,4 +9,5 @@
 pub mod audit;
 pub mod executor;
 pub mod plan;
+pub mod report;
 pub mod scanner;

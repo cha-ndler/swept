@@ -32,6 +32,38 @@ fn audit_at(home: &Path) -> (PathBuf, AuditLog) {
 }
 
 #[test]
+fn scan_report_serializes_a_stable_shape() {
+    use macclean_core::report::ScanReport;
+
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/a.bin"), b"12345"); // 5 bytes, cache
+    write(&home.join("Library/Logs/x.log"), b"6789"); // 4 bytes, log
+
+    let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+    let report = ScanReport::from_plan(&plan);
+    let json = serde_json::to_string(&report).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(v["total_count"], 2);
+    assert_eq!(v["total_bytes"], 9);
+    assert_eq!(v["requires_confirmation"], false);
+    assert_eq!(v["items"].as_array().unwrap().len(), 2);
+
+    let cats = v["by_category"].as_array().unwrap();
+    assert!(cats
+        .iter()
+        .any(|c| c["category"] == "cache" && c["count"] == 1 && c["bytes"] == 5));
+    assert!(cats
+        .iter()
+        .any(|c| c["category"] == "log" && c["count"] == 1 && c["bytes"] == 4));
+
+    // Each item carries an absolute path and a disposal label.
+    let item = &v["items"].as_array().unwrap()[0];
+    assert!(item["path"].as_str().unwrap().starts_with('/'));
+    assert_eq!(item["disposal"], "trash");
+}
+
+#[test]
 fn age_filter_excludes_recently_modified_files() {
     use filetime::{set_file_mtime, FileTime};
     use std::time::{Duration, SystemTime};

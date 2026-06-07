@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 use macclean_core::audit::AuditLog;
 use macclean_core::executor::{execute, Consent, SystemSink};
 use macclean_core::plan::{Plan, MASS_DELETE_BYTES, MASS_DELETE_COUNT};
+use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, ScanConfig};
 use safety::canonical_home;
 
@@ -35,6 +36,9 @@ enum Cmd {
         /// Only consider files not modified in the last N days.
         #[arg(long)]
         older_than_days: Option<u64>,
+        /// Emit the plan as JSON (for scripts / the GUI) instead of a table.
+        #[arg(long)]
+        json: bool,
     },
     /// Clean. Dry-run unless --execute is given.
     Clean {
@@ -74,11 +78,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let home = canonical_home(&home)?;
 
     match cli.cmd {
-        Cmd::Scan { older_than_days } => {
+        Cmd::Scan {
+            older_than_days,
+            json,
+        } => {
             let cfg = build_config(home, older_than_days);
             let plan = scan(&cfg);
-            print_plan(&plan);
-            println!("\nThis was a preview. Run `macclean clean --execute` to act on it.");
+            if json {
+                println!("{}", ScanReport::from_plan(&plan).to_json_pretty());
+            } else {
+                print_plan(&plan);
+                println!("\nThis was a preview. Run `macclean clean --execute` to act on it.");
+            }
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Clean {

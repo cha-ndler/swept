@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens — a small, macOS-flavored dark palette. The component layer and
+   Tailwind theme reference these CSS variables so theming stays in one place. */
+:root {
+  --bg: #1e1e22;
+  --surface: #2a2a30;
+  --border: #3a3a42;
+  --text: #f5f5f7;
+  --muted: #a1a1aa;
+  --accent: #0a84ff;
+  --danger: #ff453a;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
+    sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}

@@ -52,12 +52,11 @@ destructive action in the GUI must route through the consent-gated `executor`
 - [x] **GUI command layer** (`crates/gui-core`) — tested wrappers over
   `macclean-core` returning serde DTOs (`scan_report`, `list_login_items`,
   `clean_with_sink`); no new deletion logic. (PR #12)
-- [ ] **Tauri shell + frontend toolchain + design system** — scaffold the Tauri
-  v2 app (`crates/gui`) with Vite + Tailwind + a component library
-  (shadcn/Radix) and design tokens; a minimal window whose button calls a
-  `gui-core` command via `#[tauri::command]`. *Goal (loop-verifiable): `cargo
-  build` + `npm run build` succeed; the command round-trips; src-tauri builds in
-  CI without a display. Auto-merge on green.*
+- [x] **Tauri shell + frontend toolchain + design system** (PR #13) — Tauri v2
+  app (`crates/gui`, excluded from the core workspace) with Vite + React + TS +
+  Tailwind and CSS-variable design tokens; read-only `scan`/`login_items`
+  `#[tauri::command]`s delegating to `gui-core`; built by a dedicated CI job
+  (npm build → cargo build). (Rich component library deferred to the view tasks.)
 - [ ] **Visual-eval harness (the UX oracle)** — Playwright headless screenshot
   script (multi-viewport × states), a committed `.claude/agents/ux-critic.md`
   vision critic, `design/references/` (competitor screenshots) + a `design/

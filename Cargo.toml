@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["crates/safety", "crates/core", "crates/gui-core", "crates/cli"]
+# The Tauri shell builds a webview app (heavy, needs the frontend dist + npm); it
+# is built by its own CI job, not the core `cargo test --workspace`.
+exclude = ["crates/gui/src-tauri"]
 
 [workspace.package]
 edition = "2021"

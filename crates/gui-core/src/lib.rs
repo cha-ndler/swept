@@ -10,7 +10,7 @@
 //! dry-run default, Trash-first disposal, mass-delete confirmation, and audit
 //! log all still apply exactly as in the CLI.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,16 @@ pub struct CleanSummary {
     pub executed: usize,
     pub refused: usize,
     pub bytes_freed: u64,
+}
+
+/// Resolve and canonicalize the real home directory for the running app.
+///
+/// Used by the Tauri shell; the testable functions above take `home` explicitly
+/// so tests never touch the real filesystem.
+pub fn default_home() -> std::io::Result<PathBuf> {
+    let home =
+        dirs::home_dir().ok_or_else(|| std::io::Error::other("cannot determine home directory"))?;
+    safety::canonical_home(&home)
 }
 
 /// Build a [`ScanConfig`] for `home` from UI filters.

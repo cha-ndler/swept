@@ -57,12 +57,14 @@ destructive action in the GUI must route through the consent-gated `executor`
   Tailwind and CSS-variable design tokens; read-only `scan`/`login_items`
   `#[tauri::command]`s delegating to `gui-core`; built by a dedicated CI job
   (npm build → cargo build). (Rich component library deferred to the view tasks.)
-- [ ] **Visual-eval harness (the UX oracle)** — Playwright headless screenshot
-  script (multi-viewport × states), a committed `.claude/agents/ux-critic.md`
-  vision critic, `design/references/` (competitor screenshots) + a `design/
-  rubric.md`, plus axe + Lighthouse + visual-regression checks wired into CI.
-  *Goal (loop-verifiable): the harness runs in CI and gates pass on the
-  placeholder UI; the critic can score a screenshot. Auto-merge on green.*
+- [x] **Visual-eval harness (the UX oracle)** (PR #14) — Playwright (headless
+  Chromium) renders the built frontend across viewports → PNG screenshots +
+  axe-core a11y gate + visual-regression snapshots, wired into the CI `gui` job;
+  committed `.claude/agents/ux-critic.md`, `design/rubric.md`, and
+  `design/references/` (manual competitor screenshots). The harness immediately
+  caught a real WCAG contrast bug (white-on-accent 3.64:1 → fixed token).
+  _Lighthouse deferred: marginal for a local webview and a CI-flakiness risk;
+  axe + visual-regression are the objective gates for now._
 - [ ] **Scan view** — categories (name, size, count) with selection + a
   reclaimable-space visualization; iterate via the critic loop vs references.
   *Read-only. Critic-iterated, then PAUSE for the human taste gate.*

@@ -65,9 +65,10 @@ destructive action in the GUI must route through the consent-gated `executor`
   caught a real WCAG contrast bug (white-on-accent 3.64:1 → fixed token).
   _Lighthouse deferred: marginal for a local webview and a CI-flakiness risk;
   axe + visual-regression are the objective gates for now._
-- [ ] **Scan view** — categories (name, size, count) with selection + a
-  reclaimable-space visualization; iterate via the critic loop vs references.
-  *Read-only. Critic-iterated, then PAUSE for the human taste gate.*
+- [x] **Scan view** (PR #15, awaiting human taste sign-off) — categories with
+  name/size/count, per-category selection, reclaimable-space bars, a prominent
+  total + primary action, and empty/loading/error states. Critic-iterated
+  (caught + fixed two real a11y bugs); axe + visual-regression green.
 - [ ] **Clean flow + confirmation modal** — dry-run preview → explicit confirm →
   execute (Trash default; permanent/mass-delete gated). *Execute path tested via
   injected `DirSink`; UI can't trigger a destructive call without confirmation.

@@ -23,3 +23,18 @@ export interface CleanSummary {
   refused: number;
   bytes_freed: number;
 }
+
+// Mirrors macclean_core::loginitems::LoginItem.
+export interface LoginItem {
+  label: string;
+  program: string | null;
+  run_at_load: boolean;
+  disabled: boolean;
+  source: string;
+}
+
+// Scan/clean filters sent to the backend (mirrors gui-core Filters).
+export interface Filters {
+  older_than_days?: number;
+  min_size_bytes?: number;
+}

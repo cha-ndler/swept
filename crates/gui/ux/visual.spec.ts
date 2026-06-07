@@ -33,3 +33,21 @@ for (const state of STATES) {
     await expect(page).toHaveScreenshot(`scan-${state}.png`, { fullPage: true });
   });
 }
+
+test("startup tab", async ({ page }, testInfo) => {
+  await page.goto("/?tab=startup");
+  await expect(page.getByRole("heading", { name: "mac-cleaner" })).toBeVisible();
+
+  await page.screenshot({
+    path: `${SHOTS}/startup-${testInfo.project.name}.png`,
+    fullPage: true,
+  });
+
+  const results = await new AxeBuilder({ page }).analyze();
+  const blocking = results.violations.filter(
+    (v) => v.impact === "serious" || v.impact === "critical",
+  );
+  expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
+
+  await expect(page).toHaveScreenshot("startup.png", { fullPage: true });
+});

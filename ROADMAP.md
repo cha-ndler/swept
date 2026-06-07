@@ -74,7 +74,10 @@ destructive action in the GUI must route through the consent-gated `executor`
   audit-logged) → cleaning → done. Trash-only (never permanent); honors
   per-category selection; mass-delete gate server-enforced. deletion-safety
   VERDICT: PASS; axe + visual-regression green for confirm/done states.
-- [ ] **Filters + login-items view + theming/polish** — age/size filters and the
-  login-items review; final pleasant-UX polish. *Critic-iterated, then PAUSE.*
+- [x] **Filters + login-items view + theming/polish** (PR #17, awaiting human
+  taste sign-off) — Clean/Startup tab nav; age + size filter controls (re-scan);
+  a read-only Startup (login-items) view with run-at-login badges; consistent
+  token-based polish. Critic-iterated; axe + visual-regression green across all
+  12 states (results/empty/loading/confirm/done + startup × 2 viewports).
 - [ ] **Package + v0.2.0** — `tauri build` produces a `.app`/`.dmg` artifact in
   CI; add a screenshot to the README; tag `v0.2.0`. *Loop-verifiable.*

@@ -9,7 +9,7 @@ test.beforeAll(() => {
 });
 
 // Deterministic states via the ?state= preview override (see src/App.tsx).
-const STATES = ["results", "empty", "loading"] as const;
+const STATES = ["results", "empty", "loading", "confirm", "done"] as const;
 
 for (const state of STATES) {
   test(`scan ${state}`, async ({ page }, testInfo) => {

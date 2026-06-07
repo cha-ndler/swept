@@ -15,3 +15,11 @@ export interface ScanReport {
   by_category: CategorySummary[];
   items: unknown[];
 }
+
+// Mirrors macclean_gui_core::CleanSummary.
+export interface CleanSummary {
+  dry_run: boolean;
+  executed: number;
+  refused: number;
+  bytes_freed: number;
+}

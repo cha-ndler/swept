@@ -5,7 +5,7 @@
 
 use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
-use macclean_gui_core::{self as gui, Filters};
+use macclean_gui_core::{self as gui, CleanSummary, Filters};
 
 #[tauri::command]
 fn scan(filters: Filters) -> Result<ScanReport, String> {
@@ -19,9 +19,21 @@ fn login_items() -> Result<Vec<LoginItem>, String> {
     Ok(gui::list_login_items(&home))
 }
 
+/// Move the selected categories' junk to the Trash via the consent-gated
+/// executor. `confirm_mass_delete` is the user's explicit modal confirmation.
+/// Trash-only (never permanent); routes entirely through macclean-core.
+#[tauri::command]
+fn clean(
+    filters: Filters,
+    categories: Vec<String>,
+    confirm_mass_delete: bool,
+) -> Result<CleanSummary, String> {
+    gui::clean(&filters, categories, confirm_mass_delete)
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![scan, login_items])
+        .invoke_handler(tauri::generate_handler![scan, login_items, clean])
         .run(tauri::generate_context!())
         .expect("error while running mac-cleaner");
 }

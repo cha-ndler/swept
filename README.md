@@ -12,10 +12,27 @@ remove and acts only on explicit consent.
 
 ## Status
 
-**v0.1.0** — safe CLI complete: dry-run-first `scan`/`clean` with category,
-age (`--older-than-days`) and size (`--min-size`) filters, JSON output, and a
-read-only `login-items` startup review. Built on a property-tested safety
-substrate. A native GUI is deferred to a later milestone.
+**v0.2** — a pleasant **desktop GUI** (Tauri) on top of the v0.1 CLI: a Clean
+view (categories, selection, reclaimable-space bars, age/size filters), a
+Trash-only clean flow with a confirmation modal, and a read-only Startup
+(login-items) review. Same property-tested safety substrate; the GUI is a thin
+front-end over `macclean-core` — all deletion still routes through the
+consent-gated executor.
+
+![Clean view](docs/screenshot-clean.png)
+![Startup view](docs/screenshot-startup.png)
+
+### GUI (Tauri)
+
+```bash
+cargo install tauri-cli --version "^2" --locked   # once
+cd crates/gui && npm install
+cargo tauri dev      # run the app
+cargo tauri build    # build mac-cleaner.app + .dmg (src-tauri/target/release/bundle)
+```
+
+The UX is guarded by an oracle: `npm run ux` renders each screen headlessly and
+runs axe a11y + visual-regression checks (see `design/rubric.md`).
 
 ## Build & test
 

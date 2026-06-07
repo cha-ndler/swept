@@ -79,5 +79,6 @@ destructive action in the GUI must route through the consent-gated `executor`
   a read-only Startup (login-items) view with run-at-login badges; consistent
   token-based polish. Critic-iterated; axe + visual-regression green across all
   12 states (results/empty/loading/confirm/done + startup × 2 viewports).
-- [ ] **Package + v0.2.0** — `tauri build` produces a `.app`/`.dmg` artifact in
-  CI; add a screenshot to the README; tag `v0.2.0`. *Loop-verifiable.*
+- [x] **Package + v0.2.0** (PR #18) — `cargo tauri build` produces `.app` + `.dmg`
+  (validated locally); a CI `package` job uploads the bundle and attaches the
+  `.dmg` to tagged releases; README screenshots + CHANGELOG; tag `v0.2.0`.

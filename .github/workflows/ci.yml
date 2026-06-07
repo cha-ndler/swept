@@ -132,3 +132,55 @@ jobs:
 
       - name: Build Tauri shell
         run: cargo build --manifest-path src-tauri/Cargo.toml
+
+  package:
+    # Bundle the desktop app (.app + .dmg). Heavy (release build + bundling), so
+    # it runs on pushes to main and on tags — not every PR. Validated locally for
+    # PRs. On a v* tag it also attaches the .dmg to the GitHub Release.
+    needs: gui
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: crates/gui
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo (Tauri crate)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/gui/src-tauri
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build app bundle (.app + .dmg)
+        run: cargo tauri build
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: macclean-gui-macos
+          path: |
+            crates/gui/src-tauri/target/release/bundle/dmg/*.dmg
+            crates/gui/src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: error
+
+      - name: Attach .dmg to GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: crates/gui/src-tauri/target/release/bundle/dmg/*.dmg

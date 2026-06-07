@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 env:
@@ -14,7 +15,7 @@ jobs:
     # macOS: this is a macOS-targeted tool and the `trash` crate links system frameworks.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust (stable + clippy + rustfmt)
         uses: dtolnay/rust-toolchain@stable
@@ -43,3 +44,32 @@ jobs:
             exit 1
           fi
           echo "OK: no test resolves the real home directory."
+
+  release-build:
+    # Build a release binary and publish it as an artifact (and a Release on tags).
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release -p macclean
+
+      - name: Upload macclean binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: macclean-macos
+          path: target/release/macclean
+          if-no-files-found: error
+
+      - name: Attach binary to GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/macclean

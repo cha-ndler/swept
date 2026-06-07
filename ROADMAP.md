@@ -16,6 +16,7 @@ of scope for the first production release; this milestone is a complete, safe CL
 - [x] Large-old-files finder (`--min-size`) (PR #5)
 - [x] Startup/login-items inspector (`macclean login-items`) (PR #6)
 - [x] Property tests for the safety kernel (proptest) (PR #7)
+- [x] CI/release hardening (checkout@v5, release artifact, badge) (PR #8)
 
 ## Descoped
 - [~] Empty-Trash cleaner — **descoped.** `~/.Trash` is already a first-class
@@ -25,8 +26,5 @@ of scope for the first production release; this milestone is a complete, safe CL
   category model later if needed.)
 
 ## Backlog (in order)
-- [ ] **CI/release hardening** — bump `actions/checkout@v5`, add a release build
-  job producing a `macclean` binary artifact, add a status badge. *Goal: CI green
-  on the new workflow; artifact uploaded.*
 - [ ] **Docs + v0.1.0** — finalize README usage, add CHANGELOG, tag `v0.1.0`.
   *Goal: docs match the shipped CLI; tag pushed.*

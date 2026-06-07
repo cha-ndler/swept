@@ -1,5 +1,7 @@
 # mac-cleaner
 
+[![ci](https://github.com/cha-ndler/mac-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/cha-ndler/mac-cleaner/actions/workflows/ci.yml)
+
 A free, open-source alternative to CleanMyMac. Finds junk to clean, recommends
 performance tweaks, scans for app updates, and assists with clutter removal —
 and **never deletes anything automatically**. It previews exactly what it would

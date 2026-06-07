@@ -48,6 +48,9 @@ jobs:
   release-build:
     # Build a release binary and publish it as an artifact (and a Release on tags).
     needs: check
+    # Least-privilege: only this job gets write, and only to create the Release.
+    permissions:
+      contents: write
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5

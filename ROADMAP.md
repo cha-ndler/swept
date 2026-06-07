@@ -82,3 +82,30 @@ destructive action in the GUI must route through the consent-gated `executor`
 - [x] **Package + v0.2.0** (PR #18) — `cargo tauri build` produces `.app` + `.dmg`
   (validated locally); a CI `package` job uploads the bundle and attaches the
   `.dmg` to tagged releases; README screenshots + CHANGELOG; tag `v0.2.0`.
+
+## v0.3 — real-world hardening + UI prettification
+
+Surfaced by dogfooding v0.2 on a real Mac (230k files, 11.6 GiB found; a real
+Logs clean verified via the audit log). Run via the `.claude/loops/` prompts.
+
+### Hardening (autonomous dev loop)
+- [ ] **Batch/quiet disposal** — the executor disposes one file at a time, so
+  macOS plays the Trash chime per file and does a Finder round-trip each (noisy +
+  slow). Move to `trash::delete_all` (single op → one sound, far faster):
+  re-guard each path, batch-dispose the validated set, audit each, decide
+  failure semantics. *Deletion-logic change → `deletion-safety-reviewer` required.*
+- [ ] **Scan progress + speed** — 12 s for 230k files, single-threaded, no
+  progress in the GUI. Parallelize the walk and emit progress events (replace the
+  static loading skeleton with real progress).
+- [ ] **CLI per-category scoping** — let the CLI act on a chosen category (the GUI
+  already can); parity + safer first real cleans.
+
+### UI prettification (prettify loop)
+Lift the GUI from "correct/standard" to distinctive + delightful (rubric
+dimensions 9–10). Add competitor screenshots to `design/references/` first.
+- [ ] **Clean view** — considered type scale, category iconography, a size
+  visualization with character (proportional/stacked, not a flat bar), depth.
+- [ ] **Confirm modal + Done state** — polish + restrained motion (~150–200ms).
+- [ ] **Startup view** — iconography + clearer run-at-login emphasis.
+- [ ] **App-wide theming** — refined token palette (hover/active/selected),
+  hairline borders; optional light mode.

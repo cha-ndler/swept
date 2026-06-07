@@ -2,6 +2,18 @@
 # PreToolUse guard for a filesystem-destroying tool under development.
 # Blocks the agent from running real deletions against anything that is not
 # clearly a throwaway fixture/temp path. Exit 2 + stderr = block.
+#
+# DESIGN NOTE (deliberate): this is a FAIL-CLOSED substring guard. It matches the
+# destructive verbs as whole words ANYWHERE in the command. That over-blocks
+# benign commands that merely contain the words (branch names like
+# feat/empty-X, commit messages, jq filters) — which is annoying but SAFE.
+# An attempt to relax it to "command position only" was reverted after the
+# deletion-safety-reviewer found it failed OPEN (env-var prefixes, subshells,
+# `$(...)`, and a stray sandbox token anywhere all bypassed it). For a
+# data-destroying tool we keep the guard strict and handle the friction by
+# convention instead: in shell commands, avoid the bare verbs — write file
+# content containing them with the Write/Edit tools (not bash heredocs), and
+# phrase commit messages / branch names without them.
 input=$(cat)
 tool=$(printf '%s' "$input" | jq -r '.tool_name // ""')
 [ "$tool" = "Bash" ] || exit 0

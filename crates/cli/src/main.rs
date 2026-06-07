@@ -36,6 +36,9 @@ enum Cmd {
         /// Only consider files not modified in the last N days.
         #[arg(long)]
         older_than_days: Option<u64>,
+        /// Only consider files at least this large (e.g. 100M, 1G, 500K, 4096).
+        #[arg(long, value_parser = parse_size)]
+        min_size: Option<u64>,
         /// Emit the plan as JSON (for scripts / the GUI) instead of a table.
         #[arg(long)]
         json: bool,
@@ -54,6 +57,9 @@ enum Cmd {
         /// Only consider files not modified in the last N days.
         #[arg(long)]
         older_than_days: Option<u64>,
+        /// Only consider files at least this large (e.g. 100M, 1G, 500K, 4096).
+        #[arg(long, value_parser = parse_size)]
+        min_size: Option<u64>,
         /// Path to the append-only audit log
         /// (default: ~/Library/Application Support/macclean/audit.jsonl).
         #[arg(long)]
@@ -80,9 +86,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     match cli.cmd {
         Cmd::Scan {
             older_than_days,
+            min_size,
             json,
         } => {
-            let cfg = build_config(home, older_than_days);
+            let cfg = build_config(home, older_than_days, min_size);
             let plan = scan(&cfg);
             if json {
                 println!("{}", ScanReport::from_plan(&plan).to_json_pretty());
@@ -97,9 +104,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             permanent,
             confirm,
             older_than_days,
+            min_size,
             audit,
         } => {
-            let cfg = build_config(home.clone(), older_than_days);
+            let cfg = build_config(home.clone(), older_than_days, min_size);
             let plan = scan(&cfg);
             print_plan(&plan);
 
@@ -137,13 +145,41 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 }
 
-/// Build a scan config for `home`, applying the optional age filter.
-fn build_config(home: PathBuf, older_than_days: Option<u64>) -> ScanConfig {
-    let cfg = ScanConfig::with_default_roots(home);
-    match older_than_days {
-        Some(days) => cfg.older_than(Duration::from_secs(days.saturating_mul(86_400))),
-        None => cfg,
+/// Build a scan config for `home`, applying the optional age and size filters.
+fn build_config(home: PathBuf, older_than_days: Option<u64>, min_size: Option<u64>) -> ScanConfig {
+    let mut cfg = ScanConfig::with_default_roots(home);
+    if let Some(days) = older_than_days {
+        cfg = cfg.older_than(Duration::from_secs(days.saturating_mul(86_400)));
     }
+    if let Some(bytes) = min_size {
+        cfg = cfg.min_size(bytes);
+    }
+    cfg
+}
+
+/// Parse a human size into bytes. Accepts a bare number (bytes) or a binary
+/// suffix K/M/G/T (optionally followed by `B`/`iB`), case-insensitive:
+/// `4096`, `500K`, `100M`, `2G`, `1TiB`.
+fn parse_size(input: &str) -> Result<u64, String> {
+    let lowered = input.trim().to_ascii_lowercase();
+    let trimmed = lowered
+        .strip_suffix("ib")
+        .or_else(|| lowered.strip_suffix('b'))
+        .unwrap_or(&lowered);
+    let (number, multiplier) = match trimmed.chars().last() {
+        Some('k') => (&trimmed[..trimmed.len() - 1], 1024u64),
+        Some('m') => (&trimmed[..trimmed.len() - 1], 1024u64.pow(2)),
+        Some('g') => (&trimmed[..trimmed.len() - 1], 1024u64.pow(3)),
+        Some('t') => (&trimmed[..trimmed.len() - 1], 1024u64.pow(4)),
+        _ => (trimmed, 1u64),
+    };
+    let value: u64 = number
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid size: {input:?} (try e.g. 100M, 1G, 4096)"))?;
+    value
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("size too large: {input:?}"))
 }
 
 /// Resolve the audit-log path to an absolute location, create its parent, and
@@ -224,5 +260,32 @@ fn human_bytes(bytes: u64) -> String {
         format!("{bytes} {}", UNITS[unit])
     } else {
         format!("{size:.1} {}", UNITS[unit])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_size;
+
+    #[test]
+    fn parses_bare_bytes() {
+        assert_eq!(parse_size("4096").unwrap(), 4096);
+        assert_eq!(parse_size("  500 ").unwrap(), 500);
+    }
+
+    #[test]
+    fn parses_binary_suffixes() {
+        assert_eq!(parse_size("1K").unwrap(), 1024);
+        assert_eq!(parse_size("2m").unwrap(), 2 * 1024 * 1024);
+        assert_eq!(parse_size("1G").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(parse_size("5KiB").unwrap(), 5 * 1024);
+        assert_eq!(parse_size("10mb").unwrap(), 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn rejects_garbage() {
+        assert!(parse_size("abc").is_err());
+        assert!(parse_size("").is_err());
+        assert!(parse_size("1.5G").is_err());
     }
 }

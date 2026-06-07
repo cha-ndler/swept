@@ -132,6 +132,34 @@ fn age_filter_excludes_recently_modified_files() {
 }
 
 #[test]
+fn min_size_filter_excludes_small_files() {
+    let (_g, home) = fake_home();
+    let big = home.join("Library/Caches/app/big.bin");
+    let small = home.join("Library/Caches/app/small.bin");
+    write(&big, &[0u8; 2048]); // 2 KiB
+    write(&small, &[0u8; 100]); // 100 B
+
+    let cfg = ScanConfig::with_default_roots(home.clone()).min_size(1024);
+    let plan = scan(&cfg);
+
+    let names: Vec<String> = plan
+        .actions
+        .iter()
+        .filter_map(|a| {
+            a.path
+                .as_path()
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+        .collect();
+    assert!(names.contains(&"big.bin".to_string()), "got {names:?}");
+    assert!(
+        !names.contains(&"small.bin".to_string()),
+        "files below --min-size must be excluded; got {names:?}"
+    );
+}
+
+#[test]
 fn no_age_filter_includes_everything() {
     let (_g, home) = fake_home();
     write(&home.join("Library/Caches/app/a.bin"), b"x");

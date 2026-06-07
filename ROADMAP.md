@@ -13,11 +13,9 @@ of scope for the first production release; this milestone is a complete, safe CL
 - [x] Age-based cleanup filter `--older-than-days` (PR #2)
 - [x] `--json` structured scan output (PR #3)
 - [x] Cleaner-category registry + Homebrew downloads (PR #4)
+- [x] Large-old-files finder (`--min-size`) (PR #5)
 
 ## Backlog (in order)
-- [ ] **Large-old-files finder** — a `--min-size` filter and a "large files"
-  category surfaced in scan/JSON. *Goal: files under threshold excluded; tested
-  on fixtures.*
 - [ ] **Empty-Trash cleaner** — treat `~/.Trash` as a first-class cleaner with
   its own count/size, plus `macclean empty-trash` convenience. *Goal: dry-run
   default, consent-gated, audited; tested via DirSink.*

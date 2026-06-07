@@ -17,6 +17,7 @@ of scope for the first production release; this milestone is a complete, safe CL
 - [x] Startup/login-items inspector (`macclean login-items`) (PR #6)
 - [x] Property tests for the safety kernel (proptest) (PR #7)
 - [x] CI/release hardening (checkout@v5, release artifact, badge) (PR #8)
+- [x] Docs + v0.1.0 (README, CHANGELOG, tag) (PR #9)
 
 ## Descoped
 - [~] Empty-Trash cleaner — **descoped.** `~/.Trash` is already a first-class
@@ -26,5 +27,4 @@ of scope for the first production release; this milestone is a complete, safe CL
   category model later if needed.)
 
 ## Backlog (in order)
-- [ ] **Docs + v0.1.0** — finalize README usage, add CHANGELOG, tag `v0.1.0`.
-  *Goal: docs match the shipped CLI; tag pushed.*
+_All backlog items complete — v0.1.0 shipped. 🎉_

@@ -470,6 +470,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "macclean-gui-core"
+version = "0.1.0"
+dependencies = [
+ "macclean-core",
+ "macclean-safety",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
 name = "macclean-safety"
 version = "0.1.0"
 dependencies = [

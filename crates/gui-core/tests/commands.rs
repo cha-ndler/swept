@@ -1,0 +1,140 @@
+//! Tests for the GUI command layer. Fixtures only; deletion goes through an
+//! injected `DirSink` so nothing touches the real Trash.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use macclean_core::audit::AuditLog;
+use macclean_core::executor::{Consent, DirSink};
+use macclean_gui_core::{clean_with_sink, list_login_items, scan_report, Filters};
+
+fn fake_home() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = fs::canonicalize(dir.path()).unwrap();
+    fs::create_dir_all(home.join("Library/Caches/app")).unwrap();
+    (dir, home)
+}
+
+fn write(path: &Path, bytes: &[u8]) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn scan_report_reflects_fixtures_and_filters() {
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/big.bin"), &[0u8; 2048]);
+    write(&home.join("Library/Caches/app/small.bin"), &[0u8; 10]);
+
+    let all = scan_report(&home, &Filters::default());
+    assert_eq!(all.total_count, 2);
+
+    let large_only = scan_report(
+        &home,
+        &Filters {
+            min_size_bytes: Some(1024),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        large_only.total_count, 1,
+        "min_size filter should drop the small file"
+    );
+}
+
+#[test]
+fn login_items_listed_from_fixture() {
+    let (_g, home) = fake_home();
+    let la = home.join("Library/LaunchAgents");
+    fs::create_dir_all(&la).unwrap();
+    fs::write(
+        la.join("com.example.foo.plist"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.example.foo</string>
+  <key>RunAtLoad</key><true/>
+</dict></plist>"#,
+    )
+    .unwrap();
+    let items = list_login_items(&home);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "com.example.foo");
+}
+
+#[test]
+fn clean_dry_run_is_default_and_changes_nothing() {
+    let (_g, home) = fake_home();
+    let f = home.join("Library/Caches/app/a.bin");
+    write(&f, b"data");
+    let mut audit = AuditLog::open(&home.join("audit.jsonl")).unwrap();
+
+    let summary = clean_with_sink(
+        &home,
+        &Filters::default(),
+        Consent::default(),
+        &DirSink {
+            trash_dir: home.join("t"),
+        },
+        &mut audit,
+    )
+    .unwrap();
+
+    assert!(summary.dry_run);
+    assert_eq!(summary.executed, 0);
+    assert!(f.exists(), "dry run must not delete anything");
+}
+
+#[test]
+fn clean_with_consent_disposes_via_injected_sink() {
+    let (_g, home) = fake_home();
+    let f = home.join("Library/Caches/app/a.bin");
+    write(&f, b"data");
+    let trash_dir = home.join("test-bin");
+    let mut audit = AuditLog::open(&home.join("audit.jsonl")).unwrap();
+
+    let summary = clean_with_sink(
+        &home,
+        &Filters::default(),
+        Consent {
+            execute: true,
+            ..Default::default()
+        },
+        &DirSink {
+            trash_dir: trash_dir.clone(),
+        },
+        &mut audit,
+    )
+    .unwrap();
+
+    assert_eq!(summary.executed, 1);
+    assert!(!f.exists());
+    assert!(trash_dir.join("a.bin").exists());
+}
+
+#[test]
+fn clean_surfaces_mass_delete_refusal_as_err() {
+    let (_g, home) = fake_home();
+    for i in 0..(macclean_core::plan::MASS_DELETE_COUNT + 1) {
+        write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"x");
+    }
+    let mut audit = AuditLog::open(&home.join("audit.jsonl")).unwrap();
+
+    let err = clean_with_sink(
+        &home,
+        &Filters::default(),
+        Consent {
+            execute: true,
+            ..Default::default()
+        },
+        &DirSink {
+            trash_dir: home.join("t"),
+        },
+        &mut audit,
+    )
+    .unwrap_err();
+    assert!(err.contains("mass delete"), "got: {err}");
+    assert!(
+        home.join("Library/Caches/app/f0.bin").exists(),
+        "nothing deleted on refusal"
+    );
+}

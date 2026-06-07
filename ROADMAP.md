@@ -36,31 +36,42 @@ Framework: **Tauri** (Rust backend + web frontend), chosen so the GUI calls
 `macclean-core` directly (no shelling out) and stays a thin front-end over the
 same safety substrate. Node 26/npm present; macOS uses the system WKWebView.
 
-**Verification note (important):** an unattended agent has no display and cannot
-judge "pleasant." So backend/scaffold/packaging tasks are fully loop-verifiable
-(`cargo test` + build), but the **visual frontend tasks build green and then
-PAUSE for human visual review** — they are not auto-merged. Every destructive
-action in the GUI must still route through the consent-gated `executor` (dry-run
-default, Trash-first, mass-delete confirmation, audit log).
+**UX verification model (oracle-first).** "Pleasant" has no oracle by default, so
+we build one before the UI art. The loop renders the web frontend headlessly
+(Playwright) into PNGs, then a `ux-critic` vision subagent (Claude can view
+images via the Read tool) scores them against a committed rubric and against
+competitor reference screenshots (CleanMyMac, DaisyDisk, …), and proposes the
+next fixes. Objective checks (axe a11y, Lighthouse, visual-regression snapshots,
+responsive overflow) run in CI as hard gates. Backend/scaffold/harness/packaging
+tasks are fully loop-verifiable and auto-merge on green; the **visual view tasks
+iterate via the critic loop, then still PAUSE for a final human taste gate**
+(the PR carries screenshots + critic scores + reference comparisons). Every
+destructive action in the GUI must route through the consent-gated `executor`
+(dry-run default, Trash-first, mass-delete confirmation, audit log).
 
-- [ ] **Tauri scaffold + backend command layer** — add the Tauri app
-  (`src-tauri`) and `#[tauri::command]` wrappers over `macclean-core`
-  (`scan_report(filters) -> ScanReport`, `clean(consent) -> ExecReport`,
-  `login_items()`). Install `tauri-cli` as needed. *Goal (loop-verifiable): the
-  command functions are plain Rust covered by `cargo test`; the workspace + GUI
-  crate build; deletion routes through the consent-gated executor. Auto-merge on
-  green.*
-- [ ] **Scan view (frontend)** — list categories (name, size, count) with
-  per-category selection; calls the scan command. *Goal: frontend typechecks +
-  builds; backend command tested. Read-only. PAUSE for visual review — do not
-  auto-merge.*
-- [ ] **Clean flow + confirmation** — dry-run preview → explicit confirmation
-  modal → execute (Trash default; permanent/mass-delete gated). *Goal: execute
-  command tested via injected `DirSink`; UI cannot trigger a destructive call
-  without confirmation. PAUSE for visual review.*
-- [ ] **Filters + login-items + theming** — age/size filters and the login-items
-  view in the UI; polish for pleasant UX. *Goal: builds; command params tested.
-  PAUSE for visual review.*
-- [ ] **Package + CI** — `tauri build` produces a `.app`/`.dmg` bundle uploaded
-  as a CI artifact; add a screenshot to the README; tag `v0.2.0`. *Goal
-  (loop-verifiable): CI builds the app bundle artifact.*
+- [x] **GUI command layer** (`crates/gui-core`) — tested wrappers over
+  `macclean-core` returning serde DTOs (`scan_report`, `list_login_items`,
+  `clean_with_sink`); no new deletion logic. (PR #12)
+- [ ] **Tauri shell + frontend toolchain + design system** — scaffold the Tauri
+  v2 app (`crates/gui`) with Vite + Tailwind + a component library
+  (shadcn/Radix) and design tokens; a minimal window whose button calls a
+  `gui-core` command via `#[tauri::command]`. *Goal (loop-verifiable): `cargo
+  build` + `npm run build` succeed; the command round-trips; src-tauri builds in
+  CI without a display. Auto-merge on green.*
+- [ ] **Visual-eval harness (the UX oracle)** — Playwright headless screenshot
+  script (multi-viewport × states), a committed `.claude/agents/ux-critic.md`
+  vision critic, `design/references/` (competitor screenshots) + a `design/
+  rubric.md`, plus axe + Lighthouse + visual-regression checks wired into CI.
+  *Goal (loop-verifiable): the harness runs in CI and gates pass on the
+  placeholder UI; the critic can score a screenshot. Auto-merge on green.*
+- [ ] **Scan view** — categories (name, size, count) with selection + a
+  reclaimable-space visualization; iterate via the critic loop vs references.
+  *Read-only. Critic-iterated, then PAUSE for the human taste gate.*
+- [ ] **Clean flow + confirmation modal** — dry-run preview → explicit confirm →
+  execute (Trash default; permanent/mass-delete gated). *Execute path tested via
+  injected `DirSink`; UI can't trigger a destructive call without confirmation.
+  Critic-iterated, then PAUSE.*
+- [ ] **Filters + login-items view + theming/polish** — age/size filters and the
+  login-items review; final pleasant-UX polish. *Critic-iterated, then PAUSE.*
+- [ ] **Package + v0.2.0** — `tauri build` produces a `.app`/`.dmg` artifact in
+  CI; add a screenshot to the README; tag `v0.2.0`. *Loop-verifiable.*

@@ -69,10 +69,11 @@ destructive action in the GUI must route through the consent-gated `executor`
   name/size/count, per-category selection, reclaimable-space bars, a prominent
   total + primary action, and empty/loading/error states. Critic-iterated
   (caught + fixed two real a11y bugs); axe + visual-regression green.
-- [ ] **Clean flow + confirmation modal** — dry-run preview → explicit confirm →
-  execute (Trash default; permanent/mass-delete gated). *Execute path tested via
-  injected `DirSink`; UI can't trigger a destructive call without confirmation.
-  Critic-iterated, then PAUSE.*
+- [x] **Clean flow + confirmation modal** (PR #16, awaiting human taste sign-off) —
+  preview → explicit confirm modal ("Move N items to the Trash?", recoverable,
+  audit-logged) → cleaning → done. Trash-only (never permanent); honors
+  per-category selection; mass-delete gate server-enforced. deletion-safety
+  VERDICT: PASS; axe + visual-regression green for confirm/done states.
 - [ ] **Filters + login-items view + theming/polish** — age/size filters and the
   login-items review; final pleasant-UX polish. *Critic-iterated, then PAUSE.*
 - [ ] **Package + v0.2.0** — `tauri build` produces a `.app`/`.dmg` artifact in

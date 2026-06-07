@@ -16,7 +16,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use macclean_core::audit::AuditLog;
-use macclean_core::executor::{execute, Consent, Sink};
+use macclean_core::executor::{execute, Consent, Sink, SystemSink};
 use macclean_core::loginitems::{self, LoginItem};
 use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, ScanConfig};
@@ -72,19 +72,46 @@ pub fn list_login_items(home: &Path) -> Vec<LoginItem> {
     loginitems::scan_dir(&loginitems::default_dir(home))
 }
 
+/// Consent for the GUI: always move to the Trash (recoverable), never permanent.
+/// `confirm_mass_delete` carries the user's explicit confirmation from the modal.
+pub fn gui_consent(confirm_mass_delete: bool) -> Consent {
+    Consent {
+        execute: true,
+        allow_permanent: false,
+        confirmed_mass_delete: confirm_mass_delete,
+    }
+}
+
+/// Default audit-log path for the app (parent created if missing).
+pub fn default_audit_path() -> std::io::Result<PathBuf> {
+    let dir = default_home()?.join("Library/Application Support/macclean");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("audit.jsonl"))
+}
+
 /// Clean using an explicit [`Sink`] and audit log. The sink is injectable so
 /// tests run against a throwaway directory; the real app passes `SystemSink`.
+///
+/// `categories` restricts the action to those category ids (`None` = all matched
+/// by `filters`); this is how the UI's per-category selection is honored — the
+/// plan is filtered *before* it reaches the consent-gated executor, so nothing
+/// outside the selection is ever acted on.
 ///
 /// Returns the refusal reason (e.g. unconfirmed mass delete) as `Err` so the UI
 /// can surface it instead of silently doing nothing.
 pub fn clean_with_sink(
     home: &Path,
     filters: &Filters,
+    categories: Option<&[String]>,
     consent: Consent,
     sink: &dyn Sink,
     audit: &mut AuditLog,
 ) -> Result<CleanSummary, String> {
-    let plan = scan(&build_config(home, filters));
+    let mut plan = scan(&build_config(home, filters));
+    if let Some(cats) = categories {
+        plan.actions
+            .retain(|a| cats.iter().any(|c| c == &a.category));
+    }
     match execute(&plan, consent, home, sink, audit) {
         Ok(report) => Ok(CleanSummary {
             dry_run: report.dry_run,
@@ -94,4 +121,30 @@ pub fn clean_with_sink(
         }),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// Real-app clean: scan with `filters`, restrict to `categories` (empty = all),
+/// then move matches to the Trash via the consent-gated executor, recording to
+/// the default audit log. Never deletes permanently.
+pub fn clean(
+    filters: &Filters,
+    categories: Vec<String>,
+    confirm_mass_delete: bool,
+) -> Result<CleanSummary, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    let path = default_audit_path().map_err(|e| e.to_string())?;
+    let mut audit = AuditLog::open(&path).map_err(|e| e.to_string())?;
+    let cats = if categories.is_empty() {
+        None
+    } else {
+        Some(categories.as_slice())
+    };
+    clean_with_sink(
+        &home,
+        filters,
+        cats,
+        gui_consent(confirm_mass_delete),
+        &SystemSink,
+        &mut audit,
+    )
 }

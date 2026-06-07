@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use macclean_core::audit::AuditLog;
 use macclean_core::executor::{Consent, DirSink};
-use macclean_gui_core::{clean_with_sink, list_login_items, scan_report, Filters};
+use macclean_gui_core::{clean_with_sink, gui_consent, list_login_items, scan_report, Filters};
 
 fn fake_home() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -71,6 +71,7 @@ fn clean_dry_run_is_default_and_changes_nothing() {
     let summary = clean_with_sink(
         &home,
         &Filters::default(),
+        None,
         Consent::default(),
         &DirSink {
             trash_dir: home.join("t"),
@@ -95,6 +96,7 @@ fn clean_with_consent_disposes_via_injected_sink() {
     let summary = clean_with_sink(
         &home,
         &Filters::default(),
+        None,
         Consent {
             execute: true,
             ..Default::default()
@@ -122,6 +124,7 @@ fn clean_surfaces_mass_delete_refusal_as_err() {
     let err = clean_with_sink(
         &home,
         &Filters::default(),
+        None,
         Consent {
             execute: true,
             ..Default::default()
@@ -137,4 +140,47 @@ fn clean_surfaces_mass_delete_refusal_as_err() {
         home.join("Library/Caches/app/f0.bin").exists(),
         "nothing deleted on refusal"
     );
+}
+
+#[test]
+fn clean_only_disposes_selected_categories() {
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/c.bin"), b"cache");
+    fs::create_dir_all(home.join("Library/Logs")).unwrap();
+    write(&home.join("Library/Logs/x.log"), b"log");
+    let trash_dir = home.join("bin");
+    let mut audit = AuditLog::open(&home.join("audit.jsonl")).unwrap();
+
+    // Select only the caches category; logs must be left untouched.
+    let summary = clean_with_sink(
+        &home,
+        &Filters::default(),
+        Some(&["user-caches".to_string()]),
+        gui_consent(true),
+        &DirSink {
+            trash_dir: trash_dir.clone(),
+        },
+        &mut audit,
+    )
+    .unwrap();
+
+    assert_eq!(summary.executed, 1);
+    assert!(
+        !home.join("Library/Caches/app/c.bin").exists(),
+        "selected category should be disposed"
+    );
+    assert!(
+        home.join("Library/Logs/x.log").exists(),
+        "unselected category must be left untouched"
+    );
+}
+
+#[test]
+fn gui_consent_is_trash_only_never_permanent() {
+    let c = gui_consent(false);
+    assert!(c.execute);
+    assert!(!c.allow_permanent, "GUI must never permanently delete");
+    assert!(!c.confirmed_mass_delete);
+    assert!(gui_consent(true).confirmed_mass_delete);
+    assert!(!gui_consent(true).allow_permanent);
 }

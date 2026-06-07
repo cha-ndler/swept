@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
@@ -30,7 +31,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Preview what would be cleaned. Never changes anything.
-    Scan,
+    Scan {
+        /// Only consider files not modified in the last N days.
+        #[arg(long)]
+        older_than_days: Option<u64>,
+    },
     /// Clean. Dry-run unless --execute is given.
     Clean {
         /// Actually carry out the actions (otherwise this is a preview).
@@ -42,6 +47,9 @@ enum Cmd {
         /// Confirm a mass delete (required past the safety threshold).
         #[arg(long = "yes")]
         confirm: bool,
+        /// Only consider files not modified in the last N days.
+        #[arg(long)]
+        older_than_days: Option<u64>,
         /// Path to the append-only audit log
         /// (default: ~/Library/Application Support/macclean/audit.jsonl).
         #[arg(long)]
@@ -64,10 +72,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let home = dirs::home_dir().ok_or("cannot determine home directory")?;
     let home = canonical_home(&home)?;
-    let cfg = ScanConfig::with_default_roots(home.clone());
 
     match cli.cmd {
-        Cmd::Scan => {
+        Cmd::Scan { older_than_days } => {
+            let cfg = build_config(home, older_than_days);
             let plan = scan(&cfg);
             print_plan(&plan);
             println!("\nThis was a preview. Run `macclean clean --execute` to act on it.");
@@ -77,8 +85,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             execute: do_exec,
             permanent,
             confirm,
+            older_than_days,
             audit,
         } => {
+            let cfg = build_config(home.clone(), older_than_days);
             let plan = scan(&cfg);
             print_plan(&plan);
 
@@ -113,6 +123,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             );
             Ok(ExitCode::SUCCESS)
         }
+    }
+}
+
+/// Build a scan config for `home`, applying the optional age filter.
+fn build_config(home: PathBuf, older_than_days: Option<u64>) -> ScanConfig {
+    let cfg = ScanConfig::with_default_roots(home);
+    match older_than_days {
+        Some(days) => cfg.older_than(Duration::from_secs(days.saturating_mul(86_400))),
+        None => cfg,
     }
 }
 

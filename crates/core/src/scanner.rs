@@ -5,7 +5,9 @@
 //! within the scoped allowlist. Anything that fails either check is counted in
 //! `skipped_protected` and dropped from the plan.
 
+use std::fs::Metadata;
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 use safety::{allowlist, guard};
 use walkdir::WalkDir;
@@ -17,13 +19,28 @@ pub struct ScanConfig {
     pub home: PathBuf,
     /// Canonical roots to scan. Must themselves be within the allowlist.
     pub roots: Vec<PathBuf>,
+    /// Only plan files at least this old (by mtime). `None` = no age filter.
+    ///
+    /// A safety/quality control: recently-touched caches are often still in
+    /// use, so by default a user can restrict cleanup to genuinely stale files.
+    pub min_age: Option<Duration>,
 }
 
 impl ScanConfig {
     /// A config that scans the default allowlist roots for `home`.
     pub fn with_default_roots(home: PathBuf) -> Self {
         let roots = allowlist::default_roots(&home);
-        Self { home, roots }
+        Self {
+            home,
+            roots,
+            min_age: None,
+        }
+    }
+
+    /// Restrict the plan to files whose mtime is at least `min_age` in the past.
+    pub fn older_than(mut self, min_age: Duration) -> Self {
+        self.min_age = Some(min_age);
+        self
     }
 }
 
@@ -31,6 +48,7 @@ impl ScanConfig {
 pub fn scan(cfg: &ScanConfig) -> Plan {
     let mut plan = Plan::default();
     let allowed = allowlist::default_roots(&cfg.home);
+    let now = SystemTime::now();
 
     for root in &cfg.roots {
         if !root.exists() {
@@ -57,11 +75,20 @@ pub fn scan(cfg: &ScanConfig) -> Plan {
                 plan.skipped_protected += 1;
                 continue;
             }
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            // A file we cannot stat is one we cannot assess — never plan it.
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            // Age filter: skip files that aren't old enough to be considered junk.
+            if let Some(min_age) = cfg.min_age {
+                if !is_at_least(&meta, min_age, now) {
+                    continue;
+                }
+            }
             let category = allowlist::category_for(safe.as_path(), &cfg.home);
             plan.actions.push(PlannedAction {
                 path: safe,
-                size_bytes: size,
+                size_bytes: meta.len(),
                 disposal: Disposal::Trash,
                 category,
             });
@@ -69,4 +96,16 @@ pub fn scan(cfg: &ScanConfig) -> Plan {
     }
 
     plan
+}
+
+/// True if the file's mtime is at least `min_age` before `now`. Fail-safe: if the
+/// mtime is unreadable or in the future, returns false (i.e. do not clean it).
+fn is_at_least(meta: &Metadata, min_age: Duration, now: SystemTime) -> bool {
+    match meta.modified() {
+        Ok(mtime) => now
+            .duration_since(mtime)
+            .map(|age| age >= min_age)
+            .unwrap_or(false),
+        Err(_) => false,
+    }
 }

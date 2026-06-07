@@ -14,6 +14,10 @@ use crate::plan::{Disposal, Plan};
 #[derive(Serialize, Debug, PartialEq, Eq)]
 pub struct CategorySummary {
     pub category: String,
+    /// Human-facing name (from the category registry; falls back to the id).
+    pub name: String,
+    /// Short explanation (from the registry; empty if the id is unknown).
+    pub description: String,
     pub count: usize,
     pub bytes: u64,
 }
@@ -59,10 +63,15 @@ impl ScanReport {
 
         let by_category = by_cat
             .into_iter()
-            .map(|(category, (count, bytes))| CategorySummary {
-                category: category.to_string(),
-                count,
-                bytes,
+            .map(|(category, (count, bytes))| {
+                let meta = crate::categories::by_id(category);
+                CategorySummary {
+                    category: category.to_string(),
+                    name: meta.map(|c| c.name).unwrap_or(category).to_string(),
+                    description: meta.map(|c| c.description).unwrap_or("").to_string(),
+                    count,
+                    bytes,
+                }
             })
             .collect();
 

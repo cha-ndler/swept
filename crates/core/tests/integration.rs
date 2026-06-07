@@ -50,17 +50,46 @@ fn scan_report_serializes_a_stable_shape() {
     assert_eq!(v["items"].as_array().unwrap().len(), 2);
 
     let cats = v["by_category"].as_array().unwrap();
+    let cache = cats
+        .iter()
+        .find(|c| c["category"] == "user-caches")
+        .expect("user-caches category present");
+    assert_eq!(cache["count"], 1);
+    assert_eq!(cache["bytes"], 5);
+    // Categories carry human-facing metadata for the GUI.
+    assert!(!cache["name"].as_str().unwrap().is_empty());
+    assert!(!cache["description"].as_str().unwrap().is_empty());
     assert!(cats
         .iter()
-        .any(|c| c["category"] == "cache" && c["count"] == 1 && c["bytes"] == 5));
-    assert!(cats
-        .iter()
-        .any(|c| c["category"] == "log" && c["count"] == 1 && c["bytes"] == 4));
+        .any(|c| c["category"] == "user-logs" && c["count"] == 1 && c["bytes"] == 4));
 
     // Each item carries an absolute path and a disposal label.
     let item = &v["items"].as_array().unwrap()[0];
     assert!(item["path"].as_str().unwrap().starts_with('/'));
     assert_eq!(item["disposal"], "trash");
+}
+
+#[test]
+fn homebrew_files_classify_as_their_specific_category() {
+    let (_g, home) = fake_home();
+    // A Homebrew download (deep) and a generic app cache (shallow) both live
+    // under Library/Caches — the deeper, more specific category must win.
+    write(
+        &home.join("Library/Caches/Homebrew/downloads/pkg.tar"),
+        b"abc",
+    );
+    write(&home.join("Library/Caches/app/generic.bin"), b"de");
+
+    let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+    let report = macclean_core::report::ScanReport::from_plan(&plan);
+    let ids: Vec<&str> = report
+        .by_category
+        .iter()
+        .map(|c| c.category.as_str())
+        .collect();
+
+    assert!(ids.contains(&"homebrew-downloads"), "got {ids:?}");
+    assert!(ids.contains(&"user-caches"), "got {ids:?}");
 }
 
 #[test]

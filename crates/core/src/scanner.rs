@@ -24,6 +24,11 @@ pub struct ScanConfig {
     /// A safety/quality control: recently-touched caches are often still in
     /// use, so by default a user can restrict cleanup to genuinely stale files.
     pub min_age: Option<Duration>,
+    /// Only plan files at least this many bytes. `None` = no size filter.
+    ///
+    /// Powers the "large files finder": restrict cleanup to the items actually
+    /// worth reclaiming space from.
+    pub min_size: Option<u64>,
 }
 
 impl ScanConfig {
@@ -34,12 +39,19 @@ impl ScanConfig {
             home,
             roots,
             min_age: None,
+            min_size: None,
         }
     }
 
     /// Restrict the plan to files whose mtime is at least `min_age` in the past.
     pub fn older_than(mut self, min_age: Duration) -> Self {
         self.min_age = Some(min_age);
+        self
+    }
+
+    /// Restrict the plan to files of at least `min_size` bytes.
+    pub fn min_size(mut self, min_size: u64) -> Self {
+        self.min_size = Some(min_size);
         self
     }
 }
@@ -82,6 +94,12 @@ pub fn scan(cfg: &ScanConfig) -> Plan {
             // Age filter: skip files that aren't old enough to be considered junk.
             if let Some(min_age) = cfg.min_age {
                 if !is_at_least(&meta, min_age, now) {
+                    continue;
+                }
+            }
+            // Size filter: skip files below the threshold (large-files finder).
+            if let Some(min_size) = cfg.min_size {
+                if meta.len() < min_size {
                     continue;
                 }
             }

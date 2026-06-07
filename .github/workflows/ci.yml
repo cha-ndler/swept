@@ -76,3 +76,43 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: target/release/macclean
+
+  gui:
+    # The Tauri shell is excluded from the core workspace; build it on its own:
+    # frontend (Vite) first so the dist exists, then the Rust webview crate.
+    needs: check
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: crates/gui
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust (stable + clippy + rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo (Tauri crate)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/gui/src-tauri
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend (tsc + vite)
+        run: npm run build
+
+      - name: Rust fmt + clippy (Tauri shell)
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Build Tauri shell
+        run: cargo build --manifest-path src-tauri/Cargo.toml

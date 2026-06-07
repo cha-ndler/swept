@@ -473,6 +473,7 @@ dependencies = [
 name = "macclean-gui-core"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "macclean-core",
  "macclean-safety",
  "serde",

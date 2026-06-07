@@ -10,6 +10,7 @@ description = "Frontend-facing command layer for the mac-cleaner GUI: thin, test
 macclean-core = { path = "../core" }
 macclean-safety = { path = "../safety" }
 serde.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

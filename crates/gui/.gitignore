@@ -2,3 +2,9 @@ node_modules
 dist
 src-tauri/target
 src-tauri/gen
+
+# Playwright: generated outputs (baselines under *-snapshots/ ARE committed)
+ux/screenshots
+test-results
+playwright-report
+blob-report

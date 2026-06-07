@@ -32,6 +32,57 @@ fn audit_at(home: &Path) -> (PathBuf, AuditLog) {
 }
 
 #[test]
+fn age_filter_excludes_recently_modified_files() {
+    use filetime::{set_file_mtime, FileTime};
+    use std::time::{Duration, SystemTime};
+
+    let (_g, home) = fake_home();
+    let old = home.join("Library/Caches/app/old.bin");
+    let fresh = home.join("Library/Caches/app/fresh.bin");
+    write(&old, b"old");
+    write(&fresh, b"new");
+
+    // Backdate `old` to 40 days ago; `fresh` keeps its (now) mtime.
+    let forty_days_ago = SystemTime::now() - Duration::from_secs(40 * 86_400);
+    set_file_mtime(&old, FileTime::from_system_time(forty_days_ago)).unwrap();
+
+    let cfg =
+        ScanConfig::with_default_roots(home.clone()).older_than(Duration::from_secs(30 * 86_400));
+    let plan = scan(&cfg);
+
+    let names: Vec<String> = plan
+        .actions
+        .iter()
+        .filter_map(|a| {
+            a.path
+                .as_path()
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+        .collect();
+    assert!(
+        names.contains(&"old.bin".to_string()),
+        "old file should be planned"
+    );
+    assert!(
+        !names.contains(&"fresh.bin".to_string()),
+        "recently-modified file must be excluded by the age filter"
+    );
+}
+
+#[test]
+fn no_age_filter_includes_everything() {
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/a.bin"), b"x");
+    let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+    assert_eq!(
+        plan.count(),
+        1,
+        "without an age filter, all candidates are planned"
+    );
+}
+
+#[test]
 fn scan_finds_cache_files_and_skips_protected() {
     let (_g, home) = fake_home();
     write(&home.join("Library/Caches/app/a.bin"), b"12345");

@@ -24,8 +24,10 @@ cargo run -p macclean -- scan                            # read-only preview
 
 ```bash
 macclean scan                 # preview junk in allowlisted locations (read-only)
+macclean scan --older-than-days 30    # only files untouched for 30+ days
 macclean clean                # preview (still no changes without --execute)
 macclean clean --execute      # move junk to the Trash (recoverable)
+macclean clean --execute --older-than-days 30   # only clean stale files
 macclean clean --execute --yes        # confirm a mass delete
 macclean clean --execute --permanent  # irreversible (per-action consent)
 ```

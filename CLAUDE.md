@@ -1,12 +1,55 @@
 # mac-cleaner
 
-## About
-A free, open-source equivalent of CleanMyMac. It finds junk files to clean, recommends performance optimizations (e.g. disabling startup items), scans apps for available updates, and assists with clutter removal. It targets only items that are safe to remove, and **never deletes anything automatically** — it shows the user exactly what files/folders it would remove and acts only on explicit consent. The UI should be pleasant, but need not be as extravagant as CleanMyMac.
+A free, open-source CleanMyMac alternative: finds junk to clean, recommends
+performance tweaks, scans for app updates, assists with clutter removal. It acts
+only on items that are safe to remove and **never deletes anything
+automatically** — it previews exactly what it would remove and acts only on
+explicit consent.
 
-## Status
-Greenfield. No language/framework chosen yet. **Build the safety substrate before any cleanup feature.**
+This is a **data-destroying tool**. Safety beats features, always. When in doubt,
+refuse and preview.
+
+---
+
+## Commands (run these — don't rediscover them)
+
+| Task | Command |
+|------|---------|
+| Test (the oracle) | `cargo test --workspace` |
+| Lint (must be clean) | `cargo clippy --workspace --all-targets -- -D warnings` |
+| Format | `cargo fmt --all` (check: `cargo fmt --all --check`) |
+| Safety-kernel tests only | `cargo test -p macclean-safety` |
+| Preview a scan (read-only) | `cargo run -p macclean -- scan` |
+| Build release | `cargo build --release` |
+
+**A change is not done until `cargo test --workspace` and `cargo clippy … -D warnings` both pass.** Never report success you haven't observed — run the `verifier` subagent if unsure.
+
+---
+
+## The development loop (TDD — this is the default workflow)
+
+Every change follows this loop. It is what makes autonomous iteration safe: the
+tests are the correctness oracle.
+
+1. **Write the test first**, against a throwaway tempdir fixture (`tempfile::tempdir()`). Never a real path.
+2. Run `cargo test` — **confirm the new test fails** for the right reason.
+3. Implement the smallest change to make it pass. Don't touch unrelated code.
+4. Run `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all`.
+5. **If the diff touches delete / move / trash / truncate / overwrite logic, run the `deletion-safety-reviewer` subagent and resolve every finding before continuing.**
+6. Run the full suite via the `verifier` subagent.
+
+**STOP and ask the user** if any of these is true:
+- A change would weaken or remove a safety-invariant test.
+- Clippy cannot pass without `#[allow(...)]` on a correctness lint.
+- A real (non-fixture) filesystem path appears anywhere in a test.
+- You'd need to bypass the `no-real-deletes.sh` hook.
+
+Slash commands wrap this: `/loop`, `/safety-check`, `/new-cleaner`, `/scan-fixture`.
+
+---
 
 ## SAFETY CONTRACT (non-negotiable — this is a data-destroying tool)
+
 Every code path that deletes, trashes, moves, truncates, or overwrites a file MUST satisfy all of:
 
 1. **Dry-run is the default.** Destructive action requires an explicit flag/confirmation. Default behavior previews only.
@@ -19,10 +62,55 @@ Every code path that deletes, trashes, moves, truncates, or overwrites a file MU
 
 Before presenting any diff that adds or changes deletion logic, run the `deletion-safety-reviewer` subagent on it.
 
-## Workflow notes
-- This repo does NOT use `acceptEdits` (`.claude/settings.json` sets `defaultMode: default`) — deletion code must be reviewed, not auto-applied.
-- A project hook (`.claude/hooks/no-real-deletes.sh`) blocks the agent from executing `rm`/`trash`/`find -delete` against real paths during development. Test against fixtures.
+### How the contract maps to code
 
-## Architecture decisions (fill in as made)
-- Language / UI framework: _TBD — record the choice and rationale here._
-- Core modules: scanner, denylist/safety, planner (dry-run), executor (consent-gated), audit log, UI.
+| Contract item | Enforced in |
+|---------------|-------------|
+| 1 Dry-run default | `crates/core/src/executor.rs` (`Consent::default()` previews) |
+| 2 Denylist first + canonicalize/re-check | `crates/safety/src/denylist.rs`, `path_guard.rs`; re-guarded in `executor.rs` |
+| 3 Scoped allowlist | `crates/safety/src/allowlist.rs` |
+| 4 Trash not unlink | `executor.rs` (`Sink` trait; Trash default, `--permanent` gated) |
+| 5 No unconfirmed mass delete | `crates/core/src/plan.rs` thresholds + `executor.rs` |
+| 6 Append-only audit log | `crates/core/src/audit.rs` (JSONL, append+flush; errors abort the run) |
+| 7 Temp-dir-only tests | `crates/core/tests/integration.rs`, in-module tests |
+
+**The one chokepoint:** every destructive op must go through `safety::guard()`,
+which is the *only* constructor of `SafePath`. If you find code deleting a raw
+`&Path`, that's a bug — route it through the guard.
+
+---
+
+## Architecture
+
+Rust workspace (chosen for memory safety on a destructive tool, and because
+`cargo test`/`clippy` give a fast, strict verification oracle — the engine of
+the autonomous loop). UI shell is deferred until the substrate is complete.
+
+```
+crates/
+  safety/   Trust kernel — denylist, path_guard (canonicalize + SafePath), allowlist.
+            Pure: never deletes. Everything destructive must pass through it.
+  core/     Engine — scanner (read-only) → plan (dry-run data) → executor
+            (consent-gated, the ONLY mutator) → audit (append-only JSONL).
+  cli/      `macclean` front-end. `scan` previews; `clean` previews unless
+            --execute; --permanent and --yes gate the dangerous paths.
+```
+
+Data flow: `scanner::scan` → `Plan` (pure) → `executor::execute(plan, Consent, …)`.
+Default `Consent` is a dry run that mutates nothing.
+
+---
+
+## Workflow notes / gotchas
+
+- This repo does **not** use `acceptEdits` (`.claude/settings.json` → `defaultMode: default`): deletion code must be reviewed, not auto-applied.
+- A project hook (`.claude/hooks/no-real-deletes.sh`) blocks the agent from executing `rm`/`trash`/`find -delete` against real paths during development. Exercise deletion only against fixtures (`$TMPDIR`, `/var/folders`, paths containing `fixture`).
+- **macOS canonicalization quirk:** `/Users/...` and `/var/folders/...` are symlinks. Always compare canonical paths, and canonicalize the home dir (`safety::canonical_home`) before passing it to `guard`. Tests must `fs::canonicalize` their tempdir home.
+- `WalkDir` runs with `follow_links(false)`; symlinks are dropped at the `is_file()` check, and `guard` + allowlist are the backstop if anything slips through.
+- Audit-log writes are **fatal on failure** — we refuse to delete if we can't record it. Don't downgrade that to a silent `let _ =`.
+
+## Subagents (in `.claude/agents/`)
+
+- `deletion-safety-reviewer` — adversarial review of any deletion/move diff against the 7-point contract. **Required** before presenting such a diff.
+- `verifier` — runs the real `cargo test` + `clippy` + `fmt` suite and reports the actual result. Use before claiming done.
+- `safety-architect` — design/plan a new cleaner or refactor so it fits the safety substrate before code is written.

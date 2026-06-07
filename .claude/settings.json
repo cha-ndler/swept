@@ -1,6 +1,31 @@
 {
   "permissions": {
-    "defaultMode": "default"
+    "defaultMode": "default",
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo run -p macclean -- scan:*)",
+      "Bash(cargo doc:*)",
+      "Bash(rg:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(mktemp:*)",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Bash(cargo run -p macclean -- clean --execute:*)",
+      "Read(./**/*.key)",
+      "Read(./**/*.pem)",
+      "Read(~/Library/Keychains/**)"
+    ]
   },
   "hooks": {
     "PreToolUse": [

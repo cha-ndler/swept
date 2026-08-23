@@ -53,7 +53,21 @@ test("the shipped bundle contains no fixture data", async () => {
   const bundles = readdirSync(dir).filter((f) => f.endsWith(".js"));
   expect(bundles.length).toBeGreaterThan(0);
 
-  const tells = ["com.docker.helper", "com.spotify.webhelper", "4213", "xcode-derived-data"];
+  // Tells must be strings that ONLY a fixture could supply. Category *ids* do
+  // not qualify: the frontend legitimately knows them (CleanView maps each id
+  // to its category hue), so "xcode-derived-data" appearing in the bundle
+  // proves nothing. Human-readable names, descriptions and counts do qualify —
+  // they are rendered straight from the backend response and are never
+  // authored in src/.
+  const tells = [
+    "com.docker.helper",
+    "com.spotify.webhelper",
+    "4213",
+    "Build intermediates and indexes",
+    "Cached package downloads",
+    "Per-user app caches",
+    "Xcode derived data",
+  ];
   for (const file of bundles) {
     const source = readFileSync(join(dir, file), "utf8");
     for (const tell of tells) {

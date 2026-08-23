@@ -39,3 +39,11 @@ export interface Filters {
   older_than_days?: number;
   min_size_bytes?: number;
 }
+
+// Mirrors macclean_gui_core::Permissions. Advisory only: it says what the app
+// could read just now, not what the user has toggled in System Settings.
+export interface Permissions {
+  trash_readable: boolean;
+  containers_readable: boolean;
+  all_readable: boolean;
+}

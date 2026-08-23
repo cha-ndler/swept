@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBytes } from "./format";
-import type { CategorySummary, CleanSummary, Filters, ScanReport } from "./types";
+import type { CategorySummary, CleanSummary, Filters, Permissions, ScanReport } from "./types";
 import { call, describeError, isDesktopApp, onScanProgress } from "./backend";
 import type { ScanProgress } from "./backend";
 import { Banner, InfoIcon, LockIcon, ShieldIcon, Toolbar } from "./Shell";
@@ -52,6 +52,15 @@ export default function CleanView({
   const [olderDays, setOlderDays] = useState("");
   const [minSize, setMinSize] = useState("");
   const [progress, setProgress] = useState<ScanProgress | null>(null);
+  const [perms, setPerms] = useState<Permissions | null>(null);
+
+  // Advisory, and deliberately silent on failure: an unavailable probe must not
+  // turn into an error state, because the scan itself is unaffected.
+  useEffect(() => {
+    void call<Permissions>("permissions")
+      .then(setPerms)
+      .catch(() => setPerms(null));
+  }, []);
 
   // The backend emits cumulative progress while it walks. Subscribe once for
   // the lifetime of the view; `runScan` clears the last reading when it starts.
@@ -206,6 +215,9 @@ export default function CleanView({
               />
             )}
             {view === "empty" && <EmptyState onRescan={() => void runScan(currentFilters())} />}
+            {view === "results" && perms && !perms.all_readable && (
+              <AccessNotice perms={perms} />
+            )}
             {view === "results" && (
               <div className="flex flex-col gap-7 md:flex-row md:items-start">
                 <div className="flex flex-none flex-col items-center text-center md:w-[240px]">
@@ -308,6 +320,48 @@ function FiltersBar({
   );
 }
 
+/**
+ * macOS gates ~/.Trash and ~/Library/Containers behind Full Disk Access. Without
+ * it a scan still runs — it just cannot see inside them, so the total is smaller
+ * than the truth. Under-reporting is the same class of problem as showing
+ * fixture data: a number the user trusts that does not describe their disk. So
+ * this says so, on every scan it applies to, rather than once in a first-run
+ * screen the user has already clicked past.
+ */
+function AccessNotice({ perms }: { perms: Permissions }) {
+  const [opening, setOpening] = useState(false);
+  const missing = [
+    !perms.trash_readable ? "the Trash" : null,
+    !perms.containers_readable ? "sandboxed app caches" : null,
+  ].filter(Boolean);
+
+  return (
+    <div className="mb-5 flex items-start gap-3 rounded-card border border-cat-trashes/30 bg-cat-trashes/[.07] px-4 py-3">
+      <span className="text-cat-trashes mt-0.5 flex-none">
+        <LockIcon size={16} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-body font-medium">This scan may be under-reporting</p>
+        <p className="text-muted mt-1 text-caption leading-relaxed">
+          macOS is withholding {missing.join(" and ")} until you grant Full Disk Access, so
+          anything in {missing.length === 1 ? "it" : "them"} is missing from the total above.
+          Nothing else is affected, and the figures shown are still real.
+        </p>
+      </div>
+      <button
+        onClick={() => {
+          setOpening(true);
+          void call("open_privacy_settings").finally(() => setOpening(false));
+        }}
+        disabled={opening}
+        className="shrink-0 rounded-control border border-border bg-surface2 px-3 py-1.5 text-caption font-medium text-text transition-colors duration-fast ease-mac hover:border-borderStrong disabled:opacity-50"
+      >
+        {opening ? "Opening…" : "Open Settings"}
+      </button>
+    </div>
+  );
+}
+
 function CategoryRow({
   cat,
   checked,
@@ -363,12 +417,12 @@ function ConfirmModal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-10 flex items-center justify-center bg-black/60 p-6"
+      className="overlay-in fixed inset-0 z-10 flex items-center justify-center bg-black/60 p-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-title"
     >
-      <div className="w-full max-w-md rounded-panel border border-border bg-surface3 p-6 shadow-e3">
+      <div className="sheet-in w-full max-w-md rounded-panel border border-border bg-surface3 p-6 shadow-e3">
         <div className="flex items-start gap-3">
           <span className="grid h-9 w-9 flex-none place-items-center rounded-[8px] bg-accentTint text-accentText">
             <ShieldIcon size={18} />

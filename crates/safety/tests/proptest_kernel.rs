@@ -70,7 +70,7 @@ proptest! {
     /// paths the tool actually acts on.
     #[test]
     fn safe_paths_in_allowed_roots_are_clean(
-        root_idx in 0usize..4,
+        root_idx in 0usize..default_roots(&home()).len(),
         segs in safe_segments(6),
     ) {
         let roots = default_roots(&home());
@@ -88,5 +88,40 @@ proptest! {
         let mut p = home().join("Documents");
         for s in &segs { p.push(s); }
         prop_assert!(!is_allowed(&p, &default_roots(&home())), "{} must not be allowed", p.display());
+    }
+
+    /// No ANCESTOR of a protected location is ever unprotected, all the way up
+    /// to the filesystem root.
+    ///
+    /// `~/Library` is the motivating case: component-wise `starts_with` means
+    /// it never matches the absolute `/Library` root, so before this invariant
+    /// existed the guard accepted it and only the allowlist stood in the way.
+    /// Any directory that would take Keychains or Mail down with it must be
+    /// refused by the denylist itself.
+    #[test]
+    fn ancestors_of_protected_locations_are_protected(user in "[a-z][a-z0-9]{0,7}") {
+        let home = PathBuf::from("/Users").join(&user);
+        for sub in ["Library/Keychains", "Library/Mail"] {
+            let full = home.join(sub);
+            // `ancestors()` yields the path itself, then every parent up to "/".
+            for ancestor in full.ancestors() {
+                prop_assert!(
+                    is_protected(ancestor, &home),
+                    "{} is an ancestor of {} and must be protected",
+                    ancestor.display(), full.display()
+                );
+            }
+        }
+    }
+
+    /// ...and the rule must not leak downwards: the allowlisted siblings that
+    /// live under the same parent stay cleanable.
+    #[test]
+    fn allowlisted_siblings_under_library_stay_clean(segs in safe_segments(4)) {
+        for root in ["Library/Caches", "Library/Logs"] {
+            let mut p = home().join(root);
+            for s in &segs { p.push(s); }
+            prop_assert!(!is_protected(&p, &home()), "{} must stay cleanable", p.display());
+        }
     }
 }

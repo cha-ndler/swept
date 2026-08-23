@@ -5,6 +5,54 @@
 
 use std::path::{Component, Path};
 
+/// Case-insensitive component equality.
+fn component_eq_ci(a: &Component<'_>, b: &Component<'_>) -> bool {
+    a.as_os_str()
+        .as_encoded_bytes()
+        .eq_ignore_ascii_case(b.as_os_str().as_encoded_bytes())
+}
+
+/// `Path::starts_with`, but ignoring ASCII case.
+///
+/// macOS volumes are case-insensitive by default, and `fs::canonicalize` does
+/// **not** case-normalize: it returns the spelling it was given. So `/USR/bin`
+/// and `~/Library/mail` survive canonicalization unchanged while naming exactly
+/// the same files as `/usr/bin` and `~/Library/Mail`. A byte-exact denylist
+/// would wave them through. Comparing case-insensitively closes that gap; it
+/// can only ever protect *more* paths, never fewer.
+///
+/// Still component-wise, so `/usrlocal` does not match `/usr` and `.Trashes`
+/// does not match `.Trash`.
+///
+/// Folds **ASCII only**. Every current denylist entry is ASCII, so this covers
+/// them completely; a non-ASCII home spelled in a different case (`/Users/JOSÉ`
+/// vs `/Users/josé`) would not be recognized as the same path. That is no worse
+/// than the byte-exact comparison this replaced, but it is not full Unicode
+/// case folding — worth revisiting if a non-ASCII entry is ever added.
+fn starts_with_ci(path: &Path, prefix: &Path) -> bool {
+    let mut got = path.components();
+    for want in prefix.components() {
+        match got.next() {
+            Some(have) if component_eq_ci(&have, &want) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Case-insensitive path equality (component-wise).
+fn eq_ci(a: &Path, b: &Path) -> bool {
+    let mut ai = a.components();
+    let mut bi = b.components();
+    loop {
+        match (ai.next(), bi.next()) {
+            (None, None) => return true,
+            (Some(x), Some(y)) if component_eq_ci(&x, &y) => continue,
+            _ => return false,
+        }
+    }
+}
+
 /// Absolute, system-wide roots that must never be modified.
 const PROTECTED_ABS_ROOTS: &[&str] = &[
     "/System",
@@ -51,21 +99,40 @@ pub fn protection_reason(path: &Path, home: &Path) -> Option<&'static str> {
     // System roots (the root itself and anything beneath it).
     for root in PROTECTED_ABS_ROOTS {
         let r = Path::new(root);
-        if path == r || path.starts_with(r) {
+        if starts_with_ci(path, r) {
             return Some("system-protected root");
         }
     }
 
     // Home directory root itself (but not its allowlisted children).
-    if path == home {
+    if eq_ci(path, home) {
         return Some("home directory root");
     }
 
-    // Protected home subpaths (keychains, mail).
+    // Protected home subpaths (keychains, mail) — the location itself and
+    // everything beneath it.
     for sub in PROTECTED_HOME_SUBPATHS {
-        let p = home.join(sub);
-        if path == p || path.starts_with(&p) {
+        if starts_with_ci(path, &home.join(sub)) {
             return Some("protected home subpath (keychains/mail)");
+        }
+    }
+
+    // ...and any directory that CONTAINS one of them.
+    //
+    // `Path::starts_with` is component-wise, so `~/Library` never matched the
+    // absolute `/Library` entry above: it is a different path. Without this
+    // rule `guard("~/Library")` succeeds, and only `allowlist::is_allowed`
+    // keeps it out of reach — which is the wrong layer to depend on, because
+    // the allowlist is a scope decision while the denylist is a safety one.
+    // Removing such a directory recursively would take Keychains and Mail with
+    // it, so refuse the ancestor itself.
+    //
+    // Exact-ancestor semantics only: this does not propagate downwards, so the
+    // allowlisted siblings (`Library/Caches`, `Library/Logs`, ...) stay
+    // cleanable.
+    for sub in PROTECTED_HOME_SUBPATHS {
+        if starts_with_ci(&home.join(sub), path) {
+            return Some("directory contains a protected location");
         }
     }
 
@@ -129,6 +196,58 @@ mod tests {
             &home().join("Library/Mail/V10/inbox"),
             &home()
         ));
+    }
+
+    #[test]
+    fn blocks_a_directory_that_contains_keychains_or_mail() {
+        // `~/Library` is an ANCESTOR of two protected locations. Component-wise
+        // `starts_with` means it never matched the absolute "/Library" entry, so
+        // it used to pass the guard: only the allowlist kept it out of reach.
+        // Disposing of it recursively would take Keychains and Mail with it, so
+        // the denylist — not the allowlist — has to be the thing that says no.
+        assert!(is_protected(&home().join("Library"), &home()));
+    }
+
+    #[test]
+    fn still_allows_the_allowlisted_children_of_library() {
+        // The ancestor rule must not leak downwards: these are the paths the
+        // tool exists to clean.
+        for p in [
+            "Library/Caches/app/blob",
+            "Library/Logs/session.log",
+            "Library/Developer/Xcode/DerivedData/App-abc/Build",
+        ] {
+            assert_eq!(
+                protection_reason(&home().join(p), &home()),
+                None,
+                "{p} must stay cleanable"
+            );
+        }
+    }
+
+    #[test]
+    fn blocks_protected_paths_regardless_of_case() {
+        // macOS volumes are case-insensitive by default and `fs::canonicalize`
+        // does NOT case-normalize, so these name exactly the same files as
+        // their canonically-cased spellings. A byte-exact denylist misses them.
+        for p in [
+            "/USR/bin",
+            "/system/Library",
+            "/Applications/../Applications", // also caught by the `..` rule
+            "/APPLICATIONS/Foo.app",
+        ] {
+            assert!(is_protected(Path::new(p), &home()), "{p} must be protected");
+        }
+        for p in [
+            "library/Keychains/login.keychain-db",
+            "Library/mail/V10/inbox",
+            "LIBRARY", // ancestor of Keychains/Mail, differently cased
+        ] {
+            assert!(
+                is_protected(&home().join(p), &home()),
+                "~/{p} must be protected"
+            );
+        }
     }
 
     #[test]

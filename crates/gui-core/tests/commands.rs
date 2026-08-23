@@ -72,6 +72,7 @@ fn clean_dry_run_is_default_and_changes_nothing() {
         &home,
         &Filters::default(),
         None,
+        None,
         Consent::default(),
         &DirSink {
             trash_dir: home.join("t"),
@@ -96,6 +97,7 @@ fn clean_with_consent_disposes_via_injected_sink() {
     let summary = clean_with_sink(
         &home,
         &Filters::default(),
+        None,
         None,
         Consent {
             execute: true,
@@ -124,6 +126,7 @@ fn clean_surfaces_mass_delete_refusal_as_err() {
     let err = clean_with_sink(
         &home,
         &Filters::default(),
+        None,
         None,
         Consent {
             execute: true,
@@ -156,6 +159,7 @@ fn clean_only_disposes_selected_categories() {
         &home,
         &Filters::default(),
         Some(&["user-caches".to_string()]),
+        None,
         gui_consent(true),
         &DirSink {
             trash_dir: trash_dir.clone(),
@@ -183,4 +187,90 @@ fn gui_consent_is_trash_only_never_permanent() {
     assert!(!c.confirmed_mass_delete);
     assert!(gui_consent(true).confirmed_mass_delete);
     assert!(!gui_consent(true).allow_permanent);
+}
+
+#[test]
+fn an_empty_selection_disposes_nothing() {
+    // Goes through `clean_at`, which owns the Vec -> Option decision. Calling
+    // `clean_with_sink(Some(&[]))` directly would NOT be a regression gate:
+    // that function never had the bug. The fail-open was `clean()` mapping an
+    // empty vec to `None`, i.e. "no filter", i.e. every category.
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/c.bin"), b"cache");
+    fs::create_dir_all(home.join("Library/Logs")).unwrap();
+    write(&home.join("Library/Logs/x.log"), b"log");
+
+    let summary = macclean_gui_core::clean_at(
+        &home,
+        &home.join("audit.jsonl"),
+        &Filters::default(),
+        Vec::new(),
+        None,
+        true,
+        &DirSink {
+            trash_dir: home.join("bin"),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        summary.executed, 0,
+        "an empty selection must dispose nothing"
+    );
+    assert!(home.join("Library/Caches/app/c.bin").exists());
+    assert!(home.join("Library/Logs/x.log").exists());
+}
+
+#[test]
+fn a_plan_that_grew_past_the_preview_is_refused() {
+    // The plan is rebuilt at execute time, so the user's "yes" must be bound to
+    // a magnitude. Confirming a 1-item preview must not authorize 40 items.
+    let (_g, home) = fake_home();
+    for i in 0..40 {
+        write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"data");
+    }
+
+    let err = macclean_gui_core::clean_at(
+        &home,
+        &home.join("audit.jsonl"),
+        &Filters::default(),
+        vec!["user-caches".to_string()],
+        Some(macclean_gui_core::Expected { count: 1, bytes: 4 }),
+        true,
+        &DirSink {
+            trash_dir: home.join("bin"),
+        },
+    )
+    .unwrap_err();
+
+    assert!(err.contains("changed since the preview"), "got: {err}");
+    assert!(
+        home.join("Library/Caches/app/f0.bin").exists(),
+        "a refused clean must not dispose of anything"
+    );
+}
+
+#[test]
+fn ordinary_churn_between_preview_and_execute_is_allowed() {
+    // Caches change in the seconds a user spends reading the sheet. A couple of
+    // extra files must not block the clean, or the check is unusable.
+    let (_g, home) = fake_home();
+    for i in 0..3 {
+        write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"data");
+    }
+
+    let summary = macclean_gui_core::clean_at(
+        &home,
+        &home.join("audit.jsonl"),
+        &Filters::default(),
+        vec!["user-caches".to_string()],
+        Some(macclean_gui_core::Expected { count: 2, bytes: 8 }),
+        true,
+        &DirSink {
+            trash_dir: home.join("bin"),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(summary.executed, 3);
 }

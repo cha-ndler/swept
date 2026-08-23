@@ -243,7 +243,49 @@ fn resolve_audit_path(
     let parent = absolute
         .parent()
         .ok_or("audit log path has no parent directory")?;
+
+    // Check BEFORE creating anything: creating first and refusing afterwards
+    // would leave directories behind inside a location we then decline to
+    // touch. `canonicalize` needs the path to exist, so test it lexically here
+    // — `is_protected` fails closed on `..`, so an unresolved path is safe to
+    // ask about. (Note we check the *requested* parent, not its nearest
+    // existing ancestor: `~` is itself protected, but that means "never remove
+    // the home directory", not "never create anything inside it".)
+    if safety::denylist::is_protected(parent, home) {
+        return Err(format!(
+            "refused: audit log directory is protected: {}",
+            parent.display()
+        )
+        .into());
+    }
+
+    // The lexical check above cannot see through symlinks, and `create_dir_all`
+    // happily follows an intermediate one (mkdir(2) only refuses to follow the
+    // *final* component). So resolve the deepest ancestor that actually exists,
+    // re-append the tail we would create, and ask where those directories would
+    // really land.
+    //
+    // Note we check the *reconstructed* path, not the existing ancestor itself:
+    // `~` and `~/Library` are both protected, yet creating
+    // `~/Library/Application Support/macclean` inside them is perfectly
+    // legitimate. "Protected" means never destroy this, not never create here.
+    let existing = parent
+        .ancestors()
+        .find(|a| a.exists())
+        .ok_or("audit log path has no existing ancestor directory")?;
+    let tail = parent.strip_prefix(existing).unwrap_or(Path::new(""));
+    let would_land_at = std::fs::canonicalize(existing)?.join(tail);
+    if safety::denylist::is_protected(&would_land_at, home) {
+        return Err(format!(
+            "refused: audit log directory would resolve into a protected location: {}",
+            would_land_at.display()
+        )
+        .into());
+    }
+
     std::fs::create_dir_all(parent)?;
+    // Re-check the now-resolved parent: creation may have followed a symlink
+    // into somewhere protected.
     let canonical_parent = std::fs::canonicalize(parent)?;
     if safety::denylist::is_protected(&canonical_parent, home) {
         return Err(format!(
@@ -309,7 +351,7 @@ fn human_bytes(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_size;
+    use super::{parse_size, resolve_audit_path};
 
     #[test]
     fn parses_bare_bytes() {
@@ -331,5 +373,56 @@ mod tests {
         assert!(parse_size("abc").is_err());
         assert!(parse_size("").is_err());
         assert!(parse_size("1.5G").is_err());
+    }
+
+    #[test]
+    fn audit_path_refuses_a_protected_directory_without_creating_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(dir.path()).unwrap();
+
+        // ~/Library/Keychains is protected, and so is anything we would create
+        // beneath it. The refusal must happen before mkdir, so the tree stays
+        // untouched.
+        let target = home.join("Library/Keychains/deep/nested/audit.jsonl");
+        let err = resolve_audit_path(Some(target), &home).unwrap_err();
+        assert!(
+            err.to_string().contains("protected"),
+            "expected a protection refusal, got: {err}"
+        );
+        assert!(
+            !home.join("Library/Keychains").exists(),
+            "refused path must not be created on the way to refusing it"
+        );
+    }
+
+    #[test]
+    fn audit_path_accepts_the_default_location() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(dir.path()).unwrap();
+        let resolved = resolve_audit_path(None, &home).unwrap();
+        assert!(resolved.ends_with("audit.jsonl"));
+        assert!(resolved.starts_with(&home));
+    }
+
+    #[test]
+    fn audit_path_refuses_a_symlink_into_a_protected_location() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(home.join("Library/Keychains")).unwrap();
+        std::fs::create_dir_all(home.join("safe")).unwrap();
+        std::os::unix::fs::symlink(home.join("Library/Keychains"), home.join("safe/link")).unwrap();
+
+        // Lexically this is just ~/safe/link/deep — nothing protected about it.
+        // It resolves into Keychains, and create_dir_all would follow the link.
+        let err =
+            resolve_audit_path(Some(home.join("safe/link/deep/audit.jsonl")), &home).unwrap_err();
+        assert!(
+            err.to_string().contains("protected"),
+            "expected a protection refusal, got: {err}"
+        );
+        assert!(
+            !home.join("Library/Keychains/deep").exists(),
+            "must not create a directory inside a protected location"
+        );
     }
 }

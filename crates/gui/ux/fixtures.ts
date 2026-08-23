@@ -1,4 +1,4 @@
-import type { LoginItem, ScanReport } from "./types";
+import type { CleanSummary, LoginItem, ScanReport } from "../src/types";
 
 const GiB = 1024 * 1024 * 1024;
 const MiB = 1024 * 1024;
@@ -73,3 +73,12 @@ export const SAMPLE_LOGIN_ITEMS: LoginItem[] = [
     source: "~/Library/LaunchAgents/com.example.oldtool.plist",
   },
 ];
+
+// The outcome the harness shows for the "done" state. Mirrors what a real
+// `clean` returns for SAMPLE_REPORT.
+export const SAMPLE_SUMMARY: CleanSummary = {
+  dry_run: false,
+  executed: 4213,
+  refused: 0,
+  bytes_freed: Math.round(6.44 * GiB),
+};

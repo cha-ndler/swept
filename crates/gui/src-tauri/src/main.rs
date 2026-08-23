@@ -99,13 +99,132 @@ async fn clean(
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            // Never fatal. The tray is a convenience; a failure to create it
+            // must not stop the window from opening, which is what `?` here
+            // would do. The label simply stays absent.
+            if let Err(e) = build_tray(app.handle()) {
+                eprintln!("mac-cleaner: menu-bar extra unavailable: {e}");
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // macOS convention: closing a window does not quit the app. Without
+            // this the menu-bar extra would vanish the moment the window closed,
+            // which is the opposite of what a menu-bar extra is for. Quit lives
+            // in the tray menu and in Cmd-Q.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             scan,
             login_items,
             permissions,
             open_privacy_settings,
+            set_tray_label,
             clean
         ])
         .run(tauri::generate_context!())
         .expect("error while running mac-cleaner");
+}
+
+// ---------------------------------------------------------------------------
+// Menu-bar extra
+//
+// Deliberately has NO cleanup action. The roadmap originally called for a
+// "quick-clean" item, but disposing of files straight from a menu means no
+// preview and no confirmation, which the safety contract forbids outright
+// (item 1: dry-run is the default; item 5: no unconfirmed mass delete). The
+// tray surfaces the figure and opens the window; every disposal still goes
+// through the same review-and-confirm path it always did.
+// ---------------------------------------------------------------------------
+
+const TRAY_ID: &str = "main";
+const MENU_OPEN: &str = "open";
+const MENU_QUIT: &str = "quit";
+/// The menu-bar strip is narrow and shared with every other extra. A label
+/// longer than this is not something the user wants sitting there.
+const MAX_TRAY_LABEL: usize = 16;
+/// Shown before the first scan finishes. There is no figure yet, and an em dash
+/// says that honestly — unlike a zero, which would claim there is nothing to
+/// reclaim.
+const TRAY_PLACEHOLDER: &str = "—";
+
+fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder};
+    use tauri::tray::TrayIconBuilder;
+
+    let open = MenuItemBuilder::with_id(MENU_OPEN, "Open mac-cleaner").build(app)?;
+    let quit = MenuItemBuilder::with_id(MENU_QUIT, "Quit mac-cleaner").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .item(&open)
+        .separator()
+        .item(&quit)
+        .build()?;
+
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&menu)
+        .tooltip("mac-cleaner")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            MENU_OPEN => show_main_window(app),
+            MENU_QUIT => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        });
+
+    match app.default_window_icon() {
+        Some(icon) => tray = tray.icon(icon.clone()),
+        // Not fatal — the title alone keeps the item visible — but worth saying,
+        // because an icon-less menu-bar extra is a packaging problem.
+        None => eprintln!("mac-cleaner: no bundled icon for the menu-bar extra"),
+    }
+
+    // Never leave both the icon and the title unset: a status item with neither
+    // is zero-width, so build() succeeds and nothing appears. This placeholder
+    // is replaced by the real figure as soon as a scan completes.
+    tray = tray.title(TRAY_PLACEHOLDER);
+
+    tray.build(app)?;
+    Ok(())
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// Put the latest reclaimable figure in the menu bar.
+///
+/// The frontend sends the string it is already displaying rather than a number
+/// for us to re-format. Two formatters would eventually disagree, and a menu bar
+/// that contradicts the window is exactly the kind of small dishonesty this app
+/// is trying not to have. `None` clears it — after a failed scan there is no
+/// honest figure to show.
+#[tauri::command]
+fn set_tray_label(app: AppHandle, label: Option<String>) -> Result<(), String> {
+    let tray = app
+        .tray_by_id(TRAY_ID)
+        .ok_or_else(|| "no tray icon".to_string())?;
+    let label = label
+        .map(|l| l.trim().chars().take(MAX_TRAY_LABEL).collect::<String>())
+        .filter(|l| !l.is_empty())
+        .unwrap_or_else(|| TRAY_PLACEHOLDER.to_string());
+    tray.set_title(Some(&label)).map_err(|e| e.to_string())
 }

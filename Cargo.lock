@@ -478,6 +478,7 @@ dependencies = [
  "macclean-core",
  "macclean-safety",
  "serde",
+ "serde_json",
  "tempfile",
 ]
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBytes } from "./format";
 import type { CategorySummary, CleanSummary, Filters, ScanReport } from "./types";
-import { call, describeError, isDesktopApp } from "./backend";
+import { call, describeError, isDesktopApp, onScanProgress } from "./backend";
+import type { ScanProgress } from "./backend";
 
 type View = "loading" | "results" | "empty" | "error";
 type Phase = "none" | "confirm" | "cleaning" | "done";
@@ -16,6 +17,22 @@ export default function CleanView() {
   const [cleanError, setCleanError] = useState("");
   const [olderDays, setOlderDays] = useState("");
   const [minSize, setMinSize] = useState("");
+  const [progress, setProgress] = useState<ScanProgress | null>(null);
+
+  // The backend emits cumulative progress while it walks. Subscribe once for
+  // the lifetime of the view; `runScan` clears the last reading when it starts.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void onScanProgress((p) => setProgress(p)).then((off) => {
+      if (cancelled) off();
+      else stop = off;
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, []);
 
   function seed(r: ScanReport) {
     setReport(r);
@@ -33,6 +50,7 @@ export default function CleanView() {
     // though `filters` has already changed, so confirming it would apply the
     // user's consent to a set they never saw.
     setPhase("none");
+    setProgress(null);
     setView("loading");
     try {
       const r = await call<ScanReport>("scan", { filters });
@@ -116,7 +134,7 @@ export default function CleanView() {
         disabled={view === "loading"}
       />
 
-      {view === "loading" && <LoadingSkeleton />}
+      {view === "loading" && <Scanning progress={progress} />}
       {view === "error" && (
         <ErrorState
           message={error}
@@ -301,14 +319,33 @@ function DoneCard({ summary }: { summary: CleanSummary }) {
   );
 }
 
-function LoadingSkeleton() {
+function Scanning({ progress }: { progress: ScanProgress | null }) {
+  // A scan has no knowable total until it finishes, so there is no honest
+  // percentage to show. Report the real counts instead — they move immediately
+  // and tell the user exactly what is happening.
+  const examined = progress?.examined ?? 0;
+  const found = progress?.bytes ?? 0;
   return (
-    <div className="mt-3 animate-pulse space-y-2" role="status" aria-busy="true" aria-label="Scanning">
-      <div className="h-[92px] rounded-xl border border-border bg-surface" />
-      {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="h-[68px] rounded-xl border border-border bg-surface" />
-      ))}
-    </div>
+    <section
+      className="mt-3 rounded-xl border border-border bg-surface p-8 text-center"
+      role="status"
+      aria-busy="true"
+      aria-live="polite"
+      aria-label="Scanning"
+    >
+      <p className="text-lg font-medium">Scanning…</p>
+      <p className="text-muted mt-1 text-sm tabular-nums">
+        {examined === 0
+          ? "Looking through your caches, logs and build artifacts."
+          : `${examined.toLocaleString()} files examined · ${formatBytes(found)} reclaimable so far`}
+      </p>
+      <div className="mt-5 h-1 overflow-hidden rounded bg-bg" aria-hidden="true">
+        <div className="scan-sweep h-full w-1/3 rounded bg-accent" />
+      </div>
+      <p className="text-muted mt-4 text-xs">
+        Read-only. Nothing is changed by a scan.
+      </p>
+    </section>
   );
 }
 

@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "mac-cleaner",
         "width": 920,
         "height": 640,
@@ -24,7 +25,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "category": "Utility",
     "shortDescription": "Safe, dry-run-first macOS junk cleaner",
     "icon": [

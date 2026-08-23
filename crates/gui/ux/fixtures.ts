@@ -3,8 +3,10 @@ import type { CleanSummary, LoginItem, ScanReport } from "../src/types";
 const GiB = 1024 * 1024 * 1024;
 const MiB = 1024 * 1024;
 
-// Representative data so the UI renders in the browser/Playwright (where the
-// Tauri `scan` command isn't available). The real app uses live scan results.
+// Representative data for the UX oracle, injected through Tauri's own transport
+// so the screenshots exercise the real data path. Category order matches what
+// the backend actually produces: `ScanReport::from_plan` rolls up through a
+// BTreeMap keyed by category id, so a real report is always sorted by id.
 export const SAMPLE_REPORT: ScanReport = {
   total_count: 4213,
   total_bytes: Math.round(6.44 * GiB),
@@ -13,11 +15,11 @@ export const SAMPLE_REPORT: ScanReport = {
   items: [],
   by_category: [
     {
-      category: "xcode-derived-data",
-      name: "Xcode derived data",
-      description: "Build intermediates and indexes; rebuilt automatically.",
-      count: 312,
-      bytes: Math.round(4.1 * GiB),
+      category: "homebrew-downloads",
+      name: "Homebrew downloads",
+      description: "Cached package downloads; re-downloaded on demand.",
+      count: 96,
+      bytes: Math.round(812 * MiB),
     },
     {
       category: "user-caches",
@@ -27,18 +29,18 @@ export const SAMPLE_REPORT: ScanReport = {
       bytes: Math.round(1.2 * GiB),
     },
     {
-      category: "homebrew-downloads",
-      name: "Homebrew downloads",
-      description: "Cached package downloads; re-downloaded on demand.",
-      count: 96,
-      bytes: Math.round(812 * MiB),
-    },
-    {
       category: "user-logs",
       name: "Logs",
       description: "Per-user application and system logs.",
       count: 225,
       bytes: Math.round(348 * MiB),
+    },
+    {
+      category: "xcode-derived-data",
+      name: "Xcode derived data",
+      description: "Build intermediates and indexes; rebuilt automatically.",
+      count: 312,
+      bytes: Math.round(4.1 * GiB),
     },
   ],
 };

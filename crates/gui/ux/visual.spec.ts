@@ -33,7 +33,15 @@ async function installBackend(
   await page.addInitScript((p) => {
     const w = window as unknown as Record<string, unknown>;
     w.__TAURI_INTERNALS__ = {
-      invoke: (cmd: string) => {
+      invoke: (cmd: string, args: { handler?: (e: unknown) => void }) => {
+        // `listen()` round-trips through invoke; `transformCallback` below is the
+        // identity, so `args.handler` is the raw callback. Stash it so a test can
+        // drive real progress renders.
+        if (cmd === "plugin:event|listen") {
+          w.__emit = (payload: unknown) => args.handler?.({ payload });
+          return Promise.resolve(1);
+        }
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
         if (p.hang) return new Promise(() => {});
         if (cmd === "scan") return Promise.resolve(p.report);
         if (cmd === "login_items") return Promise.resolve(p.items);
@@ -79,6 +87,15 @@ test("scan loading", async ({ page }, testInfo) => {
   await installBackend(page, { hang: true });
   await page.goto("/");
   await expect(page.getByRole("status")).toBeVisible();
+
+  // Drive a real progress reading so the snapshot shows the state a user
+  // actually sees mid-scan, not just the initial frame.
+  await page.evaluate(() => {
+    const w = window as unknown as { __emit?: (p: unknown) => void };
+    w.__emit?.({ examined: 48231, planned: 46012, bytes: 7_600_000_000 });
+  });
+  await expect(page.getByText(/48,231 files examined/)).toBeVisible();
+
   await capture(page, "scan-loading", testInfo.project.name);
 });
 
@@ -103,7 +120,11 @@ test("scan error", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__TAURI_INTERNALS__ = {
-      invoke: () => Promise.reject("Couldn’t read ~/Library/Caches (permission denied)."),
+      invoke: (cmd: string) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        return Promise.reject("Couldn’t read ~/Library/Caches (permission denied).");
+      },
       transformCallback: (cb: unknown) => cb,
     };
   });

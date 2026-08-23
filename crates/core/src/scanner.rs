@@ -56,9 +56,35 @@ impl ScanConfig {
     }
 }
 
+/// How far a scan has got. Cumulative and monotonically non-decreasing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Progress {
+    /// Files looked at so far, including ones that were filtered out.
+    pub examined: usize,
+    /// Files added to the plan so far.
+    pub planned: usize,
+    /// Bytes added to the plan so far.
+    pub bytes: u64,
+}
+
+/// Report progress at most every this many files. A scan of a real home looks
+/// at ~165k files; a callback per file would swamp the IPC channel and dominate
+/// the scan's own cost, so updates are batched.
+const PROGRESS_EVERY: usize = 2_000;
+
 /// Walk the configured roots and build a [`Plan`]. Never mutates anything.
 pub fn scan(cfg: &ScanConfig) -> Plan {
+    scan_with_progress(cfg, &mut |_| {})
+}
+
+/// [`scan`], reporting progress as it goes.
+///
+/// `on_progress` is called periodically and once more at the end, so the final
+/// call always describes the returned plan. Planning is unaffected: this and
+/// [`scan`] produce identical plans for identical inputs.
+pub fn scan_with_progress(cfg: &ScanConfig, on_progress: &mut dyn FnMut(Progress)) -> Plan {
     let mut plan = Plan::default();
+    let mut progress = Progress::default();
     let allowed = allowlist::default_roots(&cfg.home);
     let now = SystemTime::now();
 
@@ -75,6 +101,10 @@ pub fn scan(cfg: &ScanConfig) -> Plan {
         {
             if !entry.file_type().is_file() {
                 continue;
+            }
+            progress.examined += 1;
+            if progress.examined % PROGRESS_EVERY == 0 {
+                on_progress(progress);
             }
             let safe = match guard(entry.path(), &cfg.home) {
                 Ok(s) => s,
@@ -106,6 +136,8 @@ pub fn scan(cfg: &ScanConfig) -> Plan {
             let category = crate::categories::classify(safe.as_path(), &cfg.home)
                 .map(|c| c.id.to_string())
                 .unwrap_or_else(|| "other".to_string());
+            progress.planned += 1;
+            progress.bytes += meta.len();
             plan.actions.push(PlannedAction {
                 path: safe,
                 size_bytes: meta.len(),
@@ -115,6 +147,9 @@ pub fn scan(cfg: &ScanConfig) -> Plan {
         }
     }
 
+    // Always finish with an update describing the plan actually returned, so a
+    // caller never ends on a stale intermediate count.
+    on_progress(progress);
     plan
 }
 

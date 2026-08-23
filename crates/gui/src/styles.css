@@ -2,27 +2,136 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design tokens — a small, macOS-flavored dark palette. The component layer and
-   Tailwind theme reference these CSS variables so theming stays in one place. */
+/* Design tokens — ported verbatim from `design/canvas/index.html`, which is the
+   single source of truth (see design/rubric.md § Hard specs). Every value here
+   was measured before it was used: the worst text pair is 4.77:1 and the worst
+   graphic pair 3.70:1, so no combination below can fail WCAG AA.
+
+   `tailwind.config.js` maps these to utility classes — nothing in the app should
+   reference a raw colour. */
 :root {
-  --bg: #1e1e22;
-  --surface: #2a2a30;
-  --border: #3a3a42;
-  --text: #f5f5f7;
-  --muted: #a1a1aa;
-  /* macOS blue, darkened so white text on it meets WCAG AA (>=4.5:1). */
-  --accent: #0a66cc;
-  --danger: #ff453a;
+  /* -- surfaces: a four-step elevation ladder, darkest at the back ---------- */
+  --bg-window: #17171a; /* the content canvas                                 */
+  --sidebar: #232328; /* vibrancy tint (lighter than content, per macOS)      */
+  --surface-1: #1f1f23; /* resting cards and list groups                      */
+  --surface-2: #26262b; /* hover, popovers, raised controls                   */
+  --surface-3: #2e2e34; /* sheets and modals — the highest layer              */
+
+  /* -- hairlines: macOS separates with light, not with boxes ---------------- */
+  --separator: rgba(255, 255, 255, 0.075);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+
+  /* -- text ----------------------------------------------------------------- */
+  --text: #f2f2f7; /* >= 12.09:1 on every surface                             */
+  --text-2: #b4b4bd; /* >=  6.56:1                                           */
+  --text-3: #9a9aa3; /* >=  4.83:1 — still AA, never merely decorative       */
+
+  /* -- accent: THREE roles that are never interchangeable -------------------
+     This split is the point. The vivid system blue is the natural choice for a
+     button and it is only 3.65:1 against white, so it cannot legally carry a
+     white label. Any new blue must declare which role it is. */
+  --accent-fill: #0a66cc; /* the only blue that may carry a white label (5.55:1) */
+  --accent-graphic: #0a84ff; /* rings, bars, tints. NEVER text                  */
+  --accent-text: #409cff; /* accent-coloured text (>= 4.77:1)                   */
+  --accent-tint: rgba(10, 132, 255, 0.16);
+
+  /* -- semantic ------------------------------------------------------------- */
+  --success: #30d158;
+  --warning: #ffd60a;
+  --danger-fill: #c9241b; /* white label: 5.60:1                              */
+  --danger-text: #ff6961; /* danger-coloured text: >= 4.78:1                  */
+
+  /* -- category hues: one per cleaner, stable across every view -------------- */
+  --cat-caches: #0a84ff;
+  --cat-logs: #bf5af2;
+  --cat-trashes: #ff9f0a;
+  --cat-build: #30d158;
+  --cat-large: #ff6482;
+  --cat-browser: #64d2ff;
+
+  /* -- elevation: exactly three levels --------------------------------------- */
+  --e2: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.22);
+  --e3: 0 2px 8px rgba(0, 0, 0, 0.35), 0 16px 48px rgba(0, 0, 0, 0.5);
+
+  /* -- motion: two durations, one curve --------------------------------------- */
+  --t-fast: 150ms; /* hover, selection, checkbox, segment                      */
+  --t-sheet: 220ms; /* sheet and modal entry                                   */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1); /* macOS-like: fast out, soft settle */
+
   color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
     sans-serif;
-  background: var(--bg);
+  /* Transparent on purpose: the window carries an NSVisualEffectView (sidebar
+     material) behind the webview, and an opaque body would hide it. Only the
+     content pane paints a solid background — see `.content` below. */
+  background: transparent;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* The strip the traffic lights are inset over by `titleBarStyle: "Overlay"`.
+   It is also the window's drag handle: Overlay removes the OS title bar, so
+   without a `data-tauri-drag-region` the window cannot be moved at all. */
+.titlebar-drag {
+  height: 28px;
+  flex: none;
+}
+
+.sidebar {
+  /* Mostly transparent so the vibrancy material reads through it; the gradient
+     is the same subtle top-light macOS gives a real sidebar. If the effect ever
+     fails to apply, --sidebar underneath keeps this legible rather than clear. */
+  background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.05),
+      rgba(255, 255, 255, 0.012)
+    ),
+    color-mix(in srgb, var(--sidebar) 72%, transparent);
+  border-right: 1px solid rgba(0, 0, 0, 0.45);
+}
+
+.content {
+  background: var(--bg-window);
+}
+
+/* Scrollbars: the default webview scrollbar is a bright, chunky, unmistakably
+   web-page artifact. */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+  background-clip: content-box;
+}
+
+/* Keyboard focus stays visible everywhere; the webview default is easy to lose
+   against these surfaces. */
+:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* Indeterminate scan bar: a scan has no knowable total until it completes, so
@@ -30,8 +139,12 @@ body {
    Tailwind arbitrary value, so the reduced-motion override below is a plain
    selector instead of an escaped one. */
 @keyframes scan-sweep {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(300%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
 }
 
 .scan-sweep {
@@ -43,5 +156,12 @@ body {
     animation: none;
     width: 100%;
     opacity: 0.35;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

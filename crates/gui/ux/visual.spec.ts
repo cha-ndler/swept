@@ -70,7 +70,7 @@ async function capture(page: Page, name: string, project: string) {
 test("scan results", async ({ page }, testInfo) => {
   await installBackend(page);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "mac-cleaner" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Cleanup" })).toBeVisible();
   await capture(page, "scan-results", testInfo.project.name);
 });
 
@@ -112,7 +112,8 @@ test("scan done", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: /review & clean/i }).click();
   await page.getByRole("button", { name: /^move to/i }).click();
-  await expect(page.getByText("Cleanup complete")).toBeVisible();
+  await expect(page.getByText(/moved to the Trash/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: /back to cleanup/i })).toBeVisible();
   await capture(page, "scan-done", testInfo.project.name);
 });
 
@@ -136,6 +137,6 @@ test("scan error", async ({ page }, testInfo) => {
 test("startup tab", async ({ page }, testInfo) => {
   await installBackend(page);
   await page.goto("/?tab=startup");
-  await expect(page.getByRole("heading", { name: "mac-cleaner" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Startup" })).toBeVisible();
   await capture(page, "startup", testInfo.project.name);
 });

@@ -1,0 +1,1263 @@
+<title>mac-cleaner Design Canvas</title>
+
+<!--
+  mac-cleaner design canvas &mdash; U0 of the v0.4 "native Mac shell" milestone.
+
+  This is the DESIGN TARGET, not the current app. It exists so that "pleasant"
+  and "distinctive" become checkable: every artboard below is a first-party
+  exemplar the `ux-critic` subagent scores against (see design/rubric.md), which
+  replaces the third-party competitor screenshots we deliberately never shipped.
+
+  Two rules this file obeys, because it is the reference:
+    1. Every colour pair is measured, not asserted. The ratios printed on the
+       Foundations artboard are real WCAG 2.1 figures.
+    2. Non-ASCII characters are written as HTML entities, so the file renders
+       identically over file://, http://, and inside a published artifact
+       regardless of charset sniffing.
+
+  Render to PNG with:  node design/canvas/render.mjs
+-->
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  /* ==========================================================================
+     TOKENS &mdash; the single source of truth. U3 ports this block verbatim into
+     crates/gui/src/styles.css. Nothing below uses a raw colour value.
+     ========================================================================== */
+  :root {
+    /* -- surfaces: a four-step elevation ladder, darkest at the back -------- */
+    --bg-window:  #17171A;   /* the content canvas                            */
+    --sidebar:    #232328;   /* vibrancy source colour (lighter than content) */
+    --surface-1:  #1F1F23;   /* resting cards and list groups                 */
+    --surface-2:  #26262B;   /* hover, popovers, raised controls              */
+    --surface-3:  #2E2E34;   /* sheets and modals &mdash; the highest layer   */
+
+    /* -- hairlines: macOS separates with light, not with boxes ------------- */
+    --separator:      rgba(255,255,255,.075);
+    --border:         rgba(255,255,255,.12);
+    --border-strong:  rgba(255,255,255,.20);
+
+    /* -- text -------------------------------------------------------------- */
+    --text:    #F2F2F7;   /* >= 12.09:1 on every surface                      */
+    --text-2:  #B4B4BD;   /* >=  6.56:1                                       */
+    --text-3:  #9A9AA3;   /* >=  4.83:1 &mdash; still AA, never decorative    */
+
+    /* -- accent: THREE roles that are never interchangeable ---------------- */
+    --accent-fill:     #0A66CC;             /* the only blue that may carry a
+                                               white label (5.55:1)          */
+    --accent-graphic:  #0A84FF;             /* rings, bars, tints. Never text
+                                               &mdash; only 3.65:1 on white  */
+    --accent-text:     #409CFF;             /* accent-coloured TEXT (>=4.77)  */
+    --accent-tint:     rgba(10,132,255,.16);
+    --accent-tint-2:   rgba(10,132,255,.28);
+
+    /* -- semantic ---------------------------------------------------------- */
+    --success:     #30D158;
+    --warning:     #FFD60A;
+    --danger-fill: #C9241B;   /* white label: 5.60:1                          */
+    --danger-text: #FF6961;   /* danger-coloured text: >=4.78:1               */
+
+    /* -- category hues: one per cleaner, stable across every view ----------- */
+    --cat-caches:   #0A84FF;
+    --cat-logs:     #BF5AF2;
+    --cat-trashes:  #FF9F0A;
+    --cat-build:    #30D158;
+    --cat-large:    #FF6482;
+    --cat-browser:  #64D2FF;
+
+    /* -- type: derived from the macOS system scale -------------------------- */
+    --fs-micro:    11px;  /* section labels, uppercase, tracked               */
+    --fs-caption:  12px;  /* metadata under a row                            */
+    --fs-body:     13px;  /* the macOS default control size                  */
+    --fs-emph:     15px;
+    --fs-title:    17px;
+    --fs-display:  28px;
+    --fs-hero:     52px;  /* the reclaimable total, and nothing else          */
+
+    /* -- radii --------------------------------------------------------------*/
+    --r-control: 6px;
+    --r-card:    10px;
+    --r-panel:   14px;
+    --r-pill:    999px;
+
+    /* -- elevation: exactly three levels ----------------------------------- */
+    --e1: none;
+    --e2: 0 1px 2px rgba(0,0,0,.30), 0 4px 12px rgba(0,0,0,.22);
+    --e3: 0 2px 8px rgba(0,0,0,.35), 0 16px 48px rgba(0,0,0,.50);
+
+    /* -- motion: two durations, one curve ---------------------------------- */
+    --t-fast:  150ms;   /* hover, selection, checkbox                        */
+    --t-sheet: 220ms;   /* sheet and modal entry                             */
+    --ease:    cubic-bezier(.32,.72,0,1);   /* macOS-like: fast out, soft in */
+
+    /* The app renders in the macOS system face, so the artboards must too. */
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+    /* The page AROUND the artboards speaks in a different voice on purpose:
+       IBM Plex is a drafting-table face, so documentation never reads as if it
+       were part of the UI it documents. */
+    --chrome:      "IBM Plex Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --chrome-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  /* ==========================================================================
+     CANVAS CHROME &mdash; the page that presents the artboards. Deliberately
+     plain: nothing here is part of the product design.
+     ========================================================================== */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0E0E10;
+    color: var(--text);
+    font-family: var(--chrome);
+    font-size: var(--fs-body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Everything that DEPICTS the product renders in the product face. */
+  .window, .ui, .spec td.samp { font-family: var(--font); }
+  .page { max-width: 1140px; margin: 0 auto; padding: 56px 24px 96px; }
+
+  .masthead { border-bottom: 1px solid var(--separator); padding-bottom: 28px; margin-bottom: 12px; }
+  .masthead h1 { font-size: 34px; font-weight: 600; letter-spacing: -.025em; margin: 0; text-wrap: balance; }
+  .masthead .sub { color: var(--text-2); font-size: 16px; margin: 10px 0 0; max-width: 64ch; line-height: 1.6; }
+  .masthead .target { color: var(--text-3); font-size: var(--fs-caption); margin: 16px 0 0; }
+  .masthead .target b { color: var(--text-2); font-weight: 600; }
+
+  .board { margin-top: 56px; }
+  .board > h2 {
+    font-size: var(--fs-micro); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--text-3); margin: 0 0 6px;
+  }
+  .board > h3 { font-size: 23px; font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; text-wrap: balance; }
+  .board > .why { color: var(--text-2); font-size: 14px; line-height: 1.65; margin: 0 0 20px; max-width: 72ch; }
+  .board > .why code { font-family: var(--chrome-mono); font-size: 12px; color: var(--text); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  .board > .why b { color: var(--text); font-weight: 600; }
+
+  /* The artboard frame: a real 1000x660 macOS window. */
+  .window {
+    width: 1000px; height: 660px; border-radius: 12px; overflow: hidden;
+    display: flex; box-shadow: var(--e3);
+    border: 1px solid rgba(255,255,255,.09);
+    background: var(--bg-window);
+  }
+  .scaler { width: 100%; overflow: hidden; border-radius: 12px; }
+  .scaler > .window { transform-origin: top left; }
+
+  /* ==========================================================================
+     PRODUCT COMPONENTS
+     ========================================================================== */
+
+  /* -- traffic lights ------------------------------------------------------ */
+  .lights { display: flex; gap: 8px; align-items: center; height: 28px; padding-left: 4px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1) { background: #FF5F57; }
+  .lights i:nth-child(2) { background: #FEBC2E; }
+  .lights i:nth-child(3) { background: #28C840; }
+
+  /* -- sidebar ------------------------------------------------------------- */
+  .sidebar {
+    width: 232px; flex: none; padding: 12px 10px 10px;
+    display: flex; flex-direction: column;
+    /* Simulates NSVisualEffectView "sidebar" vibrancy: the real app gets this
+       from windowEffects, so the colour here is only a stand-in for the render. */
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.012)),
+      var(--sidebar);
+    border-right: 1px solid rgba(0,0,0,.45);
+  }
+  .side-label {
+    font-size: var(--fs-micro); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--text-3); padding: 0 8px; margin: 16px 0 4px;
+  }
+  .side-row {
+    display: flex; align-items: center; gap: 8px; height: 30px;
+    padding: 0 8px; border-radius: var(--r-control); cursor: default;
+    color: var(--text-2); transition: background var(--t-fast) var(--ease);
+  }
+  .side-row .ico { width: 16px; height: 16px; flex: none; color: var(--text-3); }
+  .side-row .name { font-size: var(--fs-body); font-weight: 500; flex: 1; }
+  .side-row .badge {
+    font-family: var(--mono); font-size: var(--fs-micro); font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+  }
+  .side-row:hover { background: rgba(255,255,255,.05); }
+  .side-row.sel { background: var(--accent-tint); color: var(--text); }
+  .side-row.sel .ico { color: var(--accent-text); }
+  .side-row.sel .name { font-weight: 600; }
+  .side-row.sel .badge { color: var(--accent-text); }
+
+  .side-foot { margin-top: auto; padding: 10px 8px 2px; border-top: 1px solid var(--separator); }
+  .side-foot .disk { font-size: var(--fs-micro); color: var(--text-3); display: flex; justify-content: space-between; }
+  .side-foot .bar { height: 4px; border-radius: var(--r-pill); background: rgba(255,255,255,.09); margin: 6px 0 0; overflow: hidden; }
+  .side-foot .bar i { display: block; height: 100%; width: 71%; background: var(--text-3); border-radius: var(--r-pill); }
+
+  /* -- content ------------------------------------------------------------- */
+  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-window); }
+  .toolbar {
+    height: 52px; flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 0 20px; border-bottom: 1px solid var(--separator);
+  }
+  .toolbar h2 { font-size: var(--fs-title); font-weight: 600; letter-spacing: -.01em; margin: 0; }
+  .toolbar .spacer { flex: 1; }
+  .body { flex: 1; min-height: 0; overflow: hidden; padding: 24px 24px 20px; }
+
+  /* -- controls ------------------------------------------------------------ */
+  .btn {
+    height: 28px; padding: 0 14px; border-radius: var(--r-control); border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); font-family: var(--font);
+    font-size: var(--fs-body); font-weight: 500; display: inline-flex; align-items: center; gap: 6px;
+    transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+  }
+  .btn:hover { background: #303037; border-color: var(--border-strong); }
+  .btn.primary { background: var(--accent-fill); border-color: transparent; color: #fff; font-weight: 600; }
+  .btn.primary:hover { background: #0B72E4; }
+  .btn.danger { background: var(--danger-fill); border-color: transparent; color: #fff; font-weight: 600; }
+  .btn.lg { height: 34px; padding: 0 20px; font-size: var(--fs-emph); border-radius: 8px; }
+  .btn.quiet { background: transparent; border-color: transparent; color: var(--text-2); }
+  .btn.quiet:hover { background: rgba(255,255,255,.06); color: var(--text); }
+
+  /* Segmented control &mdash; replaces every <select>. The stock dropdown is
+     the single loudest "this is a web page" tell in v0.2. */
+  .seg { display: inline-flex; padding: 2px; gap: 2px; background: rgba(255,255,255,.06);
+         border-radius: 7px; border: 1px solid var(--separator); }
+  .seg button {
+    height: 22px; padding: 0 10px; border: 0; background: transparent; color: var(--text-2);
+    font-family: var(--font); font-size: var(--fs-caption); font-weight: 500; border-radius: 5px;
+    transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  }
+  .seg button[aria-pressed="true"] { background: var(--surface-3); color: var(--text); box-shadow: var(--e2); }
+
+  /* Checkbox &mdash; 14px, accent-filled, real checkmark. */
+  .check { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--border-strong);
+           background: rgba(255,255,255,.04); flex: none; display: grid; place-items: center;
+           transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease); }
+  .check.on { background: var(--accent-fill); border-color: var(--accent-fill); }
+  .check.on::after { content: ""; width: 8px; height: 5px; border-left: 1.75px solid #fff;
+                     border-bottom: 1.75px solid #fff; transform: rotate(-45deg) translate(.5px,-1px); }
+  .check.mixed { background: var(--accent-fill); border-color: var(--accent-fill); }
+  .check.mixed::after { content: ""; width: 8px; height: 1.75px; background: #fff; border-radius: 1px; }
+
+  /* -- inset grouped list: one card, hairline-separated rows ---------------- */
+  .group { background: var(--surface-1); border: 1px solid var(--separator); border-radius: var(--r-card); overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 11px 14px; transition: background var(--t-fast) var(--ease); }
+  .row + .row { border-top: 1px solid var(--separator); }
+  .row:hover { background: var(--surface-2); }
+  .row .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .row .ico { width: 17px; height: 17px; flex: none; }
+  .row .main { flex: 1; min-width: 0; }
+  .row .nm { font-size: var(--fs-body); font-weight: 500; }
+  .row .sub { font-size: var(--fs-caption); color: var(--text-3); margin-top: 2px; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: var(--fs-body); }
+
+  /* -- the proportional stacked bar (replaces four independent flat bars) --- */
+  .stack { display: flex; height: 8px; border-radius: var(--r-pill); overflow: hidden; gap: 2px; background: rgba(255,255,255,.05); }
+  .stack i { display: block; height: 100%; }
+  .stack i:first-child { border-radius: var(--r-pill) 0 0 var(--r-pill); }
+  .stack i:last-child  { border-radius: 0 var(--r-pill) var(--r-pill) 0; }
+  /* A category too small to see still gets a visible minimum &mdash; v0.2
+     rendered Logs (0.08% of the max) as an empty bar, reading as zero. */
+  .stack i { min-width: 3px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-caption); color: var(--text-2); }
+  .legend i { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* -- banners ------------------------------------------------------------- */
+  .banner { display: flex; gap: 10px; padding: 11px 14px; border-radius: var(--r-card);
+            background: var(--surface-1); border: 1px solid var(--separator); font-size: var(--fs-caption); color: var(--text-2); line-height: 1.5; }
+  .banner .ico { width: 15px; height: 15px; flex: none; margin-top: 1px; color: var(--text-3); }
+  .banner b { color: var(--text); font-weight: 600; }
+  .banner.consent { background: rgba(255,159,10,.07); border-color: rgba(255,159,10,.28); }
+  .banner.consent .ico { color: var(--cat-trashes); }
+  .banner.safe .ico { color: var(--success); }
+
+  /* -- hero ---------------------------------------------------------------- */
+  .hero-num { font-size: var(--fs-hero); font-weight: 600; letter-spacing: -.025em;
+              font-variant-numeric: tabular-nums; line-height: 1; }
+  .hero-num .unit { font-size: 24px; font-weight: 500; color: var(--text-2); margin-left: 4px; letter-spacing: 0; }
+  .ring-wrap { position: relative; width: 220px; height: 220px; flex: none; }
+  .ring-center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+  .ring-track { stroke: rgba(255,255,255,.055); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .ring-spin { animation: spin 1.6s linear infinite; transform-origin: 110px 110px; }
+
+  /* -- foundations swatches ------------------------------------------------ */
+  .fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px,1fr)); gap: 10px; }
+  .sw { border-radius: var(--r-card); border: 1px solid var(--separator); overflow: hidden; background: var(--surface-1); }
+  .sw .chip { height: 52px; }
+  .sw .meta { padding: 8px 10px 9px; }
+  .sw .k { font-size: var(--fs-caption); font-weight: 600; }
+  .sw .v { font-family: var(--chrome-mono); font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+  .sw .r { font-family: var(--chrome-mono); font-size: 10.5px; margin-top: 3px; color: var(--success); }
+
+  .spec { width: 100%; border-collapse: collapse; font-size: var(--fs-caption); }
+  .spec th { text-align: left; font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .07em;
+             color: var(--text-3); font-weight: 600; padding: 0 12px 8px 0; }
+  .spec td { padding: 7px 12px 7px 0; border-top: 1px solid var(--separator); color: var(--text-2); vertical-align: baseline; }
+  .spec td.k { color: var(--text); font-family: var(--chrome-mono); font-size: 11.5px; white-space: nowrap; }
+  .spec td.samp { color: var(--text); }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .three { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+  .elev { border-radius: var(--r-card); padding: 16px; font-size: var(--fs-caption); color: var(--text-2); }
+  .elev b { display: block; color: var(--text); font-size: var(--fs-body); margin-bottom: 4px; }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- SF-Symbols-flavoured line icons: 17px box, 1.5 stroke, round caps. -->
+    <g id="i-sparkle"><path d="M8 1.5 9.6 6 14 7.6 9.6 9.2 8 13.6 6.4 9.2 2 7.6 6.4 6Z"/><path d="M13 11.2 13.7 13l1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7Z"/></g>
+    <g id="i-stack"><path d="M8 1.8 14.5 5.4 8 9 1.5 5.4Z"/><path d="M1.5 8.9 8 12.5l6.5-3.6"/><path d="M1.5 12.2 8 15.8l6.5-3.6"/></g>
+    <g id="i-apps"><rect x="1.8" y="1.8" width="5.4" height="5.4" rx="1.4"/><rect x="8.8" y="1.8" width="5.4" height="5.4" rx="1.4"/><rect x="1.8" y="8.8" width="5.4" height="5.4" rx="1.4"/><rect x="8.8" y="8.8" width="5.4" height="5.4" rx="1.4"/></g>
+    <g id="i-doc"><path d="M3.4 1.8h5.2L12.6 6v8.2a1 1 0 0 1-1 1H3.4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1Z"/><path d="M8.4 1.9V6h4.1"/><path d="M5 9.6h4M5 12h5"/></g>
+    <g id="i-lens"><circle cx="8" cy="8" r="6.3"/><circle cx="8" cy="8" r="2.2"/><path d="M8 1.7v3.9M8 10.4v3.9M1.7 8h3.9M10.4 8h3.9"/></g>
+    <g id="i-shield"><path d="M8 1.6 13.4 3.7v4.6c0 3.2-2.2 5.6-5.4 6.8-3.2-1.2-5.4-3.6-5.4-6.8V3.7Z"/><path d="M5.7 8.2 7.3 9.8l3.2-3.4"/></g>
+    <g id="i-wrench"><path d="M10.3 1.9a3.9 3.9 0 0 0-3.6 5.4L2 12l2 2 4.7-4.7a3.9 3.9 0 0 0 5.4-3.6c0-.6-.1-1.1-.3-1.6l-2.3 2.3-2-2 2.3-2.3c-.5-.2-1-.2-1.5-.2Z"/></g>
+    <g id="i-info"><circle cx="8" cy="8" r="6.4"/><path d="M8 7.3v4.1M8 4.7v.1"/></g>
+    <g id="i-lock"><rect x="2.9" y="6.9" width="10.2" height="7.4" rx="1.6"/><path d="M5.4 6.9V5.1a2.6 2.6 0 0 1 5.2 0v1.8"/></g>
+    <g id="i-clock"><circle cx="8" cy="8" r="6.4"/><path d="M8 4.3V8l2.6 1.6"/></g>
+    <g id="i-arrow-back"><path d="M13 8H3.4"/><path d="M7 3.6 2.6 8 7 12.4"/></g>
+  </defs>
+</svg>
+
+<div class="page">
+
+  <div class="masthead">
+    <h1>mac-cleaner design canvas</h1>
+    <p class="sub">
+      The design target for v0.4 &mdash; not the current build. Each artboard is a
+      first-party exemplar the <code>ux-critic</code> subagent scores against, which is
+      what makes &ldquo;distinctive&rdquo; checkable without shipping anyone else&rsquo;s
+      copyrighted screenshots.
+    </p>
+    <p class="target">
+      <b>Register:</b> native Mac pro-tool &mdash; DaisyDisk / Raycast / Linear.
+      Depth from hairlines and vibrancy, not gradients. Numbers are the hero.
+      Restraint over flourish, and the safety story visible at every step.
+    </p>
+  </div>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="foundations">
+    <h2>Artboard 01</h2>
+    <h3>Foundations</h3>
+    <p class="why">
+      Seven flat tokens become a measured system. The contrast figures below are
+      computed WCAG 2.1 ratios, not estimates &mdash; the worst text pair is
+      <b>4.77:1</b> and the worst graphic pair is <b>3.70:1</b>, so every
+      combination clears AA before a single screen is drawn. The accent is split
+      into <b>three roles that must never be swapped</b>: this is the trap that
+      makes most dark UIs fail a11y, because the vivid system blue is only 3.65:1
+      against white and cannot legally carry a white label.
+    </p>
+
+    <div class="fgrid" style="margin-bottom:24px">
+      <div class="sw"><div class="chip" style="background:var(--bg-window)"></div><div class="meta"><div class="k">bg-window</div><div class="v">#17171A</div><div class="r">canvas</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--surface-1)"></div><div class="meta"><div class="k">surface-1</div><div class="v">#1F1F23</div><div class="r">text 14.72:1</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--surface-2)"></div><div class="meta"><div class="k">surface-2</div><div class="v">#26262B</div><div class="r">text 13.50:1</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--surface-3)"></div><div class="meta"><div class="k">surface-3</div><div class="v">#2E2E34</div><div class="r">text 12.09:1</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--sidebar)"></div><div class="meta"><div class="k">sidebar</div><div class="v">#232328</div><div class="r">text 14.02:1</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--accent-fill)"></div><div class="meta"><div class="k">accent-fill</div><div class="v">#0A66CC</div><div class="r">white 5.55:1</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--accent-graphic)"></div><div class="meta"><div class="k">accent-graphic</div><div class="v">#0A84FF</div><div class="r" style="color:var(--warning)">graphics only</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--accent-text)"></div><div class="meta"><div class="k">accent-text</div><div class="v">#409CFF</div><div class="r">on s-3 4.77:1</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--danger-fill)"></div><div class="meta"><div class="k">danger-fill</div><div class="v">#C9241B</div><div class="r">white 5.60:1</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--danger-text)"></div><div class="meta"><div class="k">danger-text</div><div class="v">#FF6961</div><div class="r">on s-3 4.78:1</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--text-2)"></div><div class="meta"><div class="k">text-2</div><div class="v">#B4B4BD</div><div class="r">on s-3 6.56:1</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--text-3)"></div><div class="meta"><div class="k">text-3</div><div class="v">#9A9AA3</div><div class="r">on s-3 4.83:1</div></div></div>
+    </div>
+
+    <div class="fgrid" style="margin-bottom:28px">
+      <div class="sw"><div class="chip" style="background:var(--cat-caches)"></div><div class="meta"><div class="k">Caches</div><div class="v">#0A84FF</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--cat-build)"></div><div class="meta"><div class="k">Build artifacts</div><div class="v">#30D158</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--cat-logs)"></div><div class="meta"><div class="k">Logs</div><div class="v">#BF5AF2</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--cat-trashes)"></div><div class="meta"><div class="k">Trashes</div><div class="v">#FF9F0A</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--cat-large)"></div><div class="meta"><div class="k">Large &amp; old</div><div class="v">#FF6482</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--cat-browser)"></div><div class="meta"><div class="k">Browser data</div><div class="v">#64D2FF</div></div></div>
+    </div>
+
+    <div class="two">
+      <div>
+        <h2 style="margin-bottom:10px">Type scale</h2>
+        <table class="spec">
+          <tr><th>Token</th><th>Spec</th><th>Sample</th></tr>
+          <tr><td class="k">--fs-hero</td><td>52 / 52 / -.025em / 600 / tabular</td><td class="samp" style="font-size:28px;font-weight:600;letter-spacing:-.025em;font-variant-numeric:tabular-nums">12.5 GB</td></tr>
+          <tr><td class="k">--fs-display</td><td>28 / 32 / -.02em / 600</td><td class="samp" style="font-size:20px;font-weight:600">Smart Scan</td></tr>
+          <tr><td class="k">--fs-title</td><td>17 / 22 / -.01em / 600</td><td class="samp" style="font-size:17px;font-weight:600">Large &amp; Old Files</td></tr>
+          <tr><td class="k">--fs-emph</td><td>15 / 20 / 0 / 500</td><td class="samp" style="font-size:15px;font-weight:500">Review &amp; Clean</td></tr>
+          <tr><td class="k">--fs-body</td><td>13 / 18 / 0 / 400&ndash;500</td><td class="samp" style="font-size:13px">User caches</td></tr>
+          <tr><td class="k">--fs-caption</td><td>12 / 16 / 0 / 400</td><td class="samp" style="font-size:12px;color:var(--text-3)">45,812 items</td></tr>
+          <tr><td class="k">--fs-micro</td><td>11 / 14 / .07em / 600 / upper</td><td class="samp" style="font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3)">Cleanup</td></tr>
+        </table>
+        <p class="why" style="margin-top:14px">
+          Every figure a user might compare &mdash; sizes, counts, percentages &mdash;
+          is set in <code>--mono</code> with <code>tabular-nums</code>, so digits
+          align in a column and a number never reflows as it counts up.
+        </p>
+      </div>
+
+      <div>
+        <h2 style="margin-bottom:10px">Spacing &mdash; 4pt grid</h2>
+        <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:20px">
+          <div style="text-align:center"><div style="width:4px;height:4px;background:var(--accent-graphic);border-radius:1px"></div><div style="font-size:10px;color:var(--text-3);margin-top:6px">4</div></div>
+          <div style="text-align:center"><div style="width:8px;height:8px;background:var(--accent-graphic);border-radius:2px"></div><div style="font-size:10px;color:var(--text-3);margin-top:6px">8</div></div>
+          <div style="text-align:center"><div style="width:12px;height:12px;background:var(--accent-graphic);border-radius:2px"></div><div style="font-size:10px;color:var(--text-3);margin-top:6px">12</div></div>
+          <div style="text-align:center"><div style="width:16px;height:16px;background:var(--accent-graphic);border-radius:3px"></div><div style="font-size:10px;color:var(--text-3);margin-top:6px">16</div></div>
+          <div style="text-align:center"><div style="width:20px;height:20px;background:var(--accent-graphic);border-radius:3px"></div><div style="font-size:10px;color:var(--text-3);margin-top:6px">20</div></div>
+          <div style="text-align:center"><div style="width:24px;height:24px;background:var(--accent-graphic);border-radius:4px"></div><div style="font-size:10px;color:var(--text-3);margin-top:6px">24</div></div>
+          <div style="text-align:center"><div style="width:32px;height:32px;background:var(--accent-graphic);border-radius:4px"></div><div style="font-size:10px;color:var(--text-3);margin-top:6px">32</div></div>
+          <div style="text-align:center"><div style="width:40px;height:40px;background:var(--accent-graphic);border-radius:5px"></div><div style="font-size:10px;color:var(--text-3);margin-top:6px">40</div></div>
+        </div>
+
+        <h2 style="margin-bottom:10px">Elevation &mdash; exactly three</h2>
+        <div class="three" style="margin-bottom:20px">
+          <div class="elev" style="background:var(--surface-1);border:1px solid var(--separator);box-shadow:var(--e1)"><b>E1</b>Card at rest. Hairline only, no shadow.</div>
+          <div class="elev" style="background:var(--surface-2);box-shadow:var(--e2)"><b>E2</b>Hover, popover, segmented thumb.</div>
+          <div class="elev" style="background:var(--surface-3);box-shadow:var(--e3)"><b>E3</b>Sheets and modals. Nothing goes higher.</div>
+        </div>
+
+        <h2 style="margin-bottom:10px">Motion &mdash; two durations, one curve</h2>
+        <table class="spec">
+          <tr><th>Token</th><th>Applies to</th></tr>
+          <tr><td class="k">150ms</td><td>hover, selection, checkbox, segment</td></tr>
+          <tr><td class="k">220ms</td><td>sheet entry (opacity + scale .96&rarr;1)</td></tr>
+          <tr><td class="k">cubic-bezier(.32,.72,0,1)</td><td>everything &mdash; fast out, soft settle</td></tr>
+        </table>
+        <p class="why" style="margin-top:12px">
+          <code>prefers-reduced-motion</code> disables all of it, including the scan
+          sweep, which then renders as a static filled track.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="shell">
+    <h2>Artboard 02</h2>
+    <h3>Shell &mdash; window chrome and module sidebar</h3>
+    <p class="why">
+      The two-tab pill row becomes a persistent vibrancy sidebar with the traffic
+      lights inset over it (<code>titleBarStyle: "Overlay"</code> +
+      <code>hiddenTitle</code>). Every module carries a <b>live size badge</b>, so
+      the sidebar doubles as the answer to &ldquo;where is my disk going?&rdquo;
+      before you open anything. Modules that can only ever read are grouped apart
+      from those that can dispose &mdash; the discovery/disposal split from the
+      architecture, made visible.
+    </p>
+    <div class="scaler" style="height:660px">
+      <div class="window">
+        <div class="sidebar">
+          <div class="lights"><i></i><i></i><i></i></div>
+
+          <div class="side-label">Clean</div>
+          <div class="side-row sel"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sparkle"/></svg><span class="name">Smart Scan</span><span class="badge">12.5 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-stack"/></svg><span class="name">Cleanup</span><span class="badge">12.5 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-apps"/></svg><span class="name">Applications</span><span class="badge">1.8 GB</span></div>
+
+          <div class="side-label">Explore</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-doc"/></svg><span class="name">Large &amp; Old</span><span class="badge">38.2 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-lens"/></svg><span class="name">Space Lens</span><span class="badge">411 GB</span></div>
+
+          <div class="side-label">Protect</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg><span class="name">Privacy</span><span class="badge">640 MB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-wrench"/></svg><span class="name">Maintenance</span><span class="badge">7</span></div>
+
+          <div class="side-foot">
+            <div class="disk"><span>Macintosh HD</span><span class="num" style="font-size:11px">411 / 994 GB</span></div>
+            <div class="bar"><i></i></div>
+          </div>
+        </div>
+
+        <div class="content">
+          <div class="toolbar">
+            <h2>Smart Scan</h2>
+            <span class="spacer"></span>
+            <div class="seg">
+              <button aria-pressed="true">All</button>
+              <button aria-pressed="false">&gt; 100 MB</button>
+              <button aria-pressed="false">&gt; 1 GB</button>
+            </div>
+            <button class="btn">Rescan</button>
+          </div>
+          <div class="body" style="display:grid;place-content:center;text-align:center">
+            <div style="color:var(--text-3);font-size:var(--fs-caption);max-width:44ch;line-height:1.6">
+              Content area. The sidebar keeps each module&rsquo;s state alive across
+              switches &mdash; in v0.2 changing tab unmounted the view and re-ran the
+              entire scan.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="smart-scan-idle">
+    <h2>Artboard 03</h2>
+    <h3>Smart Scan &mdash; idle</h3>
+    <p class="why">
+      One obvious action, and the safety promise stated <b>before</b> anything runs
+      rather than in fine print afterwards. The ring is empty and quiet at rest;
+      it is the same element that fills during the scan and holds the result, so
+      the three states are one continuous object rather than three unrelated cards.
+    </p>
+    <div class="scaler" style="height:660px">
+      <div class="window">
+        <div class="sidebar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="side-label">Clean</div>
+          <div class="side-row sel"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sparkle"/></svg><span class="name">Smart Scan</span><span class="badge">&mdash;</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-stack"/></svg><span class="name">Cleanup</span><span class="badge">&mdash;</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-apps"/></svg><span class="name">Applications</span><span class="badge">&mdash;</span></div>
+          <div class="side-label">Explore</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-doc"/></svg><span class="name">Large &amp; Old</span><span class="badge">&mdash;</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-lens"/></svg><span class="name">Space Lens</span><span class="badge">&mdash;</span></div>
+          <div class="side-label">Protect</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg><span class="name">Privacy</span><span class="badge">&mdash;</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-wrench"/></svg><span class="name">Maintenance</span><span class="badge">&mdash;</span></div>
+          <div class="side-foot">
+            <div class="disk"><span>Macintosh HD</span><span class="num" style="font-size:11px">411 / 994 GB</span></div>
+            <div class="bar"><i></i></div>
+          </div>
+        </div>
+
+        <div class="content">
+          <div class="toolbar"><h2>Smart Scan</h2><span class="spacer"></span></div>
+          <div class="body" style="display:grid;place-content:center;justify-items:center;text-align:center">
+            <div class="ring-wrap">
+              <svg width="220" height="220" viewBox="0 0 220 220">
+                <circle class="ring-track" cx="110" cy="110" r="92" fill="none" stroke-width="18"/>
+              </svg>
+              <div class="ring-center">
+                <svg width="34" height="34" viewBox="0 0 16 16" fill="none" stroke="var(--text-3)" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sparkle"/></svg>
+              </div>
+            </div>
+            <div style="font-size:var(--fs-display);font-weight:600;letter-spacing:-.02em;margin-top:26px">Ready to scan</div>
+            <div style="color:var(--text-2);font-size:var(--fs-emph);margin-top:8px;max-width:46ch;line-height:1.5">
+              mac-cleaner looks through caches, logs, build artifacts and trashes,
+              then shows you exactly what it found.
+            </div>
+            <button class="btn primary lg" style="margin-top:24px">Scan My Mac</button>
+            <div class="banner safe" style="margin-top:28px;max-width:460px;text-align:left">
+              <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg>
+              <div>A scan is <b>read-only</b>. Nothing is moved or removed until you
+              review the results and confirm &mdash; and even then it goes to the Trash,
+              where you can put it back.</div>
+            </div>
+            <div style="color:var(--text-3);font-size:var(--fs-caption);margin-top:14px">Last scan 3 days ago &middot; 9.1 GB reclaimed</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="smart-scan-scanning">
+    <h2>Artboard 04</h2>
+    <h3>Smart Scan &mdash; scanning</h3>
+    <p class="why">
+      The ring sweeps but reports <b>no percentage</b>, because a scan has no
+      knowable total until it finishes &mdash; inventing one would be the same class
+      of dishonesty as the sample-data fallback we removed. What it shows instead
+      is real and already shipping: files examined and reclaimable-so-far, both
+      ticking, plus the path currently being walked. The category chips fill in as
+      each cleaner reports.
+    </p>
+    <div class="scaler" style="height:660px">
+      <div class="window">
+        <div class="sidebar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="side-label">Clean</div>
+          <div class="side-row sel"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sparkle"/></svg><span class="name">Smart Scan</span><span class="badge">8.9 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-stack"/></svg><span class="name">Cleanup</span><span class="badge">8.9 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-apps"/></svg><span class="name">Applications</span><span class="badge">&mdash;</span></div>
+          <div class="side-label">Explore</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-doc"/></svg><span class="name">Large &amp; Old</span><span class="badge">&mdash;</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-lens"/></svg><span class="name">Space Lens</span><span class="badge">&mdash;</span></div>
+          <div class="side-label">Protect</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg><span class="name">Privacy</span><span class="badge">&mdash;</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-wrench"/></svg><span class="name">Maintenance</span><span class="badge">&mdash;</span></div>
+          <div class="side-foot">
+            <div class="disk"><span>Macintosh HD</span><span class="num" style="font-size:11px">411 / 994 GB</span></div>
+            <div class="bar"><i></i></div>
+          </div>
+        </div>
+
+        <div class="content">
+          <div class="toolbar"><h2>Smart Scan</h2><span class="spacer"></span><button class="btn">Stop</button></div>
+          <div class="body" style="display:grid;place-content:center;justify-items:center;text-align:center">
+            <div class="ring-wrap">
+              <svg width="220" height="220" viewBox="0 0 220 220">
+                <circle class="ring-track" cx="110" cy="110" r="92" fill="none" stroke-width="18"/>
+                <g class="ring-spin">
+                  <circle cx="110" cy="110" r="92" fill="none" stroke="var(--accent-graphic)" stroke-width="18"
+                          stroke-linecap="round" stroke-dasharray="130 578.05" stroke-dashoffset="0"/>
+                </g>
+              </svg>
+              <div class="ring-center">
+                <div class="hero-num" style="font-size:34px">8.9<span class="unit">GB</span></div>
+                <div style="font-size:var(--fs-caption);color:var(--text-3);margin-top:4px">so far</div>
+              </div>
+            </div>
+
+            <div style="font-size:var(--fs-display);font-weight:600;letter-spacing:-.02em;margin-top:26px">Scanning&hellip;</div>
+            <div class="num" style="color:var(--text-2);font-size:var(--fs-emph);margin-top:8px">
+              86,412 files examined
+            </div>
+            <div style="font-family:var(--mono);font-size:var(--fs-caption);color:var(--text-3);margin-top:10px;max-width:52ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              ~/Library/Caches/com.apple.dt.Xcode/DerivedData
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:26px">
+              <span class="legend" style="margin:0"><span><i style="background:var(--cat-caches)"></i>Caches 6.4 GB</span></span>
+              <span class="legend" style="margin:0"><span><i style="background:var(--cat-build)"></i>Build 2.1 GB</span></span>
+              <span class="legend" style="margin:0"><span><i style="background:var(--text-3);opacity:.4"></i><span style="color:var(--text-3)">Logs&hellip;</span></span></span>
+              <span class="legend" style="margin:0"><span><i style="background:var(--text-3);opacity:.4"></i><span style="color:var(--text-3)">Trashes&hellip;</span></span></span>
+            </div>
+
+            <div class="banner safe" style="margin-top:28px;max-width:420px;text-align:left">
+              <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg>
+              <div>Read-only. Nothing is changed by a scan.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="smart-scan-results">
+    <h2>Artboard 05</h2>
+    <h3>Smart Scan &mdash; results</h3>
+    <p class="why">
+      The number is the hero, at 52px tabular, with the ring showing the same
+      total broken into its categories &mdash; one shape carrying both the sum and
+      the composition. Below it the four independent flat bars of v0.2 become a
+      <b>single proportional stack</b>, which is what actually answers &ldquo;what
+      is taking the space?&rdquo;. Small categories get a 3px minimum width, so
+      Logs at 0.08% of the total reads as small rather than as zero.
+      <b>&ldquo;Preview only&rdquo; sits next to the number, not in a footnote.</b>
+    </p>
+    <div class="scaler" style="height:660px">
+      <div class="window">
+        <div class="sidebar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="side-label">Clean</div>
+          <div class="side-row sel"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sparkle"/></svg><span class="name">Smart Scan</span><span class="badge">12.5 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-stack"/></svg><span class="name">Cleanup</span><span class="badge">12.5 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-apps"/></svg><span class="name">Applications</span><span class="badge">1.8 GB</span></div>
+          <div class="side-label">Explore</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-doc"/></svg><span class="name">Large &amp; Old</span><span class="badge">38.2 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-lens"/></svg><span class="name">Space Lens</span><span class="badge">411 GB</span></div>
+          <div class="side-label">Protect</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg><span class="name">Privacy</span><span class="badge">640 MB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-wrench"/></svg><span class="name">Maintenance</span><span class="badge">7</span></div>
+          <div class="side-foot">
+            <div class="disk"><span>Macintosh HD</span><span class="num" style="font-size:11px">411 / 994 GB</span></div>
+            <div class="bar"><i></i></div>
+          </div>
+        </div>
+
+        <div class="content">
+          <div class="toolbar">
+            <h2>Smart Scan</h2>
+            <span class="spacer"></span>
+            <div class="seg">
+              <button aria-pressed="true">All</button>
+              <button aria-pressed="false">&gt; 100 MB</button>
+              <button aria-pressed="false">&gt; 1 GB</button>
+            </div>
+            <button class="btn">Rescan</button>
+          </div>
+
+          <div class="body" style="display:flex;gap:28px;align-items:stretch">
+            <!-- hero -->
+            <div style="flex:none;width:246px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center">
+              <div class="ring-wrap">
+                <svg width="220" height="220" viewBox="0 0 220 220">
+                  <circle class="ring-track" cx="110" cy="110" r="92" fill="none" stroke-width="18"/>
+                  <g transform="rotate(-90 110 110)">
+                    <circle cx="110" cy="110" r="92" fill="none" stroke="var(--cat-caches)" stroke-width="18" stroke-dasharray="293.07 578.05" stroke-dashoffset="0.00"/>
+                    <circle cx="110" cy="110" r="92" fill="none" stroke="var(--cat-build)" stroke-width="18" stroke-dasharray="137.58 578.05" stroke-dashoffset="-295.96"/>
+                    <circle cx="110" cy="110" r="92" fill="none" stroke="var(--cat-logs)" stroke-width="18" stroke-dasharray="82.08 578.05" stroke-dashoffset="-436.43"/>
+                    <circle cx="110" cy="110" r="92" fill="none" stroke="var(--cat-trashes)" stroke-width="18" stroke-dasharray="53.76 578.05" stroke-dashoffset="-521.40"/>
+                  </g>
+                </svg>
+                <div class="ring-center">
+                  <div class="hero-num">12.5<span class="unit">GB</span></div>
+                  <div style="font-size:var(--fs-caption);color:var(--text-2);margin-top:6px">reclaimable</div>
+                </div>
+              </div>
+
+              <div style="display:inline-flex;align-items:center;gap:6px;margin-top:18px;padding:4px 10px;border-radius:var(--r-pill);background:var(--surface-1);border:1px solid var(--separator)">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--success)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg>
+                <span style="font-size:var(--fs-caption);color:var(--text-2)">Preview only &mdash; nothing removed yet</span>
+              </div>
+
+              <button class="btn primary lg" style="margin-top:18px;width:100%;justify-content:center">Review &amp; Clean&hellip;</button>
+              <div class="num" style="color:var(--text-3);font-size:var(--fs-caption);margin-top:10px">
+                165,443 items in 4 categories
+              </div>
+            </div>
+
+            <!-- categories -->
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+              <div class="stack" style="height:10px">
+                <i style="background:var(--cat-caches);flex:0 0 51.2%"></i>
+                <i style="background:var(--cat-build);flex:0 0 24.3%"></i>
+                <i style="background:var(--cat-logs);flex:0 0 14.7%"></i>
+                <i style="background:var(--cat-trashes);flex:1"></i>
+              </div>
+              <div class="legend" style="margin-bottom:16px">
+                <span><i style="background:var(--cat-caches)"></i>Caches 51%</span>
+                <span><i style="background:var(--cat-build)"></i>Build 24%</span>
+                <span><i style="background:var(--cat-logs)"></i>Logs 15%</span>
+                <span><i style="background:var(--cat-trashes)"></i>Trashes 10%</span>
+              </div>
+
+              <div class="group">
+                <div class="row">
+                  <span class="check on"></span>
+                  <span class="dot" style="background:var(--cat-caches)"></span>
+                  <span class="main">
+                    <span class="nm">User caches</span>
+                    <div class="sub">Regenerated by apps &middot; 92,104 items</div>
+                  </span>
+                  <span class="num" style="font-weight:600">6.40 GB</span>
+                </div>
+                <div class="row">
+                  <span class="check on"></span>
+                  <span class="dot" style="background:var(--cat-build)"></span>
+                  <span class="main">
+                    <span class="nm">Build artifacts</span>
+                    <div class="sub">DerivedData, target/ &middot; 51,880 items</div>
+                  </span>
+                  <span class="num" style="font-weight:600">3.04 GB</span>
+                </div>
+                <div class="row">
+                  <span class="check on"></span>
+                  <span class="dot" style="background:var(--cat-logs)"></span>
+                  <span class="main">
+                    <span class="nm">Logs</span>
+                    <div class="sub">Older than 7 days &middot; 19,207 items</div>
+                  </span>
+                  <span class="num" style="font-weight:600">1.84 GB</span>
+                </div>
+                <div class="row">
+                  <span class="check on"></span>
+                  <span class="dot" style="background:var(--cat-trashes)"></span>
+                  <span class="main">
+                    <span class="nm">Trashes</span>
+                    <div class="sub">On mounted volumes &middot; 2,252 items</div>
+                  </span>
+                  <span class="num" style="font-weight:600">1.22 GB</span>
+                </div>
+              </div>
+
+              <!-- The opt-in half of Smart Scan. These are found but never
+                   pre-selected: they are documents and browser state, not junk,
+                   so each needs its own trip through a module. Showing them here
+                   is how Smart Scan stays honest about the difference between
+                   "12.5 GB is safe to remove" and "40.6 GB exists". -->
+              <div style="font-size:var(--fs-micro);font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);margin:14px 0 8px">
+                Also found &mdash; not selected
+              </div>
+              <div class="group">
+                <div class="row" style="padding-top:8px;padding-bottom:8px">
+                  <span class="dot" style="background:var(--cat-large)"></span>
+                  <span class="main"><span class="nm">Large &amp; old files</span>
+                    <div class="sub">Needs per-file consent</div></span>
+                  <span class="num" style="color:var(--text-2)">38.2 GB</span>
+                  <button class="btn quiet" style="height:24px;padding:0 8px;font-size:var(--fs-caption)">Review</button>
+                </div>
+                <div class="row" style="padding-top:8px;padding-bottom:8px">
+                  <span class="dot" style="background:var(--cat-browser)"></span>
+                  <span class="main"><span class="nm">Browser data</span>
+                    <div class="sub">Cookies sign you out everywhere</div></span>
+                  <span class="num" style="color:var(--text-2)">640 MB</span>
+                  <button class="btn quiet" style="height:24px;padding:0 8px;font-size:var(--fs-caption)">Review</button>
+                </div>
+                <div class="row" style="padding-top:8px;padding-bottom:8px">
+                  <span class="dot" style="background:var(--text-3)"></span>
+                  <span class="main"><span class="nm">App leftovers (6 apps)</span>
+                    <div class="sub">No matching app installed</div></span>
+                  <span class="num" style="color:var(--text-2)">1.8 GB</span>
+                  <button class="btn quiet" style="height:24px;padding:0 8px;font-size:var(--fs-caption)">Review</button>
+                </div>
+              </div>
+
+              <span style="flex:1"></span>
+
+              <div class="banner" style="margin-top:14px">
+                <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-lock"/></svg>
+                <div><b>318 protected items skipped</b> &mdash; Keychains, Mail and
+                repositories are never eligible.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="confirm-sheet">
+    <h2>Artboard 06</h2>
+    <h3>The consent moment &mdash; confirm sheet</h3>
+    <p class="why">
+      The most important screen in a data-destroying tool, so it gets the E3 sheet
+      and nothing else on screen competes. Two things are deliberate. First, the
+      recoverability promise is <b>the largest text after the count</b>. Second,
+      the permanent variant on the right is visually heavier &mdash; red fill,
+      a typed confirmation, and the recoverability line inverted &mdash; so the
+      two can never be confused at a glance. Trash is the default and stays the
+      easy path.
+    </p>
+    <div class="two" style="gap:24px;align-items:stretch">
+      <div>
+        <div class="ui" style="border-radius:var(--r-panel);background:var(--bg-window);border:1px solid var(--separator);padding:36px;display:grid;place-items:center">
+          <div style="width:400px;background:var(--surface-3);border-radius:var(--r-panel);box-shadow:var(--e3);border:1px solid var(--border);padding:22px">
+            <div style="display:flex;gap:12px;align-items:flex-start">
+              <div style="width:34px;height:34px;border-radius:8px;background:var(--accent-tint);display:grid;place-items:center;flex:none">
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="var(--accent-text)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-stack"/></svg>
+              </div>
+              <div>
+                <div style="font-size:var(--fs-title);font-weight:600;letter-spacing:-.01em">Move 165,443 items to the Trash?</div>
+                <div style="font-size:var(--fs-body);color:var(--text-2);margin-top:6px;line-height:1.55">
+                  <span class="num" style="color:var(--text);font-weight:600">12.5 GB</span>
+                  across 4 categories.
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:16px;padding:12px 14px;border-radius:var(--r-card);background:rgba(48,209,88,.08);border:1px solid rgba(48,209,88,.25);display:flex;gap:10px">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--success)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><use href="#i-shield"/></svg>
+              <div style="font-size:var(--fs-body);color:var(--text-2);line-height:1.5">
+                This is <b style="color:var(--text)">recoverable</b>. Files go to the
+                Trash, and every action is written to the audit log &mdash; mac-cleaner
+                can put them back.
+              </div>
+            </div>
+
+            <div class="num" style="margin-top:14px;font-size:var(--fs-caption);color:var(--text-3)">
+              Caches 6.40 &middot; Build 3.04 &middot; Logs 1.84 &middot; Trashes 1.22 GB
+            </div>
+
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+              <button class="btn">Cancel</button>
+              <button class="btn primary">Move to Trash</button>
+            </div>
+          </div>
+        </div>
+        <p class="why" style="margin-top:12px;font-size:var(--fs-caption)">Default path &mdash; recoverable.</p>
+      </div>
+
+      <div>
+        <div class="ui" style="border-radius:var(--r-panel);background:var(--bg-window);border:1px solid var(--separator);padding:36px;display:grid;place-items:center">
+          <div style="width:400px;background:var(--surface-3);border-radius:var(--r-panel);box-shadow:var(--e3);border:1px solid rgba(255,105,97,.34);padding:22px">
+            <div style="display:flex;gap:12px;align-items:flex-start">
+              <div style="width:34px;height:34px;border-radius:8px;background:rgba(255,69,58,.16);display:grid;place-items:center;flex:none">
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="var(--danger-text)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-info"/></svg>
+              </div>
+              <div>
+                <div style="font-size:var(--fs-title);font-weight:600;letter-spacing:-.01em">Permanently erase 165,443 items?</div>
+                <div style="font-size:var(--fs-body);color:var(--text-2);margin-top:6px;line-height:1.55">
+                  <span class="num" style="color:var(--text);font-weight:600">12.5 GB</span>
+                  across 4 categories.
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:16px;padding:12px 14px;border-radius:var(--r-card);background:rgba(255,69,58,.10);border:1px solid rgba(255,105,97,.32);display:flex;gap:10px">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--danger-text)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><use href="#i-info"/></svg>
+              <div style="font-size:var(--fs-body);color:var(--text-2);line-height:1.5">
+                This <b style="color:var(--danger-text)">cannot be undone</b>. Files
+                skip the Trash entirely. The audit log will record what was erased,
+                but it cannot bring anything back.
+              </div>
+            </div>
+
+            <div style="margin-top:14px">
+              <div style="font-size:var(--fs-caption);color:var(--text-2);margin-bottom:6px">Type <b style="color:var(--text);font-family:var(--mono)">erase</b> to continue</div>
+              <div style="height:28px;border-radius:var(--r-control);background:var(--bg-window);border:1px solid var(--border-strong);display:flex;align-items:center;padding:0 10px;font-family:var(--mono);font-size:var(--fs-body);color:var(--text-3)">
+                <span style="width:1px;height:14px;background:var(--text-2)"></span>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+              <button class="btn">Cancel</button>
+              <button class="btn danger" style="opacity:.45">Erase Permanently</button>
+            </div>
+          </div>
+        </div>
+        <p class="why" style="margin-top:12px;font-size:var(--fs-caption)">Escalated path &mdash; heavier, gated, disabled until typed.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="module-large-old">
+    <h2>Artboard 07</h2>
+    <h3>Module screen &mdash; Large &amp; Old Files</h3>
+    <p class="why">
+      This is where the architecture becomes visible. These files live <b>outside
+      the cleanup allowlist</b> &mdash; the app can see them but has no standing
+      permission to remove them, so nothing is pre-selected and each row is an
+      individual grant. The amber banner is not decoration; it is the UI of
+      <code>Consent.granted</code>. Note the footer counts only what you picked,
+      and the primary button stays disabled at zero.
+    </p>
+    <div class="scaler" style="height:660px">
+      <div class="window">
+        <div class="sidebar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="side-label">Clean</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sparkle"/></svg><span class="name">Smart Scan</span><span class="badge">12.5 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-stack"/></svg><span class="name">Cleanup</span><span class="badge">12.5 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-apps"/></svg><span class="name">Applications</span><span class="badge">1.8 GB</span></div>
+          <div class="side-label">Explore</div>
+          <div class="side-row sel"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-doc"/></svg><span class="name">Large &amp; Old</span><span class="badge">38.2 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-lens"/></svg><span class="name">Space Lens</span><span class="badge">411 GB</span></div>
+          <div class="side-label">Protect</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg><span class="name">Privacy</span><span class="badge">640 MB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-wrench"/></svg><span class="name">Maintenance</span><span class="badge">7</span></div>
+          <div class="side-foot">
+            <div class="disk"><span>Macintosh HD</span><span class="num" style="font-size:11px">411 / 994 GB</span></div>
+            <div class="bar"><i></i></div>
+          </div>
+        </div>
+
+        <div class="content">
+          <div class="toolbar">
+            <h2>Large &amp; Old Files</h2>
+            <span class="spacer"></span>
+            <div class="seg">
+              <button aria-pressed="true">&gt; 100 MB</button>
+              <button aria-pressed="false">&gt; 1 GB</button>
+              <button aria-pressed="false">&gt; 5 GB</button>
+            </div>
+            <div class="seg">
+              <button aria-pressed="false">Any age</button>
+              <button aria-pressed="true">&gt; 6 mo</button>
+              <button aria-pressed="false">&gt; 1 yr</button>
+            </div>
+          </div>
+
+          <div class="body" style="display:flex;flex-direction:column;gap:12px;padding-bottom:0">
+            <div class="banner consent">
+              <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-lock"/></svg>
+              <div>
+                These files are <b>outside the cleanup allowlist</b> &mdash; they are
+                your documents, not junk. mac-cleaner will never select them for you.
+                Tick a file to grant permission for that one file only.
+              </div>
+            </div>
+
+            <div class="group" style="flex:1;min-height:0;overflow:hidden">
+              <div class="row" style="background:var(--surface-2);padding-top:8px;padding-bottom:8px">
+                <span class="check"></span>
+                <span class="main"><span class="nm" style="font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.07em;color:var(--text-3)">Name</span></span>
+                <span style="font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);width:96px">Last opened</span>
+                <span style="font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);width:74px;text-align:right">Size</span>
+              </div>
+              <div class="row">
+                <span class="check on"></span>
+                <span class="dot" style="background:var(--cat-large)"></span>
+                <span class="main"><span class="nm">WWDC-2019-Session-Archive.dmg</span><div class="sub">~/Downloads</div></span>
+                <span class="num" style="width:96px;color:var(--text-2);font-size:var(--fs-caption)">3 yr ago</span>
+                <span class="num" style="width:74px;text-align:right;font-weight:600">7.81 GB</span>
+              </div>
+              <div class="row">
+                <span class="check on"></span>
+                <span class="dot" style="background:var(--cat-large)"></span>
+                <span class="main"><span class="nm">ubuntu-24.04-desktop-amd64.iso</span><div class="sub">~/Downloads</div></span>
+                <span class="num" style="width:96px;color:var(--text-2);font-size:var(--fs-caption)">1 yr ago</span>
+                <span class="num" style="width:74px;text-align:right;font-weight:600">6.10 GB</span>
+              </div>
+              <div class="row">
+                <span class="check"></span>
+                <span class="dot" style="background:var(--cat-large)"></span>
+                <span class="main"><span class="nm">Family Reunion 2021 &mdash; master.mov</span><div class="sub">~/Movies</div></span>
+                <span class="num" style="width:96px;color:var(--text-2);font-size:var(--fs-caption)">2 yr ago</span>
+                <span class="num" style="width:74px;text-align:right;font-weight:600">5.44 GB</span>
+              </div>
+              <div class="row">
+                <span class="check"></span>
+                <span class="dot" style="background:var(--cat-large)"></span>
+                <span class="main"><span class="nm">Xcode_14.3.1.xip</span><div class="sub">~/Downloads</div></span>
+                <span class="num" style="width:96px;color:var(--text-2);font-size:var(--fs-caption)">2 yr ago</span>
+                <span class="num" style="width:74px;text-align:right;font-weight:600">4.92 GB</span>
+              </div>
+              <div class="row">
+                <span class="check"></span>
+                <span class="dot" style="background:var(--cat-large)"></span>
+                <span class="main"><span class="nm">2018-portfolio-raw.zip</span><div class="sub">~/Documents/Archive</div></span>
+                <span class="num" style="width:96px;color:var(--text-2);font-size:var(--fs-caption)">4 yr ago</span>
+                <span class="num" style="width:74px;text-align:right;font-weight:600">3.28 GB</span>
+              </div>
+              <div class="row">
+                <span class="check"></span>
+                <span class="dot" style="background:var(--cat-large)"></span>
+                <span class="main"><span class="nm">nightly-backup-2022-11.sparsebundle</span><div class="sub">~/Documents</div></span>
+                <span class="num" style="width:96px;color:var(--text-2);font-size:var(--fs-caption)">3 yr ago</span>
+                <span class="num" style="width:74px;text-align:right;font-weight:600">2.71 GB</span>
+              </div>
+            </div>
+
+            <div style="flex:none;display:flex;align-items:center;gap:14px;padding:12px 2px 16px;border-top:1px solid var(--separator)">
+              <div>
+                <div class="num" style="font-size:var(--fs-emph);font-weight:600">13.9 GB</div>
+                <div style="font-size:var(--fs-caption);color:var(--text-3);margin-top:1px">2 of 47 files granted</div>
+              </div>
+              <span style="flex:1"></span>
+              <button class="btn quiet">Reveal in Finder</button>
+              <button class="btn primary">Move 2 Files to Trash&hellip;</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="space-lens">
+    <h2>Artboard 08</h2>
+    <h3>Space Lens</h3>
+    <p class="why">
+      Purely read-only &mdash; this module never touches the executor, and the
+      absence of any checkbox on screen is how the user knows. Rings are depth,
+      hue is inherited from the top-level folder so a child is always visibly part
+      of its parent, and the centre reports whatever the cursor is over. This is
+      the one place where mac-cleaner earns a comparison to DaisyDisk, so it gets
+      the most visual weight of any module.
+    </p>
+    <div class="scaler" style="height:660px">
+      <div class="window">
+        <div class="sidebar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="side-label">Clean</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sparkle"/></svg><span class="name">Smart Scan</span><span class="badge">12.5 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-stack"/></svg><span class="name">Cleanup</span><span class="badge">12.5 GB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-apps"/></svg><span class="name">Applications</span><span class="badge">1.8 GB</span></div>
+          <div class="side-label">Explore</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-doc"/></svg><span class="name">Large &amp; Old</span><span class="badge">38.2 GB</span></div>
+          <div class="side-row sel"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-lens"/></svg><span class="name">Space Lens</span><span class="badge">411 GB</span></div>
+          <div class="side-label">Protect</div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg><span class="name">Privacy</span><span class="badge">640 MB</span></div>
+          <div class="side-row"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-wrench"/></svg><span class="name">Maintenance</span><span class="badge">7</span></div>
+          <div class="side-foot">
+            <div class="disk"><span>Macintosh HD</span><span class="num" style="font-size:11px">411 / 994 GB</span></div>
+            <div class="bar"><i></i></div>
+          </div>
+        </div>
+
+        <div class="content">
+          <div class="toolbar">
+            <button class="btn quiet" style="padding:0 8px"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-arrow-back"/></svg></button>
+            <h2 style="font-size:var(--fs-emph)">Macintosh HD</h2>
+            <span style="color:var(--text-3)">&rsaquo;</span>
+            <h2 style="font-size:var(--fs-emph)">Users</h2>
+            <span style="color:var(--text-3)">&rsaquo;</span>
+            <h2 style="font-size:var(--fs-emph);color:var(--text-2)">chandler</h2>
+            <span class="spacer"></span>
+            <span class="banner safe" style="padding:4px 10px;font-size:var(--fs-caption)">
+              <svg class="ico" style="width:13px;height:13px" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg>
+              Read-only view
+            </span>
+          </div>
+
+          <div class="body" style="display:flex;gap:28px;align-items:center">
+            <div style="position:relative;width:320px;height:320px;flex:none">
+              <svg width="320" height="320" viewBox="0 0 320 320">
+                <g transform="rotate(-90 160 160)">
+                  <circle cx="160" cy="160" r="72" fill="none" stroke="var(--cat-caches)" stroke-width="32" stroke-dasharray="152.00 452.39" stroke-dashoffset="0.00"/>
+                  <circle cx="160" cy="160" r="72" fill="none" stroke="var(--cat-large)" stroke-width="32" stroke-dasharray="120.34 452.39" stroke-dashoffset="-153.81"/>
+                  <circle cx="160" cy="160" r="72" fill="none" stroke="var(--cat-build)" stroke-width="32" stroke-dasharray="93.19 452.39" stroke-dashoffset="-275.96"/>
+                  <circle cx="160" cy="160" r="72" fill="none" stroke="var(--cat-browser)" stroke-width="32" stroke-dasharray="52.48 452.39" stroke-dashoffset="-370.96"/>
+                  <circle cx="160" cy="160" r="72" fill="none" stroke="var(--text-3)" stroke-width="32" stroke-dasharray="25.33 452.39" stroke-dashoffset="-425.25"/>
+
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="var(--cat-caches)" stroke-width="36" stroke-dasharray="126.22 678.58" stroke-dashoffset="0.00"/>
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="#2B90FF" stroke-width="36" stroke-dasharray="58.36 678.58" stroke-dashoffset="-128.93"/>
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="#5AC8FA" stroke-width="36" stroke-dasharray="38.00 678.58" stroke-dashoffset="-190.00"/>
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="var(--cat-large)" stroke-width="36" stroke-dasharray="99.07 678.58" stroke-dashoffset="-230.72"/>
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="#FF8FA6" stroke-width="36" stroke-dasharray="44.79 678.58" stroke-dashoffset="-332.51"/>
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="#FFB3C2" stroke-width="36" stroke-dasharray="31.21 678.58" stroke-dashoffset="-380.01"/>
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="var(--cat-build)" stroke-width="36" stroke-dasharray="85.50 678.58" stroke-dashoffset="-413.94"/>
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="#5EDC7E" stroke-width="36" stroke-dasharray="51.57 678.58" stroke-dashoffset="-502.15"/>
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="var(--cat-browser)" stroke-width="36" stroke-dasharray="58.36 678.58" stroke-dashoffset="-556.44"/>
+                  <circle cx="160" cy="160" r="108" fill="none" stroke="var(--text-3)" stroke-width="36" stroke-dasharray="58.36 678.58" stroke-dashoffset="-617.51"/>
+
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="var(--cat-caches)" stroke-width="30" stroke-dasharray="95.24 898.50" stroke-dashoffset="0.00"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="#2B90FF" stroke-width="30" stroke-dasharray="50.32 898.50" stroke-dashoffset="-98.83"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="#5AC8FA" stroke-width="30" stroke-dasharray="41.33 898.50" stroke-dashoffset="-152.74"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="#8FD9FF" stroke-width="30" stroke-dasharray="50.32 898.50" stroke-dashoffset="-197.67"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="var(--cat-large)" stroke-width="30" stroke-dasharray="77.27 898.50" stroke-dashoffset="-251.58"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="#FF8FA6" stroke-width="30" stroke-dasharray="50.32 898.50" stroke-dashoffset="-332.44"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="#FFB3C2" stroke-width="30" stroke-dasharray="77.27 898.50" stroke-dashoffset="-386.35"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="var(--cat-build)" stroke-width="30" stroke-dasharray="59.30 898.50" stroke-dashoffset="-467.22"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="#5EDC7E" stroke-width="30" stroke-dasharray="50.32 898.50" stroke-dashoffset="-530.11"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="#93E8A8" stroke-width="30" stroke-dasharray="68.29 898.50" stroke-dashoffset="-584.02"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="var(--cat-browser)" stroke-width="30" stroke-dasharray="41.33 898.50" stroke-dashoffset="-655.90"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="#9BE2FF" stroke-width="30" stroke-dasharray="59.30 898.50" stroke-dashoffset="-700.83"/>
+                  <circle cx="160" cy="160" r="143" fill="none" stroke="var(--text-3)" stroke-width="30" stroke-dasharray="131.18 898.50" stroke-dashoffset="-763.72"/>
+                </g>
+                <!-- hub: an opaque disc so the readout never sits on a segment -->
+                <circle cx="160" cy="160" r="54" fill="var(--bg-window)"/>
+                <circle cx="160" cy="160" r="54" fill="none" stroke="var(--separator)" stroke-width="1"/>
+              </svg>
+              <div style="position:absolute;inset:0;display:grid;place-content:center;text-align:center">
+                <div class="hero-num" style="font-size:30px">204<span class="unit" style="font-size:15px">GB</span></div>
+                <div style="font-size:var(--fs-caption);color:var(--text-3);margin-top:3px">chandler</div>
+              </div>
+            </div>
+
+            <div style="flex:1;min-width:0">
+              <div style="font-size:var(--fs-micro);font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);margin-bottom:8px">Largest folders</div>
+              <div class="group">
+                <div class="row"><span class="dot" style="background:var(--cat-caches)"></span><span class="main"><span class="nm">Library</span><div class="sub">Caches, Containers, Application Support</div></span><span class="num" style="font-weight:600">69.4 GB</span></div>
+                <div class="row"><span class="dot" style="background:var(--cat-large)"></span><span class="main"><span class="nm">Movies</span><div class="sub">Final Cut libraries and exports</div></span><span class="num" style="font-weight:600">55.1 GB</span></div>
+                <div class="row"><span class="dot" style="background:var(--cat-build)"></span><span class="main"><span class="nm">Documents</span><div class="sub">Projects, Archive</div></span><span class="num" style="font-weight:600">42.8 GB</span></div>
+                <div class="row"><span class="dot" style="background:var(--cat-browser)"></span><span class="main"><span class="nm">Downloads</span><div class="sub">Installers and disk images</div></span><span class="num" style="font-weight:600">24.5 GB</span></div>
+                <div class="row"><span class="dot" style="background:var(--text-3)"></span><span class="main"><span class="nm">Everything else</span><div class="sub">Desktop, Music, Pictures, Public</div></span><span class="num" style="font-weight:600">12.2 GB</span></div>
+              </div>
+              <div class="banner" style="margin-top:12px">
+                <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-info"/></svg>
+                <div>Space Lens only measures. To act on anything here, open it in
+                <b>Large &amp; Old</b> or reveal it in the Finder.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="onboarding-fda">
+    <h2>Artboard 09</h2>
+    <h3>Onboarding &mdash; Full Disk Access</h3>
+    <p class="why">
+      TCC gates <code>~/.Trash</code> and <code>~/Library/Containers</code>, so
+      without this permission a scan silently under-reports. The screen says what
+      it needs, <b>what it will still do if you decline</b>, and opens the exact
+      System Settings pane rather than describing where to click. Skipping is a
+      real option, not a dark-pattern dead end.
+    </p>
+    <div class="scaler" style="height:660px">
+      <div class="window">
+        <div class="content" style="flex:1">
+          <div style="height:38px;flex:none;display:flex;align-items:center;padding:0 12px">
+            <div class="lights"><i></i><i></i><i></i></div>
+          </div>
+          <div class="body" style="display:grid;place-content:center;justify-items:center;text-align:center;padding:0 80px">
+            <div style="width:76px;height:76px;border-radius:18px;background:var(--surface-1);border:1px solid var(--separator);display:grid;place-items:center;box-shadow:var(--e2)">
+              <svg width="36" height="36" viewBox="0 0 16 16" fill="none" stroke="var(--accent-text)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-lock"/></svg>
+            </div>
+
+            <div style="font-size:var(--fs-display);font-weight:600;letter-spacing:-.02em;margin-top:22px">Let mac-cleaner see the whole picture</div>
+            <div style="color:var(--text-2);font-size:var(--fs-emph);margin-top:10px;max-width:52ch;line-height:1.55">
+              macOS keeps a few folders private until you say otherwise. Without
+              access, a scan still works &mdash; it just cannot see what is in them,
+              and will quietly report less than is really there.
+            </div>
+
+            <div class="group" style="margin-top:24px;width:100%;max-width:520px;text-align:left">
+              <div class="row">
+                <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="var(--text-3)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-stack"/></svg>
+                <span class="main"><span class="nm">The Trash on every volume</span><div class="sub">Usually the single largest reclaimable category</div></span>
+                <span class="num" style="color:var(--text-3);font-size:var(--fs-caption)">~/.Trash</span>
+              </div>
+              <div class="row">
+                <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="var(--text-3)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-apps"/></svg>
+                <span class="main"><span class="nm">Sandboxed app caches</span><div class="sub">Mail, Messages, and App Store apps</div></span>
+                <span class="num" style="color:var(--text-3);font-size:var(--fs-caption)">~/Library/Containers</span>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:10px;margin-top:24px">
+              <button class="btn lg quiet">Skip for now</button>
+              <button class="btn primary lg">Open System Settings&hellip;</button>
+            </div>
+
+            <div class="banner safe" style="margin-top:26px;max-width:520px;text-align:left">
+              <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg>
+              <div>Access lets mac-cleaner <b>read</b> those folders. It changes
+              nothing about what may be removed &mdash; the protected list, the
+              allowlist, and your confirmation all still apply.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="states">
+    <h2>Artboard 10</h2>
+    <h3>States that are easy to get wrong</h3>
+    <p class="why">
+      Empty, error and complete are where an app stops feeling crafted. Each one
+      here has a next action and, for the error, an explicit statement that no
+      figures are being shown &mdash; the visible half of the fallback bug fixed
+      in v0.3. Complete is no longer a dead end: it returns you to the scan.
+    </p>
+    <div class="three">
+      <div class="ui" style="background:var(--bg-window);border:1px solid var(--separator);border-radius:var(--r-panel);padding:32px 24px;text-align:center;min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center">
+        <div style="width:52px;height:52px;border-radius:14px;background:rgba(48,209,88,.10);display:grid;place-items:center;border:1px solid rgba(48,209,88,.22)">
+          <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="var(--success)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield"/></svg>
+        </div>
+        <div style="font-size:var(--fs-title);font-weight:600;margin-top:16px">Nothing to clean</div>
+        <div style="color:var(--text-2);font-size:var(--fs-body);margin-top:6px;line-height:1.5">No safe-to-remove junk was found. Your Mac is tidy.</div>
+        <button class="btn" style="margin-top:18px">Scan again</button>
+      </div>
+
+      <div class="ui" style="background:var(--bg-window);border:1px solid var(--separator);border-radius:var(--r-panel);padding:32px 24px;text-align:center;min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center">
+        <div style="width:52px;height:52px;border-radius:14px;background:rgba(255,69,58,.10);display:grid;place-items:center;border:1px solid rgba(255,105,97,.24)">
+          <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="var(--danger-text)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><use href="#i-info"/></svg>
+        </div>
+        <div style="font-size:var(--fs-title);font-weight:600;margin-top:16px">Scan couldn&rsquo;t finish</div>
+        <div style="color:var(--text-2);font-size:var(--fs-body);margin-top:6px;line-height:1.5">Couldn&rsquo;t read ~/Library/Caches (permission denied).</div>
+        <div style="color:var(--text-3);font-size:var(--fs-caption);margin-top:10px;line-height:1.5">No results are shown because there are none. mac-cleaner never shows sample figures in place of your real disk.</div>
+        <button class="btn" style="margin-top:16px">Try again</button>
+      </div>
+
+      <div class="ui" style="background:var(--bg-window);border:1px solid var(--separator);border-radius:var(--r-panel);padding:32px 24px;text-align:center;min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center">
+        <div style="width:52px;height:52px;border-radius:14px;background:var(--accent-tint);display:grid;place-items:center;border:1px solid rgba(10,132,255,.26)">
+          <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="var(--accent-text)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sparkle"/></svg>
+        </div>
+        <div class="hero-num" style="font-size:32px;margin-top:16px">12.5<span class="unit" style="font-size:16px">GB</span></div>
+        <div style="font-size:var(--fs-body);color:var(--text-2);margin-top:4px">moved to the Trash</div>
+        <div style="color:var(--text-3);font-size:var(--fs-caption);margin-top:10px;line-height:1.5">165,443 items &middot; recorded in the audit log</div>
+        <div style="display:flex;gap:8px;margin-top:16px">
+          <button class="btn quiet">Undo</button>
+          <button class="btn">Back to Smart Scan</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <section class="board" id="comparison">
+    <h2>What this changes</h2>
+    <h3>v0.2 tells vs. the target</h3>
+    <table class="spec" style="max-width:900px">
+      <tr><th style="width:34%">v0.2 today</th><th>Target above</th></tr>
+      <tr><td class="samp">Centered 700px column on a flat background</td><td>Full-window sidebar + content, vibrancy, inset traffic lights</td></tr>
+      <tr><td class="samp">Stock <code>&lt;select&gt;</code> and <code>&lt;input type=checkbox&gt;</code></td><td>Segmented controls and a 14px accent checkbox</td></tr>
+      <tr><td class="samp">Four independent flat bars, one per category</td><td>One proportional stack + a category ring, 3px minimum segment</td></tr>
+      <tr><td class="samp">A card per row, each with its own border</td><td>Inset grouped list: one card, hairline-separated rows</td></tr>
+      <tr><td class="samp">No iconography anywhere</td><td>One icon per module and per category, 17px, 1.5 stroke</td></tr>
+      <tr><td class="samp">7 flat tokens, one accent used for everything</td><td>Measured ladder; accent split into fill / graphic / text roles</td></tr>
+      <tr><td class="samp">Sizes in the body font, non-tabular</td><td>Every figure mono + tabular-nums, so columns align</td></tr>
+      <tr><td class="samp">Done state is a dead end</td><td>Complete offers Undo and a way back</td></tr>
+      <tr><td class="samp">Two tabs; switching re-runs the whole scan</td><td>Seven modules with live badges and preserved state</td></tr>
+    </table>
+  </section>
+
+</div>

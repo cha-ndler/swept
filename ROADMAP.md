@@ -122,15 +122,22 @@ Logs clean verified via the audit log). Run via the `.claude/loops/` prompts.
   unguarded. A proper fix needs `O_NOFOLLOW` (a new `libc` dependency); a
   `symlink_metadata` pre-check would be racy. Deferred deliberately, recorded
   here so it is not lost.
-- [ ] **Bind confirmation to a magnitude** — the GUI re-scans at execute time,
-  so the plan that runs is not the plan the user was shown. The mass-delete
-  flag is now derived from the preview rather than hardcoded, but a preview
-  already over the threshold authorizes an arbitrarily larger fresh plan. Send
-  the previewed count/bytes and refuse if the fresh plan materially exceeds them.
-- [ ] **Async commands + real scan progress** — the `#[tauri::command]`s are
-  synchronous and run inline, so a 12 s scan freezes the window; and the
-  loading state is a static pulse. Also stop serializing `report.items` (one
-  record per file, unread by the UI) over IPC.
+- [x] **Bind confirmation to a magnitude** (PR #20) — the GUI re-scans at execute
+  time, so the plan that runs is not the plan the user was shown. The mass-delete
+  flag is now derived from the preview rather than hardcoded, and the previewed
+  count/bytes travel with the request as `Expected`; a fresh plan that materially
+  exceeds them (beyond a small churn allowance) is refused rather than executed.
+  An empty selection now disposes of nothing instead of meaning "all categories".
+- [x] **Async commands + real scan progress** (PR #21) — the `#[tauri::command]`s
+  were synchronous and ran inline on the webview's message loop, so the window
+  froze for the whole scan (measured: 165k files, 8.4 s warm / 36.7 s cold at
+  56 % CPU). Now `async` + `spawn_blocking`, emitting cumulative counts on
+  `scan://progress` batched every 2,000 files, with a Scanning state that shows
+  real figures instead of a static pulse. `report.items` (one record per file,
+  unread by the UI) is no longer serialized to the GUI: **37.4 MiB → 796 bytes
+  per scan**, a ~49,000× reduction. The CLI's `--json` contract is unchanged.
+  Verified by sampling the running app — the walk is on `tokio-rt-worker` while
+  the main thread sits in `tao::event_loop::run`.
 
 ### Hardening (autonomous dev loop)
 - [ ] **Batch/quiet disposal** — the executor disposes one file at a time, so
@@ -138,18 +145,129 @@ Logs clean verified via the audit log). Run via the `.claude/loops/` prompts.
   slow). Move to `trash::delete_all` (single op → one sound, far faster):
   re-guard each path, batch-dispose the validated set, audit each, decide
   failure semantics. *Deletion-logic change → `deletion-safety-reviewer` required.*
-- [ ] **Scan progress + speed** — 12 s for 230k files, single-threaded, no
-  progress in the GUI. Parallelize the walk and emit progress events (replace the
-  static loading skeleton with real progress).
+- [ ] **Parallelize the walk** — progress reporting shipped in PR #21; the walk
+  itself is still single-threaded. Measured at 56 % CPU on a cold cache, so it is
+  I/O-bound and parallelism buys less than it looks like it should — worth doing,
+  but not the win the wall-clock number suggests.
 - [ ] **CLI per-category scoping** — let the CLI act on a chosen category (the GUI
   already can); parity + safer first real cleans.
 
-### UI prettification (prettify loop)
-Lift the GUI from "correct/standard" to distinctive + delightful (rubric
-dimensions 9–10). Add competitor screenshots to `design/references/` first.
-- [ ] **Clean view** — considered type scale, category iconography, a size
-  visualization with character (proportional/stacked, not a flat bar), depth.
-- [ ] **Confirm modal + Done state** — polish + restrained motion (~150–200ms).
-- [ ] **Startup view** — iconography + clearer run-at-login emphasis.
-- [ ] **App-wide theming** — refined token palette (hover/active/selected),
-  hairline borders; optional light mode.
+## v0.4 — The native Mac shell (prettify loop)
+
+Lift the GUI from "correct/standard" to a **native Mac pro-tool** — the
+DaisyDisk / Raycast / Linear register (rubric dimensions 9–10). The old plan here
+was "add competitor screenshots to `design/references/` first", which was never
+going to happen: they are third-party copyrighted UI and can't be committed or
+shipped. U0 solves that by generating our own.
+
+**Every task in v0.4 is visual → PR with screenshots + a `ux-critic` scorecard,
+and PAUSES for the human taste gate. Never auto-merged.**
+
+- [x] **U0 — Design canvas + rubric** — `design/canvas/index.html` is a
+  10-artboard design target (foundations, shell, Smart Scan idle/scanning/
+  results, confirm sheet, Large & Old, Space Lens, onboarding, states), rendered
+  to `design/references/artboard-*.png` by `design/canvas/render.mjs`. These are
+  **first-party exemplars**: we generate them, so they can be committed,
+  versioned and diffed with no copyright question, and the `ux-critic` finally
+  has something concrete to compare against. `design/rubric.md` rewritten toward
+  the native-Mac-pro-tool target with measurable specs (token table with real
+  measured contrast ratios, type scale, 4pt grid, three elevations, two motion
+  durations, an automatic MUST-FIX list) and the stale duplicated block removed.
+  The palette is verified: worst text pair 4.77:1, worst graphic pair 3.70:1,
+  zero AA failures — and the accent is split into three roles (`fill` / `graphic`
+  / `text`) because the vivid system blue is only 3.65:1 against white and cannot
+  legally carry a white label.
+- [ ] **U1 — Window + chrome** — `titleBarStyle: "Overlay"` + `hiddenTitle` +
+  `decorations` to inset the traffic lights over our own content;
+  `minWidth`/`minHeight`; `macOSPrivateApi` + `windowEffects: ["sidebar"]` for
+  real `NSVisualEffectView` vibrancy. Set a real CSP (`security.csp` is `null`).
+- [ ] **U2 — Module sidebar replaces the tab bar** — the two-tab `useState` in
+  `App.tsx` becomes a persistent sidebar (Smart Scan / Cleanup / Applications /
+  Large & Old / Space Lens / Privacy / Maintenance), each with an icon and a live
+  size badge. Keep per-module state alive across switches — today unmounting a
+  tab discards it and re-runs the whole scan.
+- [ ] **U3 — Design system** — port the canvas token block into `styles.css`
+  (surface ladder, hairlines, three accent roles, type scale, 4pt grid, three
+  elevations, two motion durations) and replace every stock browser control:
+  the `<select>` and `<input type=checkbox>` are the loudest "this is a web page"
+  tells in v0.2. Inline SVG icon sprite.
+- [ ] **U4 — Smart Scan hero** — the category ring, a 52px tabular reclaimable
+  total, and one proportional stack instead of four independent flat bars.
+  Minimum 3px segment width: Logs at 0.08 % of the max currently renders as an
+  empty track, which reads as zero.
+- [ ] **U5 — Flow polish** — confirm sheet, Done state (currently a dead end with
+  no way back to the scan), empty/error/onboarding states, restrained motion.
+- [ ] **U6 — Menu-bar extra** — `tauri-plugin-positioner` + a tray icon showing
+  reclaimable space with a quick-clean action.
+
+## v0.5 — Modules
+
+The architectural spine, which must not be violated: **widen what we can see;
+never widen what we can dispose of — escalate per-path with explicit consent
+instead.**
+
+- [ ] **M1 — Discovery/disposal scope split** — `allowlist::default_roots` stays
+  exactly as it is (the *disposal* allowlist, every existing invariant test
+  untouched). Add a read-only `discovery_roots` that yields plain `PathBuf` and
+  never constructs a `SafePath`, plus `Consent.granted: Vec<SafePath>` for
+  individually user-picked paths. Grants are enumerated (no globs, no directory
+  expansion), capped, separately audited, and never pre-selected. *Requires
+  `deletion-safety-reviewer`.*
+- [ ] **M2 — Large & Old Files** — read-only walk of `discovery_roots` with
+  size/age thresholds, feeding `Consent.granted`. Never pre-selected, never in
+  Smart Scan's default selection.
+- [ ] **M3 — Space Lens** — parallel depth-capped directory-size walk producing a
+  tree DTO. Purely read-only; never touches the executor.
+- [ ] **M4 — Uninstaller (leftovers-only)** — leftovers for a chosen bundle id
+  under `~/Library/{Application Support,Caches,Preferences,Containers,…}`.
+  **Removing the `.app` bundle itself is out of scope** — `/Applications` is on
+  `PROTECTED_ABS_ROOTS` and carving it out is a denylist amendment needing
+  explicit sign-off. **Depends on `guard_dir`** (see v0.3): leftover trees are
+  directory actions, and `guard()` alone only suffices while every target is a
+  single file. *Riskiest task in the plan.*
+- [ ] **M5 — Privacy** — browser caches/cookies/history. **Cookies sign the user
+  out everywhere** — separately opt-in, never pre-selected, never in Smart Scan
+  defaults, labelled with that consequence.
+- [ ] **M6 — Maintenance (honest scope)** — reversible login-item management
+  (move the plist to a managed disabled folder, not disposal). **Explicitly out
+  of scope:** flush DNS, purge RAM, rebuild Spotlight, repair permissions — all
+  need `sudo`, which under a hardened notarized app means a privileged helper
+  (`SMAppService`), a project of its own. Say so rather than ship a button that
+  silently fails.
+- [ ] **M7 — Smart Scan** — orchestration over M2–M6 plus the existing cleaners:
+  one button, one combined result, one total. Defaults include only the
+  conservatively-safe categories; Large & Old, Privacy cookies and Uninstaller
+  leftovers are opt-in and shown separately.
+
+## v0.6 — Distribution
+
+Nobody can install this today: the repo is private, the `.dmg` is unsigned and
+un-notarized, and it is Apple Silicon only.
+
+- [ ] **D1 — Universal binary** — CI runs a bare `cargo tauri build` with no
+  `--target`, so it inherits the Apple Silicon runner and Intel Macs get no
+  download at all. Add both targets and `--target universal-apple-darwin`.
+  **Gotcha:** that moves the bundle output to
+  `target/universal-apple-darwin/release/bundle/…`, so the upload and release
+  globs must both change or the job fails on `if-no-files-found: error`.
+- [ ] **D2 — Signing + notarization behind optional secrets** — a `bundle.macOS`
+  block (`signingIdentity` from env, `hardenedRuntime`, `entitlements.plist`,
+  `minimumSystemVersion`), CI guarded by `if: secrets.APPLE_CERTIFICATE != ''`.
+  **Unsigned builds keep working unchanged when the secret is absent**, so none
+  of this is wasted if a certificate never appears.
+- [ ] **D3 — Auto-update** — `tauri-plugin-updater`, a signing keypair,
+  `createUpdaterArtifacts`, `latest.json` on the release. Without it every user
+  is stranded on whatever version they downloaded.
+- [ ] **D4 — Install story** — a landing README with a download button, real
+  `.app` window screenshots (today's `docs/*.png` are headless browser renders
+  with no window chrome), a Homebrew cask, and — while unsigned — the exact
+  macOS 15+ walkthrough, since Apple removed the right-click → Open bypass. Add
+  `LICENSE` (MIT is claimed in the README but the file doesn't exist),
+  `CONTRIBUTING.md`, `SECURITY.md`, issue templates.
+- [ ] **D5 — Release hygiene** — single-source the version (currently
+  triplicated across `tauri.conf.json`, `src-tauri/Cargo.toml` and
+  `package.json` with nothing enforcing agreement); feed `CHANGELOG.md` into
+  release notes; add the missing `[0.2.0]` link reference; publish checksums;
+  run the `package` job on PRs so bundling regressions surface before merge.
+- [ ] **D6 — Public flip** — *(separate, on the human's word.)* Tidy the stale
+  merged remote branches, then make the repo public.

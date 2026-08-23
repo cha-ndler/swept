@@ -453,6 +453,7 @@ dependencies = [
  "dirs",
  "macclean-core",
  "macclean-safety",
+ "tempfile",
 ]
 
 [[package]]

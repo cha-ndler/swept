@@ -1,20 +1,38 @@
 import { useEffect, useState } from "react";
 import type { LoginItem } from "./types";
-import { SAMPLE_LOGIN_ITEMS } from "./sample";
+import { call, describeError, isDesktopApp } from "./backend";
 
 export default function StartupView() {
   const [items, setItems] = useState<LoginItem[] | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     void (async () => {
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        setItems(await invoke<LoginItem[]>("login_items"));
-      } catch {
-        setItems(SAMPLE_LOGIN_ITEMS);
+        setItems(await call<LoginItem[]>("login_items"));
+      } catch (e) {
+        // Never fall back to sample items: a fabricated startup list would have
+        // the user reasoning about launch agents that may not exist.
+        setItems(null);
+        setError(describeError(e));
       }
     })();
   }, []);
+
+  if (error) {
+    return (
+      <section className="rounded-xl border border-border bg-surface p-8 text-center">
+        <p className="text-lg font-medium">
+          {isDesktopApp() ? "Couldn’t read your login items" : "mac-cleaner runs as a desktop app"}
+        </p>
+        <p className="text-muted mx-auto mt-1 max-w-md text-sm">
+          {isDesktopApp()
+            ? error
+            : "This page is a preview shell with no access to your disk. Open the mac-cleaner app to review startup items."}
+        </p>
+      </section>
+    );
+  }
 
   if (!items) {
     return <p className="text-muted text-sm">Loading…</p>;

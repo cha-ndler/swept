@@ -31,6 +31,37 @@ pub struct Filters {
     pub min_size_bytes: Option<u64>,
 }
 
+/// What the confirmation sheet actually showed the user.
+///
+/// The plan is rebuilt at execute time (the disk may have changed since the
+/// preview), so the freshly-scanned plan is checked against these numbers. If
+/// it has grown materially the user's consent no longer describes it, and we
+/// refuse rather than quietly remove more than they agreed to.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Expected {
+    pub count: usize,
+    pub bytes: u64,
+}
+
+/// Growth allowance between preview and execute.
+///
+/// Caches genuinely churn in the seconds a user spends reading the sheet, so
+/// exact equality would refuse constantly. These absorb ordinary churn while
+/// still catching a plan that has become materially different from the one that
+/// was confirmed.
+const CHURN_ITEMS: usize = 25;
+const CHURN_BYTES: u64 = 64 * 1024 * 1024;
+
+fn grew_beyond(fresh_count: usize, fresh_bytes: u64, expected: Expected) -> bool {
+    let count_cap = expected
+        .count
+        .saturating_add(CHURN_ITEMS.max(expected.count / 10));
+    let bytes_cap = expected
+        .bytes
+        .saturating_add(CHURN_BYTES.max(expected.bytes / 10));
+    fresh_count > count_cap || fresh_bytes > bytes_cap
+}
+
 /// The serializable outcome of a clean run, for the UI to display.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CleanSummary {
@@ -103,6 +134,7 @@ pub fn clean_with_sink(
     home: &Path,
     filters: &Filters,
     categories: Option<&[String]>,
+    expected: Option<Expected>,
     consent: Consent,
     sink: &dyn Sink,
     audit: &mut AuditLog,
@@ -111,6 +143,21 @@ pub fn clean_with_sink(
     if let Some(cats) = categories {
         plan.actions
             .retain(|a| cats.iter().any(|c| c == &a.category));
+    }
+    // Bind the consent to a magnitude: refuse if the rebuilt plan is materially
+    // bigger than the one the user was shown.
+    if let Some(exp) = expected {
+        if grew_beyond(plan.count(), plan.total_bytes(), exp) {
+            return Err(format!(
+                "refused: the disk changed since the preview. This would now remove \
+                 {} items ({} bytes), but you confirmed {} items ({} bytes). \
+                 Scan again and review before cleaning.",
+                plan.count(),
+                plan.total_bytes(),
+                exp.count,
+                exp.bytes
+            ));
+        }
     }
     match execute(&plan, consent, home, sink, audit) {
         Ok(report) => Ok(CleanSummary {
@@ -123,28 +170,59 @@ pub fn clean_with_sink(
     }
 }
 
-/// Real-app clean: scan with `filters`, restrict to `categories` (empty = all),
+/// Real-app clean: scan with `filters`, restrict to the selected `categories`,
 /// then move matches to the Trash via the consent-gated executor, recording to
 /// the default audit log. Never deletes permanently.
+///
+/// `categories` is always applied as a filter, including when it is empty:
+/// **selecting nothing disposes of nothing.** This used to map an empty list to
+/// `None` ("no filter", i.e. every category), which is fail-open — a UI that
+/// lost its selection could present a confirmation sheet reading "Move 0 items"
+/// and then carry out an unrestricted clean. The caller must name what it wants
+/// removed.
 pub fn clean(
     filters: &Filters,
     categories: Vec<String>,
+    expected: Option<Expected>,
     confirm_mass_delete: bool,
 ) -> Result<CleanSummary, String> {
     let home = default_home().map_err(|e| e.to_string())?;
     let path = default_audit_path().map_err(|e| e.to_string())?;
-    let mut audit = AuditLog::open(&path).map_err(|e| e.to_string())?;
-    let cats = if categories.is_empty() {
-        None
-    } else {
-        Some(categories.as_slice())
-    };
-    clean_with_sink(
+    clean_at(
         &home,
+        &path,
         filters,
-        cats,
-        gui_consent(confirm_mass_delete),
+        categories,
+        expected,
+        confirm_mass_delete,
         &SystemSink,
+    )
+}
+
+/// The testable core of [`clean`]: everything except locating the real home and
+/// audit log.
+///
+/// This exists so the `Vec<String> -> Option<&[String]>` decision — the one that
+/// used to turn an empty selection into "every category" — sits behind a seam a
+/// fixture test can reach. [`clean`] itself resolves the *real* home, so it can
+/// never be exercised in a test, which is precisely how that fail-open survived.
+pub fn clean_at(
+    home: &Path,
+    audit_path: &Path,
+    filters: &Filters,
+    categories: Vec<String>,
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+    sink: &dyn Sink,
+) -> Result<CleanSummary, String> {
+    let mut audit = AuditLog::open(audit_path).map_err(|e| e.to_string())?;
+    clean_with_sink(
+        home,
+        filters,
+        Some(categories.as_slice()),
+        expected,
+        gui_consent(confirm_mass_delete),
+        sink,
         &mut audit,
     )
 }

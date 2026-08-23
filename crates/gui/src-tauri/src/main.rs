@@ -5,7 +5,7 @@
 
 use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
-use macclean_gui_core::{self as gui, CleanSummary, Filters};
+use macclean_gui_core::{self as gui, CleanSummary, Expected, Filters};
 
 #[tauri::command]
 fn scan(filters: Filters) -> Result<ScanReport, String> {
@@ -26,9 +26,10 @@ fn login_items() -> Result<Vec<LoginItem>, String> {
 fn clean(
     filters: Filters,
     categories: Vec<String>,
+    expected: Option<Expected>,
     confirm_mass_delete: bool,
 ) -> Result<CleanSummary, String> {
-    gui::clean(&filters, categories, confirm_mass_delete)
+    gui::clean(&filters, categories, expected, confirm_mass_delete)
 }
 
 fn main() {

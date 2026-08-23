@@ -1,21 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBytes } from "./format";
 import type { CategorySummary, CleanSummary, Filters, ScanReport } from "./types";
-import { SAMPLE_REPORT } from "./sample";
+import { call, describeError, isDesktopApp } from "./backend";
 
 type View = "loading" | "results" | "empty" | "error";
 type Phase = "none" | "confirm" | "cleaning" | "done";
-
-function previewState(): string | null {
-  return new URLSearchParams(window.location.search).get("state");
-}
-
-const SAMPLE_SUMMARY: CleanSummary = {
-  dry_run: false,
-  executed: 4213,
-  refused: 0,
-  bytes_freed: Math.round(6.44 * 1024 * 1024 * 1024),
-};
 
 export default function CleanView() {
   const [view, setView] = useState<View>("loading");
@@ -33,41 +22,31 @@ export default function CleanView() {
     setSelected(new Set(r.by_category.map((c) => c.category)));
   }
 
+  // A scan either succeeds or reports why it failed. It must never fall back to
+  // canned data: the fixture category ids are the real ones, so showing them
+  // after a failure would invite the user to act on numbers that describe no
+  // real disk. See ./backend.ts.
   async function runScan(filters: Filters) {
+    // Close any open confirmation up front, for every re-scan — not just failed
+    // ones. The sheet describes one specific report. While a re-scan is in
+    // flight it would still be showing the previous report's numbers even
+    // though `filters` has already changed, so confirming it would apply the
+    // user's consent to a set they never saw.
+    setPhase("none");
     setView("loading");
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const r = await invoke<ScanReport>("scan", { filters });
+      const r = await call<ScanReport>("scan", { filters });
       seed(r);
       setView(r.by_category.length ? "results" : "empty");
-    } catch {
-      seed(SAMPLE_REPORT);
-      setView("results");
+    } catch (e) {
+      setReport(null);
+      setSelected(new Set());
+      setError(describeError(e));
+      setView("error");
     }
   }
 
   useEffect(() => {
-    const ps = previewState();
-    if (ps) {
-      if (ps === "empty") {
-        seed({ ...SAMPLE_REPORT, total_count: 0, total_bytes: 0, by_category: [] });
-        setView("empty");
-      } else if (ps === "error") {
-        setError("Couldn’t read ~/Library/Caches (permission denied).");
-        setView("error");
-      } else if (ps === "loading") {
-        setView("loading");
-      } else {
-        seed(SAMPLE_REPORT);
-        setView("results");
-        if (ps === "confirm") setPhase("confirm");
-        if (ps === "done") {
-          setSummary(SAMPLE_SUMMARY);
-          setPhase("done");
-        }
-      }
-      return;
-    }
     void runScan({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -97,19 +76,31 @@ export default function CleanView() {
   const selCount = sel.reduce((s, c) => s + c.count, 0);
 
   async function runClean() {
+    // Defence in depth: never send a clean for an empty selection. The backend
+    // now refuses this too, but the request should not be made at all.
+    if (sel.length === 0) {
+      setPhase("none");
+      return;
+    }
     setCleanError("");
     setPhase("cleaning");
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const s = await invoke<CleanSummary>("clean", {
+      const s = await call<CleanSummary>("clean", {
         filters: { older_than_days: olderDays ? Number(olderDays) : undefined, min_size_bytes: minSize ? Number(minSize) : undefined },
         categories: Array.from(selected),
-        confirmMassDelete: true,
+        // Bind the consent to what the sheet actually showed. The backend
+        // rebuilds the plan (the disk may have changed since the scan), so it
+        // needs both: the mass-delete acknowledgement — derived from the
+        // displayed figures rather than pre-satisfied, thresholds per
+        // core/src/plan.rs — and the magnitude those figures represented, so a
+        // materially larger plan is refused instead of executed.
+        expected: { count: selCount, bytes: selBytes },
+        confirmMassDelete: selCount > 100 || selBytes > 5 * 1024 ** 3,
       });
       setSummary(s);
       setPhase("done");
     } catch (e) {
-      setCleanError(String(e));
+      setCleanError(describeError(e));
       setPhase("confirm");
     }
   }
@@ -126,7 +117,18 @@ export default function CleanView() {
       />
 
       {view === "loading" && <LoadingSkeleton />}
-      {view === "error" && <ErrorState message={error} />}
+      {view === "error" && (
+        <ErrorState
+          message={error}
+          inApp={isDesktopApp()}
+          onRetry={() =>
+            void runScan({
+              older_than_days: olderDays ? Number(olderDays) : undefined,
+              min_size_bytes: minSize ? Number(minSize) : undefined,
+            })
+          }
+        />
+      )}
       {view === "empty" && <EmptyState />}
       {view === "results" && (
         <>
@@ -319,11 +321,29 @@ function EmptyState() {
   );
 }
 
-function ErrorState({ message }: { message: string }) {
+function ErrorState({ message, inApp, onRetry }: { message: string; inApp: boolean; onRetry: () => void }) {
   return (
     <section className="mt-3 rounded-xl border border-border bg-surface p-8 text-center">
-      <p className="text-lg font-medium">Scan couldn’t finish</p>
-      <p className="text-muted mt-1 text-sm">{message}</p>
+      <p className="text-lg font-medium">
+        {inApp ? "Scan couldn’t finish" : "mac-cleaner runs as a desktop app"}
+      </p>
+      <p className="text-muted mx-auto mt-1 max-w-md text-sm">
+        {inApp
+          ? message
+          : "This page is a preview shell with no access to your disk. Open the mac-cleaner app to scan."}
+      </p>
+      <p className="text-muted mt-3 text-xs">
+        Nothing was scanned and nothing was changed. No results are shown because there are none —
+        mac-cleaner never shows sample figures in place of your real disk.
+      </p>
+      {inApp && (
+        <button
+          onClick={onRetry}
+          className="mt-5 rounded-xl border border-border px-4 py-2 text-sm font-medium text-text hover:border-muted"
+        >
+          Try again
+        </button>
+      )}
     </section>
   );
 }

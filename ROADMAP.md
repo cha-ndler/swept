@@ -88,6 +88,50 @@ destructive action in the GUI must route through the consent-gated `executor`
 Surfaced by dogfooding v0.2 on a real Mac (230k files, 11.6 GiB found; a real
 Logs clean verified via the audit log). Run via the `.claude/loops/` prompts.
 
+### Trust & truth (do first — the app could show figures that describe no real disk)
+- [x] **No fixture fallback in the app** — `CleanView`/`StartupView` wrapped
+  `invoke` in a bare `catch` that fell back to `sample.ts`. That was not an
+  "am I in Tauri?" check: *any* backend failure (a permission denial, an
+  unresolvable home) rendered fabricated sizes/counts, and because the fixture
+  category ids are the real ones the user could then run a real clean against
+  numbers they had never actually scanned. Fixtures moved out of `src/` to
+  `ux/fixtures.ts`; one honest transport in `src/backend.ts`; failures surface
+  as an error state that says nothing was scanned or changed. The `?state=`
+  preview branch is gone — the UX oracle now injects a fake
+  `window.__TAURI_INTERNALS__`, so the screenshots exercise the *real* data
+  path instead of a preview-only branch. Guarded by a build-artifact test
+  asserting `dist/` contains no fixture strings (can't rot).
+- [x] **Denylist: refuse ancestors of protected locations** — `guard("~/Library")`
+  *succeeded*: `PROTECTED_ABS_ROOTS` lists the absolute `/Library` and
+  `Path::starts_with` is component-wise, so `~/Library` never matched, and
+  `PROTECTED_HOME_SUBPATHS` covers only `Keychains`/`Mail`. Only the allowlist
+  — a scope check, not a safety check — kept it out of reach. Latent today
+  (disposal is file-only), but it would open the moment per-path grants exist.
+  Now refused by the denylist itself, with exact-ancestor semantics so
+  `Library/Caches` and `Library/Logs` stay cleanable. Unit + property coverage;
+  verified RED first.
+- [ ] **Directory disposal needs `guard_dir`** — before any directory is ever
+  disposed of (uninstaller leftover trees), `guard()` is not enough: it must
+  also refuse a directory containing a `.git` anywhere in its subtree, via a
+  bounded walk that **fails closed** if it cannot finish.
+- [ ] **Audit log should not follow symlinks** — `audit.rs` opens with
+  `create(true).append(true)`, which follows a symlink at the final component,
+  so a `--audit` path pointing at a link appends JSONL to the link's target.
+  Append-only, so nothing is destroyed, and the surrounding directory checks in
+  `resolve_audit_path` now refuse protected locations — but the open itself is
+  unguarded. A proper fix needs `O_NOFOLLOW` (a new `libc` dependency); a
+  `symlink_metadata` pre-check would be racy. Deferred deliberately, recorded
+  here so it is not lost.
+- [ ] **Bind confirmation to a magnitude** — the GUI re-scans at execute time,
+  so the plan that runs is not the plan the user was shown. The mass-delete
+  flag is now derived from the preview rather than hardcoded, but a preview
+  already over the threshold authorizes an arbitrarily larger fresh plan. Send
+  the previewed count/bytes and refuse if the fresh plan materially exceeds them.
+- [ ] **Async commands + real scan progress** — the `#[tauri::command]`s are
+  synchronous and run inline, so a 12 s scan freezes the window; and the
+  loading state is a static pulse. Also stop serializing `report.items` (one
+  record per file, unread by the UI) over IPC.
+
 ### Hardening (autonomous dev loop)
 - [ ] **Batch/quiet disposal** — the executor disposes one file at a time, so
   macOS plays the Trash chime per file and does a Finder round-trip each (noisy +

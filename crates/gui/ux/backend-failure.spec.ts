@@ -131,9 +131,13 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
   await page.getByRole("button", { name: /review & clean/i }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
 
-  // The filter controls stay reachable behind the overlay; changing one
-  // re-scans, and this time the backend fails.
-  await page.getByLabel(/minimum file size/i).selectOption({ index: 1 }, { force: true });
+  // Trigger a re-scan while the sheet is open. The event is dispatched straight
+  // at the control because the overlay deliberately blocks pointer input — and
+  // the invariant under test is not "the overlay is permeable", it is that
+  // `runScan` closes the sheet no matter what triggered it. (The old `<select>`
+  // hid this: selectOption sets the value through the DOM, so it never had to
+  // get past the overlay either.)
+  await page.getByRole("radio", { name: "100 MB" }).dispatchEvent("click");
 
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByText(/couldn.t finish/i)).toBeVisible();

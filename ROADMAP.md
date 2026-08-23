@@ -177,24 +177,36 @@ and PAUSES for the human taste gate. Never auto-merged.**
   zero AA failures — and the accent is split into three roles (`fill` / `graphic`
   / `text`) because the vivid system blue is only 3.65:1 against white and cannot
   legally carry a white label.
-- [ ] **U1 — Window + chrome** — `titleBarStyle: "Overlay"` + `hiddenTitle` +
-  `decorations` to inset the traffic lights over our own content;
-  `minWidth`/`minHeight`; `macOSPrivateApi` + `windowEffects: ["sidebar"]` for
-  real `NSVisualEffectView` vibrancy. Set a real CSP (`security.csp` is `null`).
-- [ ] **U2 — Module sidebar replaces the tab bar** — the two-tab `useState` in
-  `App.tsx` becomes a persistent sidebar (Smart Scan / Cleanup / Applications /
-  Large & Old / Space Lens / Privacy / Maintenance), each with an icon and a live
-  size badge. Keep per-module state alive across switches — today unmounting a
-  tab discards it and re-runs the whole scan.
-- [ ] **U3 — Design system** — port the canvas token block into `styles.css`
-  (surface ladder, hairlines, three accent roles, type scale, 4pt grid, three
-  elevations, two motion durations) and replace every stock browser control:
-  the `<select>` and `<input type=checkbox>` are the loudest "this is a web page"
-  tells in v0.2. Inline SVG icon sprite.
-- [ ] **U4 — Smart Scan hero** — the category ring, a 52px tabular reclaimable
-  total, and one proportional stack instead of four independent flat bars.
-  Minimum 3px segment width: Logs at 0.08 % of the max currently renders as an
-  empty track, which reads as zero.
+- [x] **U1 — Window + chrome** (PR #23) — `titleBarStyle: "Overlay"` +
+  `hiddenTitle` inset the traffic lights over our own content; `minWidth`/
+  `minHeight`; `macOSPrivateApi` + `transparent` + `windowEffects: ["sidebar"]`
+  for a real `NSVisualEffectView`; a real CSP replacing `null`.
+  **Two traps found:** `start_dragging` is *not* in `core:default`
+  (`tauri/build.rs` has `("start_dragging", false)`), so with Overlay the window
+  could not be moved at all until it was granted explicitly — the ACL manifest
+  from #21 is what made that enforced rather than accidentally working. And the
+  drag region must sit on non-interactive spacers, since Tauri only treats an
+  element as a handle when the attribute is on the event target itself.
+  **Note:** `transparent` on macOS requires the private API, which forecloses
+  Mac App Store distribution. Consistent with D2 (Developer ID + direct `.dmg`),
+  but it is a one-way door.
+- [x] **U2 — Module sidebar replaces the tab bar** (PR #23) — a persistent
+  sidebar with icons and live size badges. Modules are **mounted on first visit
+  and kept alive**, so switching no longer discards state and re-runs the whole
+  scan; and the start module is derived during first render rather than in an
+  effect, so `?tab=startup` no longer mounts Cleanup, fires a full scan and
+  throws it away. Only modules that exist are listed — the other five would be
+  dead rows promising a capability that isn't there.
+- [ ] **U3 — Design system** — the token block, type scale, elevations, motion
+  durations and the icon set landed with the shell in #23. What remains is the
+  part that matters most for "this is not a web page": **replace the stock
+  `<select>` and `<input type=checkbox>`** with a segmented control and a 14px
+  accent checkbox, and migrate the view internals off Tailwind's default text
+  sizes onto the macOS scale.
+- [ ] **U4 — Smart Scan hero** — the category ring and a 52px tabular
+  reclaimable total. The proportional stack and the 3px minimum segment width
+  shipped in #23 (Logs at 0.08 % of the total used to render as an empty track,
+  which reads as zero).
 - [ ] **U5 — Flow polish** — confirm sheet, Done state (currently a dead end with
   no way back to the scan), empty/error/onboarding states, restrained motion.
 - [ ] **U6 — Menu-bar extra** — `tauri-plugin-positioner` + a tray icon showing

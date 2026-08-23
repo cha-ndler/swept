@@ -13,7 +13,8 @@ export interface ScanReport {
   requires_confirmation: boolean;
   skipped_protected: number;
   by_category: CategorySummary[];
-  items: unknown[];
+  /** Omitted from the GUI payload — the app renders rollups only. */
+  items?: unknown[];
 }
 
 // Mirrors macclean_gui_core::CleanSummary.

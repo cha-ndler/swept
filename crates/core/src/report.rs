@@ -41,24 +41,46 @@ pub struct ScanReport {
     pub skipped_protected: usize,
     /// Per-category rollups, ordered by category name for stable output.
     pub by_category: Vec<CategorySummary>,
+    /// One record per planned file.
+    ///
+    /// Skipped entirely when empty, so a caller that does not need per-file
+    /// detail (the GUI, which renders only the rollups) pays nothing for it —
+    /// on a real home this list is ~165k records per scan.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<ItemReport>,
 }
 
 impl ScanReport {
+    /// A report carrying the per-file `items` list. Used by the CLI's `--json`,
+    /// whose output contract includes them.
     pub fn from_plan(plan: &Plan) -> Self {
+        Self::build(plan, true)
+    }
+
+    /// A report with rollups only and no per-file list.
+    ///
+    /// The GUI renders `by_category` and nothing else, so shipping one record
+    /// per file across the IPC boundary is pure cost.
+    pub fn from_plan_without_items(plan: &Plan) -> Self {
+        Self::build(plan, false)
+    }
+
+    fn build(plan: &Plan, with_items: bool) -> Self {
         let mut by_cat: BTreeMap<&str, (usize, u64)> = BTreeMap::new();
-        let mut items = Vec::with_capacity(plan.actions.len());
+        let mut items = Vec::with_capacity(if with_items { plan.actions.len() } else { 0 });
 
         for a in &plan.actions {
             let e = by_cat.entry(a.category.as_str()).or_insert((0, 0));
             e.0 += 1;
             e.1 += a.size_bytes;
-            items.push(ItemReport {
-                path: a.path.as_path().display().to_string(),
-                size_bytes: a.size_bytes,
-                category: a.category.clone(),
-                disposal: disposal_label(a.disposal),
-            });
+            if with_items {
+                items.push(ItemReport {
+                    path: a.path.as_path().display().to_string(),
+                    size_bytes: a.size_bytes,
+                    category: a.category.clone(),
+                    disposal: disposal_label(a.disposal),
+                });
+            }
         }
 
         let by_category = by_cat

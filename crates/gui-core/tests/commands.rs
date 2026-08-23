@@ -274,3 +274,62 @@ fn ordinary_churn_between_preview_and_execute_is_allowed() {
 
     assert_eq!(summary.executed, 3);
 }
+
+#[test]
+fn the_gui_scan_report_omits_the_per_file_item_list() {
+    // `ScanReport::items` holds one record per file. On a real home that is
+    // ~165k records serialized across the IPC boundary on every scan — and the
+    // UI types it `unknown[]` and never renders it. The CLI's --json still
+    // carries items; the GUI must not.
+    let (_g, home) = fake_home();
+    for i in 0..5 {
+        write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"data");
+    }
+
+    let report = macclean_gui_core::scan_report(&home, &Filters::default());
+    assert_eq!(
+        report.total_count, 5,
+        "the rollup still describes every file"
+    );
+    assert!(
+        report.items.is_empty(),
+        "the GUI payload must not carry per-file items"
+    );
+
+    let json = serde_json::to_string(&report).unwrap();
+    assert!(
+        !json.contains("\"items\""),
+        "an empty item list must not be serialized at all: {json}"
+    );
+
+    // The CLI path is unchanged and still carries them.
+    let plan = macclean_core::scanner::scan(
+        &macclean_core::scanner::ScanConfig::with_default_roots(home.clone()),
+    );
+    assert_eq!(
+        macclean_core::report::ScanReport::from_plan(&plan)
+            .items
+            .len(),
+        5
+    );
+}
+
+#[test]
+fn scan_report_with_progress_reports_and_matches_the_plain_report() {
+    let (_g, home) = fake_home();
+    for i in 0..6 {
+        write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"data");
+    }
+
+    let mut seen = 0usize;
+    let report =
+        macclean_gui_core::scan_report_with_progress(&home, &Filters::default(), &mut |_| {
+            seen += 1
+        });
+
+    assert!(seen >= 1, "progress must be reported at least once");
+    let plain = macclean_gui_core::scan_report(&home, &Filters::default());
+    assert_eq!(report.total_count, plain.total_count);
+    assert_eq!(report.total_bytes, plain.total_bytes);
+    assert!(report.items.is_empty(), "still no per-file items over IPC");
+}

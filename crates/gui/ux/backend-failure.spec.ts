@@ -12,7 +12,11 @@ import type { Page } from "@playwright/test";
 async function stubBackend(page: Page, behavior: string) {
   await page.addInitScript(`
     window.__TAURI_INTERNALS__ = {
-      invoke: () => ${behavior},
+      invoke: (cmd) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        return ${behavior};
+      },
       transformCallback: (cb) => cb,
     };
   `);
@@ -83,6 +87,8 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
     (w as Record<string, unknown>).__cleanCalls = [];
     w.__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args: unknown) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
         if (cmd === "scan") {
           scans += 1;
           if (scans > 1) return Promise.reject("permission denied");

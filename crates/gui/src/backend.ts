@@ -43,3 +43,24 @@ export function describeError(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
 }
+
+/** Cumulative scan progress, mirroring `macclean_core::scanner::Progress`. */
+export type ScanProgress = {
+  examined: number;
+  planned: number;
+  bytes: number;
+};
+
+/**
+ * Subscribe to scan progress. Returns an unsubscribe function.
+ *
+ * Outside the desktop app there is no event channel, so this is a no-op — the
+ * caller still gets a valid unsubscribe and simply never sees an update.
+ */
+export async function onScanProgress(
+  handler: (p: ScanProgress) => void,
+): Promise<() => void> {
+  if (!isDesktopApp()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return await listen<ScanProgress>("scan://progress", (e) => handler(e.payload));
+}

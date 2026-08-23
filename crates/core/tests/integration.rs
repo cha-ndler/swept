@@ -348,3 +348,48 @@ fn execution_refuses_path_that_became_protected() {
     let log = fs::read_to_string(&audit_path).unwrap();
     assert!(log.contains("\"disposition\":\"refused\""));
 }
+
+#[test]
+fn scan_with_progress_reports_monotonic_counts_and_matches_plain_scan() {
+    use macclean_core::scanner::{scan_with_progress, Progress};
+
+    let (_g, home) = fake_home();
+    for i in 0..40 {
+        write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"data");
+    }
+    let cfg = ScanConfig::with_default_roots(home.clone());
+
+    let mut updates: Vec<Progress> = Vec::new();
+    let plan = scan_with_progress(&cfg, &mut |p| updates.push(p));
+
+    assert!(
+        !updates.is_empty(),
+        "progress must be reported at least once"
+    );
+    for w in updates.windows(2) {
+        assert!(
+            w[1].examined >= w[0].examined,
+            "examined must not go backwards"
+        );
+        assert!(
+            w[1].planned >= w[0].planned,
+            "planned must not go backwards"
+        );
+        assert!(w[1].bytes >= w[0].bytes, "bytes must not go backwards");
+    }
+
+    // The final update must describe the plan that was actually returned.
+    let last = *updates.last().unwrap();
+    assert_eq!(
+        last.planned,
+        plan.count(),
+        "final progress must match the plan"
+    );
+    assert_eq!(last.bytes, plan.total_bytes());
+
+    // Adding progress reporting must not change what is planned.
+    let plain = scan(&cfg);
+    assert_eq!(plan.count(), plain.count());
+    assert_eq!(plan.total_bytes(), plain.total_bytes());
+    assert_eq!(plan.skipped_protected, plain.skipped_protected);
+}

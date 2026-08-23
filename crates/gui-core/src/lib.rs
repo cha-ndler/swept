@@ -19,7 +19,7 @@ use macclean_core::audit::AuditLog;
 use macclean_core::executor::{execute, Consent, Sink, SystemSink};
 use macclean_core::loginitems::{self, LoginItem};
 use macclean_core::report::ScanReport;
-use macclean_core::scanner::{scan, ScanConfig};
+use macclean_core::scanner::{scan, scan_with_progress, Progress, ScanConfig};
 
 /// Scan/clean filters as the frontend sends them.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -95,7 +95,20 @@ pub fn build_config(home: &Path, filters: &Filters) -> ScanConfig {
 
 /// Read-only: build a scan report for the UI.
 pub fn scan_report(home: &Path, filters: &Filters) -> ScanReport {
-    ScanReport::from_plan(&scan(&build_config(home, filters)))
+    ScanReport::from_plan_without_items(&scan(&build_config(home, filters)))
+}
+
+/// Read-only: build a scan report, reporting progress as the walk proceeds.
+///
+/// The GUI runs this off the UI thread and forwards each update to the webview,
+/// so a multi-second scan shows real movement instead of a static skeleton.
+pub fn scan_report_with_progress(
+    home: &Path,
+    filters: &Filters,
+    on_progress: &mut dyn FnMut(Progress),
+) -> ScanReport {
+    let plan = scan_with_progress(&build_config(home, filters), on_progress);
+    ScanReport::from_plan_without_items(&plan)
 }
 
 /// Read-only: list login items for the UI.

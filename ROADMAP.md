@@ -208,10 +208,26 @@ and PAUSES for the human taste gate. Never auto-merged.**
   artboard has a ring *and* a stack, which encodes the composition twice; the
   rubric says "stack *or* ring", so the stack is gone and the per-row dots tie
   each row to its arc.
-- [ ] **U5 — Flow polish** — confirm sheet, Done state (currently a dead end with
-  no way back to the scan), empty/error/onboarding states, restrained motion.
-- [ ] **U6 — Menu-bar extra** — `tauri-plugin-positioner` + a tray icon showing
-  reclaimable space with a quick-clean action.
+- [x] **U5 — Flow polish** (PR #25) — sheet entry motion (220ms, opacity +
+  scale .96→1, disabled under `prefers-reduced-motion`); the Done dead end was
+  fixed in #23. **Subsumes the open v0.3 Full Disk Access item:**
+  `gui_core::probe_permissions` reads the two TCC-gated roots and the UI says
+  when a scan is under-reporting.
+  **Confirmed on a real machine, not hypothetically:** a read-only CLI scan
+  returns only four categories — homebrew-downloads, user-caches, user-logs,
+  xcode-derived-data — and the TCC-gated `trash` category is *absent entirely*.
+  Every figure the app has ever shown on this Mac was missing it.
+  **Deviation from artboard 09, on purpose:** a first-run onboarding screen only
+  warns once and is clicked past. A notice attached to the affected scan warns
+  every time it applies, including after access is later revoked.
+  `open_privacy_settings` takes no arguments and opens one hardcoded URL rather
+  than granting the webview a general open-a-URL permission.
+- [ ] **U6 — Menu-bar extra** — a tray icon showing reclaimable space.
+  **Scope correction:** the original "quick-clean action" would dispose of files
+  from a menu with no preview and no confirmation, which the safety contract
+  forbids (item 1: dry-run is the default; item 5: no unconfirmed mass delete).
+  The tray should surface the figure and *open the app at the confirm step* —
+  never dispose directly.
 
 ## v0.5 — Modules
 

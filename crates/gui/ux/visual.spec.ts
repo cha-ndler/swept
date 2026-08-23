@@ -22,13 +22,26 @@ test.beforeAll(() => {
  */
 async function installBackend(
   page: Page,
-  opts: { report?: unknown; items?: unknown; summary?: unknown; hang?: boolean } = {},
+  opts: {
+    report?: unknown;
+    items?: unknown;
+    summary?: unknown;
+    hang?: boolean;
+    perms?: unknown;
+  } = {},
 ) {
   const payload = {
     report: opts.report ?? SAMPLE_REPORT,
     items: opts.items ?? SAMPLE_LOGIN_ITEMS,
     summary: opts.summary ?? SAMPLE_SUMMARY,
     hang: opts.hang ?? false,
+    // Full access unless a test says otherwise, so the notice stays out of the
+    // other screenshots.
+    perms: opts.perms ?? {
+      trash_readable: true,
+      containers_readable: true,
+      all_readable: true,
+    },
   };
   await page.addInitScript((p) => {
     const w = window as unknown as Record<string, unknown>;
@@ -42,6 +55,9 @@ async function installBackend(
           return Promise.resolve(1);
         }
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The permission probe is advisory and must answer even while a scan
+        // hangs, otherwise the loading screenshot would race it.
+        if (cmd === "permissions") return Promise.resolve(p.perms);
         if (p.hang) return new Promise(() => {});
         if (cmd === "scan") return Promise.resolve(p.report);
         if (cmd === "login_items") return Promise.resolve(p.items);
@@ -97,6 +113,25 @@ test("scan loading", async ({ page }, testInfo) => {
   await expect(page.getByText(/48,231 files examined/)).toBeVisible();
 
   await capture(page, "scan-loading", testInfo.project.name);
+});
+
+test("scan results with limited access", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    perms: { trash_readable: false, containers_readable: true, all_readable: false },
+  });
+  await page.goto("/");
+  await expect(page.getByText(/under-reporting/i)).toBeVisible();
+  // The figures shown are still real — the notice explains a gap, it does not
+  // replace or qualify the numbers themselves.
+  await expect(page.getByText("6.4 GiB")).toBeVisible();
+  await capture(page, "scan-limited-access", testInfo.project.name);
+});
+
+test("full access shows no notice", async ({ page }) => {
+  await installBackend(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Cleanup" })).toBeVisible();
+  await expect(page.getByText(/under-reporting/i)).toHaveCount(0);
 });
 
 test("scan confirm", async ({ page }, testInfo) => {

@@ -239,3 +239,44 @@ pub fn clean_at(
         &mut audit,
     )
 }
+
+/// Which TCC-gated roots the app can actually read right now.
+///
+/// `~/.Trash` and `~/Library/Containers` are protected by macOS TCC. Without
+/// access a scan still succeeds — it simply cannot see inside them, so it
+/// reports less than is really there. That is the same class of problem as the
+/// fixture fallback removed in v0.3: a figure the user trusts that does not
+/// describe their disk. This probe exists so the UI can say so out loud rather
+/// than quietly under-reporting.
+///
+/// The names are deliberately about *reading*, not about the Full Disk Access
+/// toggle. We can observe whether a directory opened; we cannot observe the
+/// user's TCC settings, and claiming otherwise would be a guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Permissions {
+    pub trash_readable: bool,
+    pub containers_readable: bool,
+    /// Every gated root opened successfully.
+    pub all_readable: bool,
+}
+
+/// Read-only. Opens two directories and reports whether that worked. Never
+/// constructs a `SafePath`, never reaches the executor, never writes.
+pub fn probe_permissions(home: &Path) -> Permissions {
+    let trash_readable = is_readable(&home.join(".Trash"));
+    let containers_readable = is_readable(&home.join("Library/Containers"));
+    Permissions {
+        trash_readable,
+        containers_readable,
+        all_readable: trash_readable && containers_readable,
+    }
+}
+
+/// A directory that is absent is not a permission problem — reporting one would
+/// send the user to System Settings to fix something that is not broken.
+fn is_readable(dir: &Path) -> bool {
+    match std::fs::read_dir(dir) {
+        Ok(_) => true,
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
+}

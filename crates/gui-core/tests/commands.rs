@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use macclean_core::audit::AuditLog;
 use macclean_core::executor::{Consent, DirSink};
-use macclean_gui_core::{clean_with_sink, gui_consent, list_login_items, scan_report, Filters};
+use macclean_gui_core::{
+    clean_with_sink, gui_consent, list_login_items, probe_permissions, scan_report, Filters,
+};
 
 fn fake_home() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -332,4 +334,76 @@ fn scan_report_with_progress_reports_and_matches_the_plain_report() {
     assert_eq!(report.total_count, plain.total_count);
     assert_eq!(report.total_bytes, plain.total_bytes);
     assert!(report.items.is_empty(), "still no per-file items over IPC");
+}
+
+// ---------------------------------------------------------------------------
+// Full Disk Access preflight
+//
+// `~/.Trash` and `~/Library/Containers` are TCC-gated. Without access a scan
+// still runs, it just cannot see inside them — so it silently reports less than
+// is really there. Under-reporting is the same class of problem as the fixture
+// fallback: a number the user trusts that does not describe their disk. The
+// probe exists so the UI can say so out loud.
+//
+// Fixtures only. The probe is read-only and never constructs a SafePath.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_readable_home_reports_full_access() {
+    let (_g, home) = fake_home();
+    fs::create_dir_all(home.join(".Trash")).unwrap();
+    fs::create_dir_all(home.join("Library/Containers")).unwrap();
+
+    let p = probe_permissions(&home);
+    assert!(p.trash_readable, "a readable ~/.Trash must read");
+    assert!(p.containers_readable);
+    assert!(p.all_readable);
+}
+
+#[test]
+fn an_unreadable_trash_is_reported_not_ignored() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_g, home) = fake_home();
+    let trash = home.join(".Trash");
+    fs::create_dir_all(&trash).unwrap();
+    fs::create_dir_all(home.join("Library/Containers")).unwrap();
+
+    // 0o000 makes read_dir fail with PermissionDenied for a non-root user,
+    // which is exactly how a TCC denial surfaces.
+    fs::set_permissions(&trash, fs::Permissions::from_mode(0o000)).unwrap();
+    let probed = probe_permissions(&home);
+    // Restore before the assert so a failure still lets the tempdir clean up.
+    fs::set_permissions(&trash, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(
+        !probed.trash_readable,
+        "a denied ~/.Trash must probe unreadable"
+    );
+    assert!(probed.containers_readable, "the other root is unaffected");
+    assert!(
+        !probed.all_readable,
+        "all_readable requires every gated root, not just one"
+    );
+}
+
+#[test]
+fn a_missing_directory_is_not_a_permission_problem() {
+    // Nothing to be denied. Reporting "no access" here would send the user to
+    // System Settings to fix something that is not broken.
+    let (_g, home) = fake_home();
+    let p = probe_permissions(&home);
+    assert!(p.trash_readable);
+    assert!(p.containers_readable);
+    assert!(p.all_readable);
+}
+
+#[test]
+fn the_probe_never_writes() {
+    let (_g, home) = fake_home();
+    fs::create_dir_all(home.join(".Trash")).unwrap();
+    let before = fs::read_dir(&home).unwrap().count();
+    probe_permissions(&home);
+    let after = fs::read_dir(&home).unwrap().count();
+    assert_eq!(before, after, "the probe must not create anything");
 }

@@ -197,16 +197,17 @@ and PAUSES for the human taste gate. Never auto-merged.**
   effect, so `?tab=startup` no longer mounts Cleanup, fires a full scan and
   throws it away. Only modules that exist are listed — the other five would be
   dead rows promising a capability that isn't there.
-- [ ] **U3 — Design system** — the token block, type scale, elevations, motion
-  durations and the icon set landed with the shell in #23. What remains is the
-  part that matters most for "this is not a web page": **replace the stock
-  `<select>` and `<input type=checkbox>`** with a segmented control and a 14px
-  accent checkbox, and migrate the view internals off Tailwind's default text
-  sizes onto the macOS scale.
-- [ ] **U4 — Smart Scan hero** — the category ring and a 52px tabular
-  reclaimable total. The proportional stack and the 3px minimum segment width
-  shipped in #23 (Logs at 0.08 % of the total used to render as an empty track,
-  which reads as zero).
+- [x] **U3 — Design system** (PR #24) — token block, type scale, elevations,
+  motion and icons landed with the shell in #23; the stock `<select>` and
+  `<input type=checkbox>` are now a segmented radiogroup and a 14px accent
+  checkbox, both keeping real semantics underneath. The webkit number spinners
+  are hidden — they reserve width inside the field and clipped the placeholder.
+- [x] **U4 — Smart Scan hero** (PR #24) — the category ring, with the 52px
+  tabular total inside it. Sweeping during a scan and filled after, so the two
+  states are one continuous object. **Deviates from artboard 05 on purpose:** the
+  artboard has a ring *and* a stack, which encodes the composition twice; the
+  rubric says "stack *or* ring", so the stack is gone and the per-row dots tie
+  each row to its arc.
 - [ ] **U5 — Flow polish** — confirm sheet, Done state (currently a dead end with
   no way back to the scan), empty/error/onboarding states, restrained motion.
 - [ ] **U6 — Menu-bar extra** — `tauri-plugin-positioner` + a tray icon showing

@@ -103,6 +103,7 @@ on it. Any new blue must declare which of the three roles it is.
 | Token | Size / line / tracking / weight | Used for |
 |---|---|---|
 | `--fs-hero` | 52 / 52 / -.025em / 600 | the reclaimable total, and nothing else |
+| `--fs-hero-unit` | 24 / 28 / 0 / 500 | the unit beside it (`GiB`), never alone |
 | `--fs-display` | 28 / 32 / -.02em / 600 | screen title in a centred state |
 | `--fs-title` | 17 / 22 / -.01em / 600 | toolbar title, sheet heading |
 | `--fs-emph` | 15 / 20 / 0 / 500 | primary button, lead paragraph |
@@ -126,7 +127,7 @@ counter doesn't reflow as it ticks. A size in the body font is a MUST-FIX.
 - **Motion — two durations, one curve.** 150ms for hover / selection / checkbox /
   segment; 220ms for sheet entry (opacity + scale .96→1); curve
   `cubic-bezier(.32,.72,0,1)` throughout. All of it disabled under
-  `prefers-reduced-motion`, including the scan sweep.
+  `prefers-reduced-motion`, including the scan ring.
 
 ### Controls
 

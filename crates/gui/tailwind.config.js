@@ -51,6 +51,7 @@ export default {
         title: ["17px", { lineHeight: "22px", letterSpacing: "-.01em" }],
         display: ["28px", { lineHeight: "32px", letterSpacing: "-.02em" }],
         hero: ["52px", { lineHeight: "52px", letterSpacing: "-.025em" }],
+        heroUnit: ["24px", { lineHeight: "28px" }],
       },
       borderRadius: {
         control: "6px",

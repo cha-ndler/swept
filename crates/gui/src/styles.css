@@ -126,6 +126,14 @@ body {
   background-clip: content-box;
 }
 
+/* The webkit number spinners reserve horizontal space inside the field and
+   clip short placeholders. We step values with the keyboard, not the arrows. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 /* Keyboard focus stays visible everywhere; the webview default is easy to lose
    against these surfaces. */
 :focus-visible {
@@ -134,29 +142,21 @@ body {
   border-radius: 4px;
 }
 
-/* Indeterminate scan bar: a scan has no knowable total until it completes, so
-   the bar communicates "working", not "n% done". A real class rather than a
-   Tailwind arbitrary value, so the reduced-motion override below is a plain
-   selector instead of an escaped one. */
-@keyframes scan-sweep {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(300%);
+/* The scan ring sweeps while a scan runs. A scan has no knowable total until
+   it completes, so it communicates "working" rather than "n% done". It is the
+   same element as the filled result ring, so the two states read as one
+   continuous object rather than two unrelated cards. */
+@keyframes ring-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
-.scan-sweep {
-  animation: scan-sweep 1.4s ease-in-out infinite;
+.ring-spin {
+  animation: ring-spin 1.6s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .scan-sweep {
-    animation: none;
-    width: 100%;
-    opacity: 0.35;
-  }
   *,
   *::before,
   *::after {

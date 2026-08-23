@@ -4,6 +4,9 @@ import type { CategorySummary, CleanSummary, Filters, ScanReport } from "./types
 import { call, describeError, isDesktopApp, onScanProgress } from "./backend";
 import type { ScanProgress } from "./backend";
 import { Banner, InfoIcon, LockIcon, ShieldIcon, Toolbar } from "./Shell";
+import { Checkbox, NumberField, Segmented } from "./Controls";
+import { ScanRing } from "./ScanRing";
+import type { RingSegment } from "./ScanRing";
 
 type View = "loading" | "results" | "empty" | "error";
 type Phase = "none" | "confirm" | "cleaning" | "done";
@@ -25,6 +28,13 @@ const CATEGORY_HUE: Record<string, string> = {
 function hue(id: string): string {
   return CATEGORY_HUE[id] ?? "var(--text-3)";
 }
+
+const SIZE_FILTERS = [
+  { value: "", label: "Any" },
+  { value: "104857600", label: "100 MB" },
+  { value: "524288000", label: "500 MB" },
+  { value: "1073741824", label: "1 GB" },
+];
 
 export default function CleanView({
   onReclaimable,
@@ -124,6 +134,11 @@ export default function CleanView({
   const sel = useMemo(() => cats.filter((c) => selected.has(c.category)), [cats, selected]);
   const selBytes = sel.reduce((s, c) => s + c.bytes, 0);
   const selCount = sel.reduce((s, c) => s + c.count, 0);
+  const segments: RingSegment[] = sel.map((c) => ({
+    id: c.category,
+    bytes: c.bytes,
+    color: hue(c.category),
+  }));
 
   async function runClean() {
     // Defence in depth: never send a clean for an empty selection. The backend
@@ -192,35 +207,54 @@ export default function CleanView({
             )}
             {view === "empty" && <EmptyState onRescan={() => void runScan(currentFilters())} />}
             {view === "results" && (
-              <>
-                <Summary
-                  bytes={selBytes}
-                  count={selCount}
-                  selected={sel}
-                  onClean={() => setPhase("confirm")}
-                />
-                <ul className="mt-3 space-y-2">
-                  {cats.map((c) => (
-                    <CategoryRow
-                      key={c.category}
-                      cat={c}
-                      checked={selected.has(c.category)}
-                      onToggle={() => toggle(c.category)}
-                    />
-                  ))}
-                </ul>
-                {report && report.skipped_protected > 0 && (
-                  <div className="mt-4">
-                    <Banner icon={<LockIcon size={15} />}>
-                      <strong className="font-semibold text-text">
-                        {report.skipped_protected} protected item
-                        {report.skipped_protected === 1 ? "" : "s"} skipped
-                      </strong>{" "}
-                      by the safety guard — Keychains, Mail and repositories are never eligible.
-                    </Banner>
+              <div className="flex flex-col gap-7 md:flex-row md:items-start">
+                <div className="flex flex-none flex-col items-center text-center md:w-[240px]">
+                  <ScanRing segments={segments} total={selBytes} caption="reclaimable" />
+
+                  <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-separator bg-white/[.04] px-2.5 py-1">
+                    <span className="text-success">
+                      <ShieldIcon size={12} />
+                    </span>
+                    <span className="text-muted text-caption">Preview only</span>
                   </div>
-                )}
-              </>
+
+                  <button
+                    onClick={() => setPhase("confirm")}
+                    disabled={sel.length === 0}
+                    className="mt-4 w-full rounded-control bg-accent px-4 py-2 text-emph font-semibold text-white transition-opacity duration-fast ease-mac disabled:opacity-40"
+                  >
+                    Review &amp; Clean…
+                  </button>
+                  <p className="text-subtle mt-2.5 font-mono text-caption tabular-nums">
+                    {selCount.toLocaleString()} items in {sel.length} categor
+                    {sel.length === 1 ? "y" : "ies"}
+                  </p>
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <ul className="space-y-2">
+                    {cats.map((c) => (
+                      <CategoryRow
+                        key={c.category}
+                        cat={c}
+                        checked={selected.has(c.category)}
+                        onToggle={() => toggle(c.category)}
+                      />
+                    ))}
+                  </ul>
+                  {report && report.skipped_protected > 0 && (
+                    <div className="mt-4">
+                      <Banner icon={<LockIcon size={15} />}>
+                        <strong className="font-semibold text-text">
+                          {report.skipped_protected} protected item
+                          {report.skipped_protected === 1 ? "" : "s"} skipped
+                        </strong>{" "}
+                        by the safety guard — Keychains, Mail and repositories are never eligible.
+                      </Banner>
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
           </>
         )}
@@ -253,105 +287,24 @@ function FiltersBar({
   disabled: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3 text-caption">
-      <label className="text-muted flex items-center gap-1.5">
-        Older than
-        <input
-          type="number"
-          min="0"
-          inputMode="numeric"
-          value={olderDays}
-          disabled={disabled}
-          placeholder="any"
-          onChange={(e) => onChange(e.target.value, minSize)}
-          aria-label="Only files older than this many days"
-          className="w-14 rounded-control border border-border bg-black/25 px-2 py-1 tabular-nums text-text disabled:opacity-50"
-        />
-        days
-      </label>
-      <label className="text-muted flex items-center gap-1.5">
-        Min size
-        <select
-          value={minSize}
-          disabled={disabled}
-          onChange={(e) => onChange(olderDays, e.target.value)}
-          aria-label="Minimum file size"
-          className="rounded-control border border-border bg-black/25 px-2 py-1 text-text disabled:opacity-50"
-        >
-          <option value="">Any</option>
-          <option value="104857600">100 MiB</option>
-          <option value="524288000">500 MiB</option>
-          <option value="1073741824">1 GiB</option>
-        </select>
-      </label>
+    <div className="flex items-center gap-3">
+      <span className="text-muted hidden text-caption lg:inline">Older than</span>
+      <NumberField
+        value={olderDays}
+        onChange={(v) => onChange(v, minSize)}
+        label="Only files older than this many days"
+        placeholder="any"
+        disabled={disabled}
+        suffix="days"
+      />
+      <Segmented
+        label="Minimum file size"
+        value={minSize}
+        options={SIZE_FILTERS}
+        disabled={disabled}
+        onChange={(v) => onChange(olderDays, v)}
+      />
     </div>
-  );
-}
-
-function Summary({
-  bytes,
-  count,
-  selected,
-  onClean,
-}: {
-  bytes: number;
-  count: number;
-  selected: CategorySummary[];
-  onClean: () => void;
-}) {
-  return (
-    <section className="rounded-card border border-separator bg-surface p-5">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <p className="font-mono text-4xl font-semibold tabular-nums">{formatBytes(bytes)}</p>
-          <p className="text-muted mt-1 text-caption">
-            reclaimable from {count.toLocaleString()} selected item{count === 1 ? "" : "s"}
-          </p>
-          <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-full border border-separator bg-black/20 px-2.5 py-1">
-            <span className="text-success">
-              <ShieldIcon size={12} />
-            </span>
-            <span className="text-muted text-caption">Preview only — nothing removed yet</span>
-          </div>
-        </div>
-        <button
-          onClick={onClean}
-          disabled={selected.length === 0}
-          className="shrink-0 rounded-control bg-accent px-4 py-2 text-emph font-semibold text-white transition-opacity duration-fast ease-mac disabled:opacity-40"
-        >
-          Review &amp; Clean…
-        </button>
-      </div>
-
-      {/* One proportional stack, not one bar per category. Independent bars
-          answer "how big relative to the largest", which is not the question —
-          this answers "what is the space actually made of". It tracks the
-          selection, so unticking a category visibly removes it from the total.
-          (design/rubric.md § Data visualisation.) */}
-      {bytes > 0 && (
-        <div
-          className="mt-4 flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-white/[.05]"
-          role="img"
-          aria-label={`Selected space by category: ${selected
-            .map((c) => `${c.name} ${Math.round((c.bytes / bytes) * 100)}%`)
-            .join(", ")}`}
-        >
-          {selected.map((c) => (
-            <div
-              key={c.category}
-              className="h-full first:rounded-l-full last:rounded-r-full"
-              style={{
-                flex: `0 0 ${(c.bytes / bytes) * 100}%`,
-                // Every segment stays visible: a category at 0.08% of the total
-                // used to render as nothing, which reads as zero.
-                minWidth: "3px",
-                background: hue(c.category),
-              }}
-            />
-          ))}
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -367,14 +320,8 @@ function CategoryRow({
   return (
     <li>
       <label className="flex cursor-pointer items-center gap-3 rounded-card border border-separator bg-surface px-4 py-3 transition-colors duration-fast ease-mac hover:bg-surface2">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={onToggle}
-          aria-label={`Select ${cat.name}`}
-          className="h-4 w-4 accent-accent"
-        />
-        {/* Ties this row to its segment in the stack above. */}
+        <Checkbox checked={checked} onChange={onToggle} label={`Select ${cat.name}`} />
+        {/* Ties this row to its arc in the ring. */}
         <span
           className="h-2 w-2 flex-none rounded-full"
           style={{ background: hue(cat.category) }}
@@ -422,15 +369,22 @@ function ConfirmModal({
       aria-labelledby="confirm-title"
     >
       <div className="w-full max-w-md rounded-panel border border-border bg-surface3 p-6 shadow-e3">
-        <h2 id="confirm-title" className="text-title font-semibold">
-          Move {count.toLocaleString()} item{count === 1 ? "" : "s"} to the Trash?
-        </h2>
-        <p className="text-muted mt-2 text-body">
-          <span className="font-mono font-semibold tabular-nums text-text">
-            {formatBytes(bytes)}
-          </span>{" "}
-          across {categories} categor{categories === 1 ? "y" : "ies"}.
-        </p>
+        <div className="flex items-start gap-3">
+          <span className="grid h-9 w-9 flex-none place-items-center rounded-[8px] bg-accentTint text-accentText">
+            <ShieldIcon size={18} />
+          </span>
+          <div>
+            <h2 id="confirm-title" className="text-title font-semibold">
+              Move {count.toLocaleString()} item{count === 1 ? "" : "s"} to the Trash?
+            </h2>
+            <p className="text-muted mt-1 text-body">
+              <span className="font-mono font-semibold tabular-nums text-text">
+                {formatBytes(bytes)}
+              </span>{" "}
+              across {categories} categor{categories === 1 ? "y" : "ies"}.
+            </p>
+          </div>
+        </div>
 
         <div className="mt-4 flex gap-2.5 rounded-card border border-success/25 bg-success/[.08] px-3.5 py-3">
           <span className="mt-px flex-none text-success">
@@ -506,27 +460,26 @@ function DoneCard({ summary, onBack }: { summary: CleanSummary; onBack: () => vo
 
 function Scanning({ progress }: { progress: ScanProgress | null }) {
   // A scan has no knowable total until it finishes, so there is no honest
-  // percentage to show. Report the real counts instead — they move immediately
-  // and tell the user exactly what is happening.
+  // percentage to show — the ring sweeps rather than filling. The counts are
+  // real and move immediately, which is what actually tells the user it is
+  // working.
   const examined = progress?.examined ?? 0;
   const found = progress?.bytes ?? 0;
   return (
     <section
-      className="rounded-card border border-separator bg-surface p-8 text-center"
+      className="flex flex-col items-center py-6 text-center"
       role="status"
       aria-busy="true"
       aria-live="polite"
       aria-label="Scanning"
     >
-      <p className="text-title font-semibold">Scanning…</p>
+      <ScanRing segments={[]} total={found} caption="so far" busy />
+      <p className="mt-6 text-title font-semibold">Scanning…</p>
       <p className="text-muted mt-1.5 font-mono text-body tabular-nums">
         {examined === 0
           ? "Looking through your caches, logs and build artifacts."
-          : `${examined.toLocaleString()} files examined · ${formatBytes(found)} reclaimable so far`}
+          : `${examined.toLocaleString()} files examined`}
       </p>
-      <div className="mt-5 h-1 overflow-hidden rounded-full bg-black/30" aria-hidden="true">
-        <div className="scan-sweep h-full w-1/3 rounded-full bg-accentGraphic" />
-      </div>
       <p className="text-subtle mt-4 text-caption">Read-only. Nothing is changed by a scan.</p>
     </section>
   );

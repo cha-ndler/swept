@@ -247,13 +247,23 @@ The architectural spine, which must not be violated: **widen what we can see;
 never widen what we can dispose of — escalate per-path with explicit consent
 instead.**
 
-- [ ] **M1 — Discovery/disposal scope split** — `allowlist::default_roots` stays
-  exactly as it is (the *disposal* allowlist, every existing invariant test
-  untouched). Add a read-only `discovery_roots` that yields plain `PathBuf` and
-  never constructs a `SafePath`, plus `Consent.granted: Vec<SafePath>` for
-  individually user-picked paths. Grants are enumerated (no globs, no directory
-  expansion), capped, separately audited, and never pre-selected. *Requires
-  `deletion-safety-reviewer`.*
+- [x] **M1 — Discovery/disposal scope split** — `allowlist::default_roots` is
+  unchanged (the *disposal* allowlist; every existing invariant test stayed
+  green untouched) and is now pinned by an explicit assertion, so widening it
+  can only ever be a deliberate edit. Alongside it, a read-only
+  `discovery_roots` — `~/Documents`, `~/Downloads`, `~/Desktop`, `~/Movies`,
+  `~/Music`, `~/Pictures`, `~/Library/Application Support`, `/Applications` —
+  which yields plain `PathBuf` and can never mint a `SafePath`.
+  `Consent.granted: Vec<SafePath>` carries individually user-picked paths;
+  matching is exact (never a prefix, so a directory grant confers nothing on its
+  contents), capped at `MAX_GRANTS` = 1000 with over-long lists refusing the
+  whole run in both dry-run and execute modes, audited with a distinguishing
+  note, and evaluated *after* the pre-mutation re-guard so the denylist always
+  wins. Directory grants are refused outright until `guard_dir` exists.
+  **Residual, deliberately not fixed here:** a plan action naming a directory
+  *inside* the allowlist would still reach `remove_dir_all`. No caller produces
+  one (`scanner.rs` plans files only), and closing it generally is `guard_dir`'s
+  job — see the v0.3 item, which M4 depends on.
 - [ ] **M2 — Large & Old Files** — read-only walk of `discovery_roots` with
   size/age thresholds, feeding `Consent.granted`. Never pre-selected, never in
   Smart Scan's default selection.

@@ -118,11 +118,17 @@ pub fn list_login_items(home: &Path) -> Vec<LoginItem> {
 
 /// Consent for the GUI: always move to the Trash (recoverable), never permanent.
 /// `confirm_mass_delete` carries the user's explicit confirmation from the modal.
+///
+/// `granted` is empty and stays empty until a module actually offers per-path
+/// selection outside the allowlist (Large & Old Files, M2). The GUI's current
+/// clean flow works entirely inside `allowlist::default_roots`, so there is
+/// nothing to grant — and an empty list is the honest way to say so.
 pub fn gui_consent(confirm_mass_delete: bool) -> Consent {
     Consent {
         execute: true,
         allow_permanent: false,
         confirmed_mass_delete: confirm_mass_delete,
+        granted: Vec::new(),
     }
 }
 

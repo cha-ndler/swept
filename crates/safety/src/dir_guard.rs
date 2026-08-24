@@ -34,9 +34,25 @@
 //! immediately before acting; it is what makes an informed confirmation
 //! possible at all, by producing the real count and size to put in front of the
 //! user (SAFETY CONTRACT item 5).
+//!
+//! There is a race *within* the walk too, and it is worth naming rather than
+//! leaving to "point-in-time". A directory is validated when it is pushed onto
+//! the stack and listed when it is popped, and the stack is LIFO, so on a wide
+//! tree that gap can be long. If the directory is replaced by a symlink in
+//! between, `read_dir` follows it and those entries are counted as though they
+//! were inside the root. Nested directories are still caught — the canonical
+//! re-check fires on them — so this reaches only a flat directory of files, and
+//! it inflates a *count*, not a removal: `std::fs::remove_dir_all` does not
+//! follow symlinks. Closing it properly means holding each directory open and
+//! reading from the descriptor, which needs `openat`; noted here rather than
+//! implied away.
+//!
+//! Nor does this module decide *scope*. It never consults the allowlist. See
+//! [`SafeDir`].
 
 use std::error::Error;
 use std::fmt;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use crate::denylist::protection_reason;
@@ -47,6 +63,12 @@ use crate::path_guard::GuardError;
 ///
 /// These are refusal thresholds, not truncation points. Exceeding one aborts
 /// the walk with an error.
+///
+/// **Passing these bounds says nothing about SAFETY CONTRACT item 5.**
+/// `max_entries` is 500x `plan::MASS_DELETE_COUNT` — these bounds exist to keep
+/// the *walk* finite and to catch a target of an absurd shape, not to decide
+/// what a user should be asked to confirm. That decision belongs to the caller,
+/// using [`SafeDir::entries`] and [`SafeDir::bytes`].
 #[derive(Clone, Copy, Debug)]
 pub struct DirLimits {
     /// Maximum number of entries (files, directories, symlinks) beneath the root.
@@ -69,11 +91,22 @@ impl Default for DirLimits {
     }
 }
 
-/// A directory that has been walked in full and found safe to remove
-/// recursively — together with what the walk actually found.
+/// A directory that has been walked in full, found free of protected paths at
+/// every depth, and found to fit within the given [`DirLimits`] — together
+/// with what the walk actually found.
 ///
 /// As with [`crate::SafePath`], the only constructor is [`guard_dir`], so
-/// holding one is evidence the walk happened.
+/// holding one is evidence the walk happened, *at the moment it happened*.
+///
+/// **This is not authorization.** Deliberately, and for the same reason
+/// [`crate::SafePath`] is not: scope is a separate decision from safety. There
+/// is no allowlist check anywhere in this module, so a `SafeDir` says nothing
+/// about whether the caller may act on the path — only that the tree beneath
+/// it holds nothing the denylist objects to. Callers must still apply
+/// [`crate::allowlist`] exactly as they do for a single file.
+///
+/// Note also that the path is **canonical**: a symlinked root resolves to its
+/// target, and it is the target that was walked and is described here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SafeDir {
     path: PathBuf,
@@ -113,10 +146,16 @@ pub enum GuardDirError {
     },
     /// A part of the tree could not be read, so its contents are unknown.
     Unreadable(PathBuf, std::io::Error),
-    /// A subdirectory resolves outside the root (a mount point or firmlink).
+    /// An entry re-resolves outside the root: a component was swapped for a
+    /// symlink between listing the parent and inspecting the entry.
     Escapes {
         root: PathBuf,
         entry: PathBuf,
+    },
+    /// An entry lives on a different device: a mount point. Whatever is
+    /// mounted there is not part of this tree.
+    CrossesMount {
+        path: PathBuf,
     },
     TooManyEntries {
         limit: usize,
@@ -151,6 +190,11 @@ impl fmt::Display for GuardDirError {
                 "refused: {} resolves outside {}",
                 entry.display(),
                 root.display()
+            ),
+            GuardDirError::CrossesMount { path } => write!(
+                f,
+                "refused: {} is on another volume, so it is not part of this tree",
+                path.display()
             ),
             GuardDirError::TooManyEntries { limit } => {
                 write!(f, "refused: the tree holds more than {limit} entries")
@@ -192,6 +236,7 @@ pub fn guard_dir(input: &Path, home: &Path, limits: DirLimits) -> Result<SafeDir
     if !meta.is_dir() {
         return Err(GuardDirError::NotADirectory(root));
     }
+    let root_dev = meta.dev();
 
     let mut entries = 0usize;
     let mut bytes = 0u64;
@@ -239,10 +284,32 @@ pub fn guard_dir(input: &Path, home: &Path, limits: DirLimits) -> Result<SafeDir
                 continue;
             }
 
+            // A different device means a mount point. `realpath` does not
+            // resolve one — measured on this machine: /System/Volumes/Preboot
+            // is a separate volume (st_dev 16777233 against /'s 16777231) and
+            // canonicalize returns it unchanged — so the path check below
+            // cannot see it. Comparing device ids can. Refuse: a mounted
+            // volume inside a candidate tree is not part of that tree.
+            //
+            // This does NOT cover macOS firmlinks, and it is worth being exact
+            // rather than reassuring: /Users is a firmlink and reports the same
+            // st_dev as /, so neither check would notice one. Firmlinks exist
+            // only at the root of the system volume, so they cannot appear
+            // inside a candidate tree — the reason this is not a gap is where
+            // they live, not anything checked here.
+            //
+            // Untested: creating a mount inside a fixture needs privileges the
+            // test suite does not have. The premise above is measured; the
+            // branch is not exercised.
+            if meta.dev() != root_dev {
+                return Err(GuardDirError::CrossesMount { path });
+            }
+
             if file_type.is_dir() {
-                // Prove the walk cannot leave the root. Symlinks are already
-                // handled above, so this is here for mount points and macOS
-                // firmlinks, which `starts_with` on the raw path would miss.
+                // Re-resolve and confirm the entry is still inside the root.
+                // Not mount protection — `dev` above does that — but a TOCTOU
+                // re-check: a component of this path could have been swapped
+                // for a symlink since the parent was listed.
                 let canonical = std::fs::canonicalize(&path)
                     .map_err(|e| GuardDirError::Unreadable(path.clone(), e))?;
                 if !is_inside(&canonical, &root) {
@@ -352,6 +419,48 @@ mod tests {
             matches!(err, GuardDirError::Protected { reason, .. } if reason.contains(".git")),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn a_repository_spelled_in_any_case_still_refuses_the_tree() {
+        // macOS is case-insensitive by default, so `.GIT` is a live repository.
+        // The denylist folds case for every other rule; it did not for this
+        // one, and `guard_dir` is what would have turned that single missed
+        // component into a recursive removal of the tree around it.
+        let (_g, home) = fixture_home();
+        let root = home.join("Library/Caches/app");
+        write(&root.join("proj/.GIT/HEAD"), b"ref: refs/heads/main");
+
+        let err = guard_dir(&root, &home, DirLimits::default()).unwrap_err();
+        assert!(
+            matches!(err, GuardDirError::Protected { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_symlinked_root_is_followed_to_its_target() {
+        // Recorded as a decision rather than left as an accident: `guard`
+        // canonicalizes, so guarding a symlink walks and describes its TARGET.
+        // That is consistent with how a symlinked file target behaves, but it
+        // means the path a caller passed in is not necessarily the path it gets
+        // back — and `SafeDir` carries no scope check, so the caller must run
+        // the allowlist against `as_path()`, never against what it passed in.
+        let (_g, home) = fixture_home();
+        let target = home.join("Documents/project");
+        write(&target.join("a.bin"), b"12345");
+
+        let link = home.join("Library/Caches/link");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let safe = guard_dir(&link, &home, DirLimits::default()).unwrap();
+        assert_eq!(
+            safe.as_path(),
+            target.as_path(),
+            "the canonical target is what was walked, not the link"
+        );
+        assert_eq!(safe.bytes(), 5);
     }
 
     #[test]

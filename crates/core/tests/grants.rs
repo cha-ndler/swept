@@ -210,10 +210,10 @@ fn a_directory_grant_is_refused_outright() {
 
 #[test]
 fn a_directory_inside_the_allowlist_is_refused_too() {
-    // The residual M1 left open, now closed. An allowlisted directory used to
-    // reach `remove_dir_all` with nothing having looked inside it. No planner
-    // produces such an action today — which is exactly why it was worth
-    // refusing before one does.
+    // Half of the residual M1 left open. With `Disposal::Trash` this path
+    // reached `fs::rename`, not `remove_dir_all` — recoverable, but still a
+    // whole tree moved on the strength of one unexamined action. The
+    // irreversible half has its own test below.
     let (_g, home) = fake_home();
     let dir = home.join("Library/Caches/app");
     let inner = dir.join("deep/nested.bin");
@@ -252,6 +252,47 @@ fn a_preview_refuses_a_directory_the_same_way_execution_does() {
     assert!(report.dry_run);
     assert_eq!(report.planned, 0);
     assert_eq!(report.refused, 1, "the preview predicts the refusal");
+}
+
+#[test]
+fn an_allowlisted_directory_under_allow_permanent_is_refused() {
+    // *This* is the combination that actually reached `remove_dir_all` before
+    // this change: allowlisted, plus `Disposal::Permanent`, plus
+    // `allow_permanent`. Nothing produces it today, which is precisely why it
+    // was worth closing before something does.
+    let (_g, home) = fake_home();
+    let dir = home.join("Library/Caches/app");
+    let inner = dir.join("deep/nested.bin");
+    write(&inner, b"data");
+
+    let plan = Plan {
+        actions: vec![PlannedAction {
+            path: guard(&dir, &home).unwrap(),
+            size_bytes: 4,
+            disposal: Disposal::Permanent,
+            category: "user-caches".to_string(),
+        }],
+        skipped_protected: 0,
+    };
+
+    let (audit_path, mut audit) = audit_at(&home);
+    let consent = Consent {
+        execute: true,
+        allow_permanent: true,
+        ..Default::default()
+    };
+    let report = execute(&plan, consent, &home, &sink(&home), &mut audit).unwrap();
+
+    assert_eq!(report.executed, 0);
+    assert_eq!(report.refused, 1);
+    assert!(
+        dir.exists(),
+        "the tree survives an irreversible directory action"
+    );
+    assert!(inner.exists());
+    assert!(fs::read_to_string(&audit_path)
+        .unwrap()
+        .contains("directory target"));
 }
 
 #[test]

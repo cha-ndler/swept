@@ -84,10 +84,17 @@ pub fn protection_reason(path: &Path, home: &Path) -> Option<&'static str> {
     }
 
     // Any component named `.git` => inside a git repository.
-    if path
-        .components()
-        .any(|c| matches!(c, Component::Normal(s) if s == ".git"))
-    {
+    //
+    // Case-insensitively, for the same reason every other rule in this file is:
+    // macOS volumes are case-insensitive by default, so a repository whose
+    // directory is spelled `.GIT` is a working repository that `git` will
+    // happily use. A byte-exact check waved those through — and since
+    // `dir_guard` turns one missed `.git` into a recursive removal of the tree
+    // around it, that was the difference between refusing a checkout and
+    // taking someone's uncommitted work with a cache.
+    if path.components().any(
+        |c| matches!(c, Component::Normal(s) if s.as_encoded_bytes().eq_ignore_ascii_case(b".git")),
+    ) {
         return Some("path is inside a .git directory");
     }
 
@@ -257,6 +264,29 @@ mod tests {
             &home()
         ));
         assert!(is_protected(&home().join("Projects/app/.git"), &home()));
+    }
+
+    #[test]
+    fn blocks_dot_git_whatever_its_case() {
+        // macOS is case-insensitive by default, so `.GIT` names the very same
+        // working repository as `.git`. Every other rule here folds case; this
+        // one used not to, which made it the weakest link in the file.
+        for spelling in [".GIT", ".Git", ".gIt"] {
+            assert!(
+                is_protected(&home().join("Projects/app").join(spelling), &home()),
+                "{spelling} names a real repository and must be protected"
+            );
+            assert!(is_protected(
+                &home().join("Projects/app").join(spelling).join("HEAD"),
+                &home()
+            ));
+        }
+        // ...but still component-wise and still exact: these are not `.git`.
+        assert!(!is_protected(
+            &home().join("Library/Caches/gitignore"),
+            &home()
+        ));
+        assert!(!is_protected(&home().join("Library/Caches/.gitx"), &home()));
     }
 
     #[test]

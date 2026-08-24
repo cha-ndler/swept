@@ -31,6 +31,16 @@ use crate::plan::{Disposal, Plan};
 /// [`Sink::delete`] is **files only, by construction**. See its doc comment —
 /// that is a safety property, not an implementation detail.
 pub trait Sink {
+    /// Move to the Trash (recoverable).
+    ///
+    /// This one has **no** directory backstop, and the asymmetry is deliberate
+    /// rather than an oversight. `trash::delete` and `fs::rename` both accept a
+    /// directory, and neither has a file-only variant — so if a directory were
+    /// swapped onto the name after `authorize` inspected it, a whole tree would
+    /// move to the Trash. That outcome is recoverable and fully audited, which
+    /// is what makes it tolerable where the same race on [`Sink::delete`] would
+    /// not be. The one dishonesty it can produce: the audit record would carry
+    /// the planned *file's* `size_bytes` for a tree.
     fn trash(&self, path: &Path) -> io::Result<()>;
 
     /// Irreversibly remove a single *file*.
@@ -39,9 +49,17 @@ pub trait Sink {
     /// already refuses directory targets, but that check and this call cannot
     /// be made atomic — something could `rename` a directory onto the name in
     /// between. Using `remove_file` unconditionally makes the race harmless:
-    /// on macOS it returns `EPERM` for a directory and removes nothing, so the
+    /// `unlink(2)` returns `EPERM` for a directory and removes nothing, so the
     /// worst outcome is a refusal instead of a recursive unlink of a tree
     /// nobody vetted.
+    ///
+    /// One caveat, stated because a safety property in the trust boundary
+    /// should not overstate: `unlink(2)` documents that `EPERM` for a directory
+    /// applies when the effective user is **not** the super-user. Running this
+    /// tool under `sudo` is neither required nor prevented, and nothing here
+    /// checks `geteuid`. Even then the exposure is a stray directory-entry
+    /// removal rather than a recursive unlink — but it is not the flat
+    /// guarantee the non-root case gives.
     fn delete(&self, path: &Path) -> io::Result<()>;
 }
 

@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use proptest::prelude::*;
-use safety::allowlist::{default_roots, is_allowed};
+use safety::allowlist::{default_roots, discovery_roots, is_allowed};
 use safety::denylist::is_protected;
 
 fn home() -> PathBuf {
@@ -111,6 +111,34 @@ proptest! {
                     ancestor.display(), full.display()
                 );
             }
+        }
+    }
+
+    /// Seeing is not disposing: **nothing** reachable from a discovery root is
+    /// disposable by the default allowlist, whatever tail is appended.
+    ///
+    /// This is the M1 spine as a property. Read-only walkers (Large & Old
+    /// Files, Space Lens, the Uninstaller's bundle enumeration) range over
+    /// `discovery_roots`, which reaches `~/Documents` and `/Applications`. The
+    /// only thing standing between "we can see it" and "we can remove it" is
+    /// this disjointness plus an explicit per-path grant — so if the two lists
+    /// ever overlap, a whole category of files silently becomes cleanable
+    /// without anyone having chosen it.
+    #[test]
+    fn discovery_scope_is_disjoint_from_the_disposal_scope(
+        tail in prop::collection::vec("[a-zA-Z0-9_.\\-]{1,10}", 0..6)
+    ) {
+        let disposal = default_roots(&home());
+        for root in discovery_roots(&home()) {
+            let mut p = root.clone();
+            for seg in &tail {
+                p.push(seg);
+            }
+            prop_assert!(
+                !is_allowed(&p, &disposal),
+                "{} is discoverable and must NOT be disposable by default",
+                p.display()
+            );
         }
     }
 

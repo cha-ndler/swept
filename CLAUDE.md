@@ -70,7 +70,7 @@ Before presenting any diff that adds or changes deletion logic, run the `deletio
 | 2 Denylist first + canonicalize/re-check | `crates/safety/src/denylist.rs`, `path_guard.rs`; re-guarded in `executor.rs` |
 | 3 Scoped allowlist | `crates/safety/src/allowlist.rs` |
 | 4 Trash not unlink | `executor.rs` (`Sink` trait; Trash default, `--permanent` gated) |
-| 5 No unconfirmed mass delete | `crates/core/src/plan.rs` thresholds + `executor.rs` |
+| 5 No unconfirmed mass delete | `crates/core/src/plan.rs` thresholds + `executor.rs`; `safety/src/dir_guard.rs` supplies the real recursive count/size for a directory |
 | 6 Append-only audit log | `crates/core/src/audit.rs` (JSONL, append+flush; errors abort the run) |
 | 7 Temp-dir-only tests | `crates/core/tests/integration.rs`, in-module tests |
 
@@ -88,7 +88,8 @@ the autonomous loop). UI shell is deferred until the substrate is complete.
 
 ```
 crates/
-  safety/   Trust kernel — denylist, path_guard (canonicalize + SafePath), allowlist.
+  safety/   Trust kernel — denylist, path_guard (canonicalize + SafePath),
+            dir_guard (bounded fail-closed tree walk + SafeDir), allowlist.
             Pure: never deletes. Everything destructive must pass through it.
   core/     Engine — scanner (read-only) → plan (dry-run data) → executor
             (consent-gated, the ONLY mutator) → audit (append-only JSONL).

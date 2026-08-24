@@ -110,10 +110,26 @@ Logs clean verified via the audit log). Run via the `.claude/loops/` prompts.
   Now refused by the denylist itself, with exact-ancestor semantics so
   `Library/Caches` and `Library/Logs` stay cleanable. Unit + property coverage;
   verified RED first.
-- [ ] **Directory disposal needs `guard_dir`** — before any directory is ever
-  disposed of (uninstaller leftover trees), `guard()` is not enough: it must
-  also refuse a directory containing a `.git` anywhere in its subtree, via a
-  bounded walk that **fails closed** if it cannot finish.
+- [x] **Directory disposal needs `guard_dir`** — `safety::dir_guard` walks the
+  tree with an explicit stack (never recursion, so a pathological tree hits
+  `max_depth` rather than overflowing) and consults the denylist at every
+  depth, which is what refuses a `.git` — directory *or* file, so git worktrees
+  and submodules count — anywhere in the subtree. Fails closed on every
+  uncertainty: an unreadable subdirectory refuses the whole tree rather than
+  under-counting it, and the entry/size/depth limits are refusals, never
+  truncations, because a truncated walk describes a different tree than the one
+  about to be removed. Symlinks are neither followed nor counted (a recursive
+  removal unlinks the link, not its target); non-symlink directories are
+  canonicalized to prove the walk cannot leave the root via a mount or firmlink.
+  Returns the real recursive count and size, which is what makes an informed
+  mass-delete confirmation possible (item 5).
+  **Also closes the M1 residual:** the executor now refuses *every* directory
+  target, allowlisted or granted, and `Sink::delete` is files-only
+  (`remove_file`, which returns `EPERM` on a directory) so the unavoidable
+  check/use race fails closed instead of recursing. `guard_dir` is deliberately
+  not wired in yet — nothing plans directory actions, and adding an unused
+  destructive capability to this tool is the wrong trade. M4 turns the blanket
+  refusal into a `guard_dir` gate alongside directory-aware planning.
 - [ ] **Audit log should not follow symlinks** — `audit.rs` opens with
   `create(true).append(true)`, which follows a symlink at the final component,
   so a `--audit` path pointing at a link appends JSONL to the link's target.

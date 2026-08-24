@@ -260,6 +260,13 @@ instead.**
   whole run in both dry-run and execute modes, audited with a distinguishing
   note, and evaluated *after* the pre-mutation re-guard so the denylist always
   wins. Directory grants are refused outright until `guard_dir` exists.
+  Irreversible removal stays confined to the allowlist — a granted `Permanent`
+  action falls back to the Trash even under `--permanent`, because grants cover
+  the least replaceable and least vetted data the tool will ever touch. The
+  preview runs the same authorization as the real run, so it cannot report
+  "would be trashed" for something the executor would refuse, and a wholesale
+  refusal (over-long grant list, unconfirmed mass delete) now leaves an audit
+  record instead of none.
   **Residual, deliberately not fixed here:** a plan action naming a directory
   *inside* the allowlist would still reach `remove_dir_all`. No caller produces
   one (`scanner.rs` plans files only), and closing it generally is `guard_dir`'s

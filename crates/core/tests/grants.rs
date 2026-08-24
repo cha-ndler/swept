@@ -438,6 +438,207 @@ fn grants_do_not_bypass_mass_delete_confirmation() {
 }
 
 #[test]
+fn a_grant_does_not_confer_permanent_deletion_even_with_allow_permanent() {
+    // The bound that matters, and the one an earlier version of this file only
+    // *appeared* to test: it asserted the fallback with `allow_permanent`
+    // false, which proves nothing about grants. With the flag actually set, a
+    // granted path must still land in the Trash.
+    //
+    // Irreversible removal stays confined to the allowlist because that is the
+    // safer way round: the allowlist covers caches, which regenerate; a grant
+    // covers a hand-picked file in ~/Documents, which does not.
+    let (_g, home) = fake_home();
+    let f = home.join("Documents/huge.iso");
+    write(&f, b"data");
+
+    let plan = Plan {
+        actions: vec![PlannedAction {
+            path: guard(&f, &home).unwrap(),
+            size_bytes: 4,
+            disposal: Disposal::Permanent,
+            category: "large-and-old".to_string(),
+        }],
+        skipped_protected: 0,
+    };
+
+    let (audit_path, mut audit) = audit_at(&home);
+    let consent = Consent {
+        execute: true,
+        allow_permanent: true,
+        granted: vec![guard(&f, &home).unwrap()],
+        ..Default::default()
+    };
+    let report = execute(&plan, consent, &home, &sink(&home), &mut audit).unwrap();
+
+    assert_eq!(report.executed, 1);
+    assert!(
+        home.join("test-trash/huge.iso").exists(),
+        "a granted path must be recoverable even under --permanent"
+    );
+    let log = fs::read_to_string(&audit_path).unwrap();
+    assert!(
+        !log.contains("\"disposition\":\"permanent\""),
+        "nothing granted may be recorded as an irreversible removal, in:\n{log}"
+    );
+}
+
+#[test]
+fn allow_permanent_still_works_inside_the_allowlist() {
+    // The other direction: confining irreversible removal to the allowlist must
+    // not have disabled it there.
+    let (_g, home) = fake_home();
+    let cache = home.join("Library/Caches/app/a.bin");
+    write(&cache, b"junk");
+
+    let plan = Plan {
+        actions: vec![PlannedAction {
+            path: guard(&cache, &home).unwrap(),
+            size_bytes: 4,
+            disposal: Disposal::Permanent,
+            category: "user-caches".to_string(),
+        }],
+        skipped_protected: 0,
+    };
+
+    let (audit_path, mut audit) = audit_at(&home);
+    let consent = Consent {
+        execute: true,
+        allow_permanent: true,
+        ..Default::default()
+    };
+    let report = execute(&plan, consent, &home, &sink(&home), &mut audit).unwrap();
+
+    assert_eq!(report.executed, 1);
+    assert!(!cache.exists());
+    assert!(
+        !home.join("test-trash/a.bin").exists(),
+        "an allowlisted permanent action is not a move to the Trash"
+    );
+    assert!(fs::read_to_string(&audit_path)
+        .unwrap()
+        .contains("\"disposition\":\"permanent\""));
+}
+
+#[test]
+fn a_preview_refuses_what_the_real_run_would_refuse() {
+    // A dry run that reports "would be trashed" for a path the executor would
+    // refuse is a preview that overstates what is about to happen. The
+    // authorization runs in both modes so the two agree.
+    let (_g, home) = fake_home();
+    let ungranted = home.join("Documents/thesis.pdf");
+    let granted = home.join("Documents/huge.iso");
+    write(&ungranted, b"data");
+    write(&granted, b"data");
+
+    let mut plan = plan_for(&ungranted, &home, 4);
+    plan.actions.push(PlannedAction {
+        path: guard(&granted, &home).unwrap(),
+        size_bytes: 4,
+        disposal: Disposal::Trash,
+        category: "large-and-old".to_string(),
+    });
+
+    let (audit_path, mut audit) = audit_at(&home);
+    let consent = Consent {
+        granted: vec![guard(&granted, &home).unwrap()],
+        ..Default::default() // execute: false — a preview
+    };
+    let report = execute(&plan, consent, &home, &sink(&home), &mut audit).unwrap();
+
+    assert!(report.dry_run);
+    assert_eq!(report.planned, 1, "only the granted path would be acted on");
+    assert_eq!(
+        report.refused, 1,
+        "and the ungranted one is previewed as refused"
+    );
+    assert!(ungranted.exists(), "a preview still mutates nothing");
+    assert!(granted.exists());
+
+    // The preview's log distinguishes them too.
+    let log = fs::read_to_string(&audit_path).unwrap();
+    assert!(log.contains("\"disposition\":\"refused\""));
+    assert!(
+        log.lines().filter(|l| l.contains("user-granted")).count() == 1,
+        "a previewed escalation is marked as one, in:\n{log}"
+    );
+}
+
+#[test]
+fn a_wholesale_refusal_is_recorded_in_the_audit_log() {
+    // The most decisive thing the executor can do — refusing an entire run —
+    // used to be the one thing the log never mentioned.
+    let (_g, home) = fake_home();
+    let f = home.join("Documents/huge.iso");
+    write(&f, b"data");
+    let plan = plan_for(&f, &home, 4);
+
+    let (audit_path, mut audit) = audit_at(&home);
+    let grants = vec![guard(&f, &home).unwrap(); MAX_GRANTS + 1];
+    assert!(execute(&plan, consenting(grants), &home, &sink(&home), &mut audit).is_err());
+
+    let log = fs::read_to_string(&audit_path).unwrap();
+    assert!(log.contains("\"disposition\":\"refused\""), "in:\n{log}");
+    assert!(
+        log.contains("exceeds the limit"),
+        "with a reason, in:\n{log}"
+    );
+}
+
+#[test]
+fn a_refused_mass_delete_is_recorded_too() {
+    let (_g, home) = fake_home();
+    let mut plan = Plan::default();
+    for i in 0..(macclean_core::plan::MASS_DELETE_COUNT + 1) {
+        let f = home.join(format!("Library/Caches/app/f{i}.bin"));
+        write(&f, b"data");
+        plan.actions.push(PlannedAction {
+            path: guard(&f, &home).unwrap(),
+            size_bytes: 4,
+            disposal: Disposal::Trash,
+            category: "user-caches".to_string(),
+        });
+    }
+
+    let (audit_path, mut audit) = audit_at(&home);
+    let consent = Consent {
+        execute: true,
+        ..Default::default()
+    };
+    assert!(execute(&plan, consent, &home, &sink(&home), &mut audit).is_err());
+
+    let log = fs::read_to_string(&audit_path).unwrap();
+    assert!(log.contains("needs explicit confirmation"), "in:\n{log}");
+    assert!(home.join("Library/Caches/app/f0.bin").exists());
+}
+
+#[test]
+fn a_refusal_says_whether_grants_were_offered_at_all() {
+    // "Outside the allowlist, nothing was granted" is routine confinement.
+    // "Grants were offered and this path was not among them" is a caller trying
+    // to dispose of something the user did not pick — worth finding later.
+    let (_g, home) = fake_home();
+    let picked = home.join("Documents/picked.bin");
+    let other = home.join("Documents/other.bin");
+    write(&picked, b"ok");
+    write(&other, b"no");
+
+    let plan = plan_for(&other, &home, 2);
+    let (audit_path, mut audit) = audit_at(&home);
+    execute(
+        &plan,
+        consenting(vec![guard(&picked, &home).unwrap()]),
+        &home,
+        &sink(&home),
+        &mut audit,
+    )
+    .unwrap();
+
+    assert!(fs::read_to_string(&audit_path)
+        .unwrap()
+        .contains("not among the granted paths"));
+}
+
+#[test]
 fn a_grant_does_not_confer_permanent_deletion() {
     // Grants widen *where* we may act, never *how*. Without `allow_permanent`
     // a Permanent action still falls back to the recoverable path.

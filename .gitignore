@@ -3,3 +3,8 @@
 .DS_Store
 *.jsonl
 !*.example.jsonl
+
+# Proptest seed files. This repo turns a proptest finding into an explicit
+# named test rather than relying on a saved seed, and these otherwise get
+# picked up from deliberately-mutated live-fire runs.
+*.proptest-regressions

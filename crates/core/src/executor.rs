@@ -180,38 +180,73 @@ pub fn execute(
     // Checked before the dry-run branch on purpose: a preview that quietly
     // succeeds while the real run would be refused is a preview that lies.
     if consent.granted.len() > MAX_GRANTS {
+        refuse_run(
+            audit,
+            &format!(
+                "{} individually-granted paths exceeds the limit of {MAX_GRANTS}",
+                consent.granted.len()
+            ),
+        )?;
         return Err(ExecError::TooManyGrants {
             count: consent.granted.len(),
             max: MAX_GRANTS,
         });
     }
 
+    let allowed = allowlist::default_roots(home);
+
     // --- Dry-run default: record intentions, change nothing. ---
+    //
+    // The preview runs the same authorization the real thing would, because a
+    // plan may now legitimately contain paths outside the disposal allowlist
+    // (see `Consent::granted`). Reporting those as "would be trashed" and only
+    // refusing them at execution time would make the preview overstate what is
+    // about to happen — the same dishonesty, pointed the other way, that the
+    // under-reporting work set out to fix.
+    //
+    // It does not re-`guard` here: canonicalization is a point-in-time check
+    // worth paying for immediately before a mutation, and there is no mutation
+    // to precede. The consequence is stated plainly rather than papered over —
+    // a preview describes the disk as it was scanned, and the executor still
+    // re-resolves everything before acting.
     if !consent.execute {
         report.dry_run = true;
         for a in &plan.actions {
-            record(
-                audit,
-                Phase::Planned,
-                disposition_for(a.disposal, false),
-                a.path.as_path(),
-                a.size_bytes,
-                None,
-            )?;
-            report.planned += 1;
+            match authorize(&a.path, &allowed, &consent.granted) {
+                Authorization::Refused(reason) => {
+                    refuse(&mut report, audit, a.path.as_path(), a.size_bytes, reason)?;
+                }
+                auth => {
+                    record(
+                        audit,
+                        Phase::Planned,
+                        disposition_for(a.disposal, false),
+                        a.path.as_path(),
+                        a.size_bytes,
+                        note_for(auth),
+                    )?;
+                    report.planned += 1;
+                }
+            }
         }
         return Ok(report);
     }
 
     // --- No unconfirmed mass delete. ---
     if plan.requires_confirmation() && !consent.confirmed_mass_delete {
+        refuse_run(
+            audit,
+            &format!(
+                "mass delete of {} items ({} bytes) needs explicit confirmation",
+                plan.count(),
+                plan.total_bytes()
+            ),
+        )?;
         return Err(ExecError::MassDeleteUnconfirmed {
             count: plan.count(),
             bytes: plan.total_bytes(),
         });
     }
-
-    let allowed = allowlist::default_roots(home);
 
     for a in &plan.actions {
         report.planned += 1;
@@ -234,16 +269,24 @@ pub fn execute(
         };
         // Authorization sits *behind* the re-guard above, never in front of it:
         // a grant widens where we may act, it never bypasses the denylist.
-        let note = match authorize(&safe, &allowed, &consent.granted) {
-            Authorization::Allowlisted => None,
-            Authorization::Granted => Some(GRANT_NOTE.to_string()),
-            Authorization::Refused(reason) => {
-                refuse(&mut report, audit, safe.as_path(), a.size_bytes, reason)?;
-                continue;
-            }
-        };
+        let auth = authorize(&safe, &allowed, &consent.granted);
+        if let Authorization::Refused(reason) = auth {
+            refuse(&mut report, audit, safe.as_path(), a.size_bytes, reason)?;
+            continue;
+        }
+        let note = note_for(auth);
 
-        let permanent = matches!(a.disposal, Disposal::Permanent) && consent.allow_permanent;
+        // Grants widen *where* we may act, never *how*.
+        //
+        // Irreversible removal stays confined to the allowlist. That is the
+        // safer way round for exactly the reason grants exist: the allowlist
+        // covers caches and logs, which regenerate, while a grant covers a file
+        // in ~/Documents that the user picked out of a list — the least
+        // replaceable data this tool will ever touch, and the least vetted. A
+        // granted `Permanent` action therefore falls back to the Trash.
+        let permanent = matches!(a.disposal, Disposal::Permanent)
+            && consent.allow_permanent
+            && matches!(auth, Authorization::Allowlisted);
         let disposition = disposition_for(a.disposal, permanent);
 
         // Item 6: record an irreversible delete BEFORE it happens, so a crash
@@ -306,6 +349,7 @@ pub fn execute(
 const GRANT_NOTE: &str = "user-granted path outside the allowlist";
 
 /// Why a path may be disposed of — or why it may not.
+#[derive(Clone, Copy)]
 enum Authorization {
     /// Inside [`allowlist::default_roots`]: ordinary, policy-driven cleanup.
     Allowlisted,
@@ -328,12 +372,29 @@ fn authorize(safe: &SafePath, allowed: &[PathBuf], granted: &[SafePath]) -> Auth
     // than the planned one also means a symlink swapped in after the user chose
     // cannot redirect an authorization onto a different file.
     if !granted.iter().any(|g| g.as_path() == safe.as_path()) {
-        return Authorization::Refused("outside allowlist at execution time");
+        // Two different situations, and the log should say which. "No grants
+        // were offered" is the ordinary confinement of cleanup to the
+        // allowlist; "grants were offered and this path was not among them" is
+        // a caller trying to dispose of something the user did not pick, which
+        // is the one worth being able to find afterwards.
+        return Authorization::Refused(if granted.is_empty() {
+            "outside allowlist at execution time"
+        } else {
+            "outside allowlist and not among the granted paths"
+        });
     }
 
     // Grants name files. Disposing of a directory means a recursive removal,
     // which needs the bounded, fail-closed `guard_dir` walk that does not exist
     // yet (it is a prerequisite of the Uninstaller work). Until it does, refuse.
+    //
+    // This is a check/use split and cannot be made atomic against a hostile or
+    // merely unlucky local process: something could `rename` a directory onto
+    // this name between the stat below and the disposal. The mitigation is that
+    // a granted path can only ever go to the Trash — see the `permanent`
+    // calculation in `execute` — so the worst case is a recoverable move, fully
+    // recorded in the audit log, rather than a recursive unlink. Closing the
+    // window properly is `guard_dir`'s job.
     match std::fs::symlink_metadata(safe.as_path()) {
         Ok(m) if m.is_dir() => Authorization::Refused(
             "grant names a directory; recursive disposal needs a bounded directory guard",
@@ -342,6 +403,37 @@ fn authorize(safe: &SafePath, allowed: &[PathBuf], granted: &[SafePath]) -> Auth
         // If we cannot tell what it is, we do not act on it.
         Err(_) => Authorization::Refused("grant target could not be inspected"),
     }
+}
+
+/// The audit note an authorization deserves. `Refused` never reaches here —
+/// refusals carry their own reason string through [`refuse`].
+fn note_for(auth: Authorization) -> Option<String> {
+    match auth {
+        Authorization::Granted => Some(GRANT_NOTE.to_string()),
+        _ => None,
+    }
+}
+
+/// Sentinel path for an audit record about the run as a whole rather than one
+/// file. Not a path, and deliberately not shaped like one, so nothing that
+/// reads the log back (restore, in particular) can mistake it for a target.
+const WHOLE_RUN: &str = "(whole run — no action taken)";
+
+/// Record that an entire run was refused before it touched anything.
+///
+/// Item 6 wants a durable trace of refusals, and a wholesale refusal used to
+/// leave none: the early `return Err(...)` happened before any `record` call,
+/// so the most decisive thing the executor can do was the one thing the log
+/// never mentioned.
+fn refuse_run(audit: &mut AuditLog, reason: &str) -> Result<(), ExecError> {
+    record(
+        audit,
+        Phase::Planned,
+        Disposition::Refused,
+        Path::new(WHOLE_RUN),
+        0,
+        Some(reason.to_string()),
+    )
 }
 
 fn disposition_for(disposal: Disposal, permanent_granted: bool) -> Disposition {

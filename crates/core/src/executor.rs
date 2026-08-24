@@ -27,8 +27,39 @@ use crate::audit::{now_ms, AuditEntry, AuditLog, Disposition, Phase};
 use crate::plan::{Disposal, Plan};
 
 /// Where disposed files go. Abstracted so tests avoid the real system Trash.
+///
+/// [`Sink::delete`] is **files only, by construction**. See its doc comment —
+/// that is a safety property, not an implementation detail.
 pub trait Sink {
+    /// Move to the Trash (recoverable).
+    ///
+    /// This one has **no** directory backstop, and the asymmetry is deliberate
+    /// rather than an oversight. `trash::delete` and `fs::rename` both accept a
+    /// directory, and neither has a file-only variant — so if a directory were
+    /// swapped onto the name after `authorize` inspected it, a whole tree would
+    /// move to the Trash. That outcome is recoverable and fully audited, which
+    /// is what makes it tolerable where the same race on [`Sink::delete`] would
+    /// not be. The one dishonesty it can produce: the audit record would carry
+    /// the planned *file's* `size_bytes` for a tree.
     fn trash(&self, path: &Path) -> io::Result<()>;
+
+    /// Irreversibly remove a single *file*.
+    ///
+    /// Implementations must never recurse into a directory. `authorize`
+    /// already refuses directory targets, but that check and this call cannot
+    /// be made atomic — something could `rename` a directory onto the name in
+    /// between. Using `remove_file` unconditionally makes the race harmless:
+    /// `unlink(2)` returns `EPERM` for a directory and removes nothing, so the
+    /// worst outcome is a refusal instead of a recursive unlink of a tree
+    /// nobody vetted.
+    ///
+    /// One caveat, stated because a safety property in the trust boundary
+    /// should not overstate: `unlink(2)` documents that `EPERM` for a directory
+    /// applies when the effective user is **not** the super-user. Running this
+    /// tool under `sudo` is neither required nor prevented, and nothing here
+    /// checks `geteuid`. Even then the exposure is a stray directory-entry
+    /// removal rather than a recursive unlink — but it is not the flat
+    /// guarantee the non-root case gives.
     fn delete(&self, path: &Path) -> io::Result<()>;
 }
 
@@ -41,12 +72,9 @@ impl Sink for SystemSink {
     }
 
     fn delete(&self, path: &Path) -> io::Result<()> {
-        let meta = std::fs::symlink_metadata(path)?;
-        if meta.is_dir() {
-            std::fs::remove_dir_all(path)
-        } else {
-            std::fs::remove_file(path)
-        }
+        // Files only — never `remove_dir_all`. See the trait doc: this is the
+        // fail-closed backstop for the unavoidable check/use race.
+        std::fs::remove_file(path)
     }
 }
 
@@ -66,12 +94,9 @@ impl Sink for DirSink {
     }
 
     fn delete(&self, path: &Path) -> io::Result<()> {
-        let meta = std::fs::symlink_metadata(path)?;
-        if meta.is_dir() {
-            std::fs::remove_dir_all(path)
-        } else {
-            std::fs::remove_file(path)
-        }
+        // Files only — never `remove_dir_all`. See the trait doc: this is the
+        // fail-closed backstop for the unavoidable check/use race.
+        std::fs::remove_file(path)
     }
 }
 
@@ -99,9 +124,9 @@ pub struct Consent {
     ///   a grant can never resurrect `/Applications` or `~/Library/Mail`.
     /// - Matching is **exact**. A grant authorizes one path and confers nothing
     ///   on its children, so granting a directory does not grant its contents.
-    /// - Grants must name **files**. Authorizing a directory would mean a
-    ///   recursive removal, which needs the bounded `guard_dir` walk that does
-    ///   not exist yet; until it does, a directory grant is refused.
+    /// - Grants must name **files**, though not as a special rule: the executor
+    ///   refuses *every* directory target, granted or allowlisted, because
+    ///   nothing plans directory actions yet. See [`authorize`].
     /// - The list is capped at [`MAX_GRANTS`] and over-long lists refuse the
     ///   whole run rather than being truncated.
     /// - Every grant-authorized disposal is audited with a distinguishing note.
@@ -348,6 +373,11 @@ pub fn execute(
 /// nobody else vetted, the second is the tool doing its documented job.
 const GRANT_NOTE: &str = "user-granted path outside the allowlist";
 
+/// Refusal reason for a directory target. See [`authorize`] for why this is a
+/// blanket refusal rather than a `safety::guard_dir` gate.
+const DIRECTORY_REFUSAL: &str =
+    "directory target; recursive disposal is not enabled (needs directory-aware planning)";
+
 /// Why a path may be disposed of — or why it may not.
 #[derive(Clone, Copy)]
 enum Authorization {
@@ -361,6 +391,29 @@ enum Authorization {
 /// Decide whether `safe` may be acted on. Called *after* the pre-mutation
 /// re-guard, so `safe` has already survived the denylist.
 fn authorize(safe: &SafePath, allowed: &[PathBuf], granted: &[SafePath]) -> Authorization {
+    // Directory targets are refused outright, wherever the authorization would
+    // have come from. One directory action stands for an unknown number of
+    // files, so a check on the directory's own path is not a check on what is
+    // about to be removed — the dangerous content is inside it.
+    //
+    // `safety::guard_dir` is the answer to that, and it now exists: it walks
+    // the tree, refuses a `.git` at any depth, and fails closed on anything it
+    // cannot read or that exceeds its bounds. What does not exist yet is a
+    // *planner* that produces directory actions — `scanner.rs` plans files
+    // only — so wiring `guard_dir` in here would add an unused destructive
+    // capability to a tool whose contract says to refuse when in doubt. M4
+    // introduces directory-aware planning and turns this refusal into a
+    // `guard_dir` gate, in one reviewed change.
+    //
+    // Checked before authorization so the refusal reason names the real
+    // problem rather than blaming the allowlist for it.
+    match std::fs::symlink_metadata(safe.as_path()) {
+        Ok(m) if m.is_dir() => return Authorization::Refused(DIRECTORY_REFUSAL),
+        Ok(_) => {}
+        // If we cannot tell what it is, we do not act on it.
+        Err(_) => return Authorization::Refused("target could not be inspected"),
+    }
+
     if allowlist::is_allowed(safe.as_path(), allowed) {
         return Authorization::Allowlisted;
     }
@@ -384,25 +437,7 @@ fn authorize(safe: &SafePath, allowed: &[PathBuf], granted: &[SafePath]) -> Auth
         });
     }
 
-    // Grants name files. Disposing of a directory means a recursive removal,
-    // which needs the bounded, fail-closed `guard_dir` walk that does not exist
-    // yet (it is a prerequisite of the Uninstaller work). Until it does, refuse.
-    //
-    // This is a check/use split and cannot be made atomic against a hostile or
-    // merely unlucky local process: something could `rename` a directory onto
-    // this name between the stat below and the disposal. The mitigation is that
-    // a granted path can only ever go to the Trash — see the `permanent`
-    // calculation in `execute` — so the worst case is a recoverable move, fully
-    // recorded in the audit log, rather than a recursive unlink. Closing the
-    // window properly is `guard_dir`'s job.
-    match std::fs::symlink_metadata(safe.as_path()) {
-        Ok(m) if m.is_dir() => Authorization::Refused(
-            "grant names a directory; recursive disposal needs a bounded directory guard",
-        ),
-        Ok(_) => Authorization::Granted,
-        // If we cannot tell what it is, we do not act on it.
-        Err(_) => Authorization::Refused("grant target could not be inspected"),
-    }
+    Authorization::Granted
 }
 
 /// The audit note an authorization deserves. `Refused` never reaches here —

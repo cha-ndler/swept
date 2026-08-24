@@ -18,7 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use macclean_core::audit::AuditLog;
-use macclean_core::executor::{execute, Consent, DirSink, ExecError, MAX_GRANTS};
+use macclean_core::executor::{execute, Consent, DirSink, ExecError, Sink, MAX_GRANTS};
 use macclean_core::plan::{Disposal, Plan, PlannedAction};
 use safety::guard;
 
@@ -178,9 +178,10 @@ fn a_grant_on_a_directory_does_not_authorize_its_contents() {
 
 #[test]
 fn a_directory_grant_is_refused_outright() {
-    // Disposing of a directory means a recursive removal, which needs the
-    // bounded `guard_dir` walk that does not exist yet. Until it does, a
-    // grant naming a directory is refused rather than honored.
+    // Disposing of a directory means a recursive removal. The refusal is now
+    // general rather than grant-specific — *every* directory target is refused,
+    // granted or allowlisted — which subsumes this case and is strictly
+    // stronger, so the reason string changed with it.
     let (_g, home) = fake_home();
     let dir = home.join("Documents/project");
     let inner = dir.join("inner.bin");
@@ -204,7 +205,110 @@ fn a_directory_grant_is_refused_outright() {
     assert!(inner.exists(), "and so does everything under it");
     assert!(fs::read_to_string(&audit_path)
         .unwrap()
-        .contains("grant names a directory"));
+        .contains("directory target"));
+}
+
+#[test]
+fn a_directory_inside_the_allowlist_is_refused_too() {
+    // Half of the residual M1 left open. With `Disposal::Trash` this path
+    // reached `fs::rename`, not `remove_dir_all` — recoverable, but still a
+    // whole tree moved on the strength of one unexamined action. The
+    // irreversible half has its own test below.
+    let (_g, home) = fake_home();
+    let dir = home.join("Library/Caches/app");
+    let inner = dir.join("deep/nested.bin");
+    write(&inner, b"data");
+
+    let plan = plan_for(&dir, &home, 4);
+    let (audit_path, mut audit) = audit_at(&home);
+
+    let report = execute(&plan, consenting(vec![]), &home, &sink(&home), &mut audit).unwrap();
+
+    assert_eq!(report.executed, 0);
+    assert_eq!(report.refused, 1);
+    assert!(
+        dir.exists(),
+        "an allowlisted directory is still not removable"
+    );
+    assert!(inner.exists());
+    assert!(fs::read_to_string(&audit_path)
+        .unwrap()
+        .contains("directory target"));
+}
+
+#[test]
+fn a_preview_refuses_a_directory_the_same_way_execution_does() {
+    // Preview/execute parity: both branches run the same `authorize`, so the
+    // directory refusal cannot show up in one and not the other.
+    let (_g, home) = fake_home();
+    let dir = home.join("Library/Caches/app");
+    write(&dir.join("inner.bin"), b"data");
+
+    let plan = plan_for(&dir, &home, 4);
+    let (_p, mut audit) = audit_at(&home);
+
+    let report = execute(&plan, Consent::default(), &home, &sink(&home), &mut audit).unwrap();
+
+    assert!(report.dry_run);
+    assert_eq!(report.planned, 0);
+    assert_eq!(report.refused, 1, "the preview predicts the refusal");
+}
+
+#[test]
+fn an_allowlisted_directory_under_allow_permanent_is_refused() {
+    // *This* is the combination that actually reached `remove_dir_all` before
+    // this change: allowlisted, plus `Disposal::Permanent`, plus
+    // `allow_permanent`. Nothing produces it today, which is precisely why it
+    // was worth closing before something does.
+    let (_g, home) = fake_home();
+    let dir = home.join("Library/Caches/app");
+    let inner = dir.join("deep/nested.bin");
+    write(&inner, b"data");
+
+    let plan = Plan {
+        actions: vec![PlannedAction {
+            path: guard(&dir, &home).unwrap(),
+            size_bytes: 4,
+            disposal: Disposal::Permanent,
+            category: "user-caches".to_string(),
+        }],
+        skipped_protected: 0,
+    };
+
+    let (audit_path, mut audit) = audit_at(&home);
+    let consent = Consent {
+        execute: true,
+        allow_permanent: true,
+        ..Default::default()
+    };
+    let report = execute(&plan, consent, &home, &sink(&home), &mut audit).unwrap();
+
+    assert_eq!(report.executed, 0);
+    assert_eq!(report.refused, 1);
+    assert!(
+        dir.exists(),
+        "the tree survives an irreversible directory action"
+    );
+    assert!(inner.exists());
+    assert!(fs::read_to_string(&audit_path)
+        .unwrap()
+        .contains("directory target"));
+}
+
+#[test]
+fn the_sink_can_never_remove_a_directory() {
+    // The atomic backstop. `authorize`'s check and the sink call cannot be made
+    // atomic, so `delete` must fail closed on its own if a directory is swapped
+    // onto the name in between.
+    let (_g, home) = fake_home();
+    let dir = home.join("Library/Caches/app/subdir");
+    let inner = dir.join("inner.bin");
+    write(&inner, b"data");
+
+    let err = sink(&home).delete(&dir).unwrap_err();
+
+    assert!(dir.exists(), "the directory survives, {err}");
+    assert!(inner.exists(), "and so does its contents");
 }
 
 #[test]

@@ -17,8 +17,10 @@
 
 pub mod allowlist;
 pub mod denylist;
+pub mod dir_guard;
 pub mod path_guard;
 
+pub use dir_guard::{guard_dir, DirLimits, GuardDirError, SafeDir};
 pub use path_guard::{guard, GuardError, SafePath};
 
 use std::io;

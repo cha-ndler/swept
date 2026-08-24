@@ -72,10 +72,7 @@ body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
     sans-serif;
-  /* Transparent on purpose: the window carries an NSVisualEffectView (sidebar
-     material) behind the webview, and an opaque body would hide it. Only the
-     content pane paints a solid background — see `.content` below. */
-  background: transparent;
+  background: var(--bg-window);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -90,15 +87,17 @@ body {
 }
 
 .sidebar {
-  /* Mostly transparent so the vibrancy material reads through it; the gradient
-     is the same subtle top-light macOS gives a real sidebar. If the effect ever
-     fails to apply, --sidebar underneath keeps this legible rather than clear. */
+  /* Opaque. Real NSVisualEffectView vibrancy needs a transparent window, which
+     on macOS needs the private API — and that forecloses the Mac App Store. The
+     translucency was not worth a one-way door on distribution, so the sidebar
+     gets its lift from being lighter than the content pane plus the same subtle
+     top-light macOS gives a real sidebar. */
   background: linear-gradient(
       180deg,
       rgba(255, 255, 255, 0.05),
       rgba(255, 255, 255, 0.012)
     ),
-    color-mix(in srgb, var(--sidebar) 72%, transparent);
+    var(--sidebar);
   border-right: 1px solid rgba(0, 0, 0, 0.45);
 }
 

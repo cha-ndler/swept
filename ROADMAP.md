@@ -222,12 +222,24 @@ and PAUSES for the human taste gate. Never auto-merged.**
   every time it applies, including after access is later revoked.
   `open_privacy_settings` takes no arguments and opens one hardcoded URL rather
   than granting the webview a general open-a-URL permission.
-- [ ] **U6 — Menu-bar extra** — a tray icon showing reclaimable space.
-  **Scope correction:** the original "quick-clean action" would dispose of files
-  from a menu with no preview and no confirmation, which the safety contract
-  forbids (item 1: dry-run is the default; item 5: no unconfirmed mass delete).
-  The tray should surface the figure and *open the app at the confirm step* —
-  never dispose directly.
+- [x] **U6 — Menu-bar extra** (PR #26) — a status item showing the latest
+  reclaimable figure, with Open and Quit. **No cleanup action**, per the scope
+  correction: disposing from a menu means no preview and no confirmation, which
+  the safety contract forbids (item 1: dry-run is the default; item 5: no
+  unconfirmed mass delete). The frontend sends the *string it is already
+  displaying* rather than a number to re-format, so the menu bar and the window
+  cannot drift apart; a failed scan clears it rather than leaving a stale figure.
+  Closing the window now hides it instead of quitting, which is both the macOS
+  convention and a precondition for a menu-bar extra outliving its window.
+  **Verified created, not verified visible.** A temporary diagnostic build
+  reported `tray built`, `set_title -> Ok(())` and `tray_by_id -> true`, so the
+  item exists. It does not appear in the window server's layer-25 list on this
+  Mac, whose menu bar already holds ~10 items on a notched display — macOS
+  silently hides status items that do not fit, and one neighbouring item is
+  already present at 0x0 for the same reason. Needs a human's eye on a machine
+  with menu-bar room.
+
+**v0.4 complete.**
 
 ## v0.5 — Modules
 

@@ -99,11 +99,18 @@ export default function CleanView({
       const r = await call<ScanReport>("scan", { filters });
       seed(r);
       onReclaimable?.(r.total_bytes);
+      // The menu bar shows the string the window is already showing, so the two
+      // cannot drift apart. Best-effort: a scan that succeeded must not surface
+      // an error because a tray label failed to update.
+      void call("set_tray_label", { label: formatBytes(r.total_bytes) }).catch(() => {});
       setView(r.by_category.length ? "results" : "empty");
     } catch (e) {
       setReport(null);
       setSelected(new Set());
       onReclaimable?.(null);
+      // No honest figure to show, so the menu bar shows nothing at all rather
+      // than the previous scan's number.
+      void call("set_tray_label", { label: null }).catch(() => {});
       setError(describeError(e));
       setView("error");
     }

@@ -157,6 +157,9 @@ pub enum GuardDirError {
     CrossesMount {
         path: PathBuf,
     },
+    /// The root is itself a mounted volume. Removing a volume's contents is
+    /// never what "remove this directory" was meant to mean.
+    RootIsAVolume(PathBuf),
     TooManyEntries {
         limit: usize,
     },
@@ -195,6 +198,11 @@ impl fmt::Display for GuardDirError {
                 f,
                 "refused: {} is on another volume, so it is not part of this tree",
                 path.display()
+            ),
+            GuardDirError::RootIsAVolume(p) => write!(
+                f,
+                "refused: {} is a mounted volume, not a directory within one",
+                p.display()
             ),
             GuardDirError::TooManyEntries { limit } => {
                 write!(f, "refused: the tree holds more than {limit} entries")
@@ -237,6 +245,24 @@ pub fn guard_dir(input: &Path, home: &Path, limits: DirLimits) -> Result<SafeDir
         return Err(GuardDirError::NotADirectory(root));
     }
     let root_dev = meta.dev();
+
+    // ...and the root must not itself be a mounted volume. Taking `root_dev`
+    // from the root makes the per-entry check below trivially self-consistent
+    // in that case, so the whole volume would be vouched for — and
+    // `remove_dir_all` on a volume root removes the contents *first* and only
+    // then fails `EBUSY` on the mount point, by which time they are gone.
+    // Compare against the parent: measured here, /System/Volumes/Preboot is
+    // dev 16777233 while /System/Volumes is 16777231.
+    //
+    // `guard` refuses `/`, so a valid root always has a parent.
+    if let Some(parent) = root.parent() {
+        let parent_dev = std::fs::metadata(parent)
+            .map_err(|e| GuardDirError::Unreadable(parent.to_path_buf(), e))?
+            .dev();
+        if parent_dev != root_dev {
+            return Err(GuardDirError::RootIsAVolume(root));
+        }
+    }
 
     let mut entries = 0usize;
     let mut bytes = 0u64;
@@ -293,10 +319,19 @@ pub fn guard_dir(input: &Path, home: &Path, limits: DirLimits) -> Result<SafeDir
             //
             // This does NOT cover macOS firmlinks, and it is worth being exact
             // rather than reassuring: /Users is a firmlink and reports the same
-            // st_dev as /, so neither check would notice one. Firmlinks exist
-            // only at the root of the system volume, so they cannot appear
-            // inside a candidate tree — the reason this is not a gap is where
-            // they live, not anything checked here.
+            // st_dev as /, so neither check would notice one.
+            //
+            // Why that is nonetheless not a gap — and the obvious-sounding
+            // reason is wrong, so it is spelled out. Firmlinks are *not*
+            // confined to the volume root: /usr/share/firmlinks on this machine
+            // lists /usr/local, /usr/libexec/cups, and one eleven components
+            // deep (/System/Library/CoreServices/CoreTypes.bundle/Contents/
+            // Library). What makes them safe here is that the table is fixed by
+            // the OS, read from the sealed read-only System volume, and cannot
+            // be extended by a user — and every entry names a system path
+            // (/System, /usr, /Library, /Applications, /private, ...). None can
+            // appear *inside* a tree this tool would walk; /Users is an
+            // ancestor of a home, never an entry within a candidate tree.
             //
             // Untested: creating a mount inside a fixture needs privileges the
             // test suite does not have. The premise above is measured; the
@@ -432,8 +467,12 @@ mod tests {
         write(&root.join("proj/.GIT/HEAD"), b"ref: refs/heads/main");
 
         let err = guard_dir(&root, &home, DirLimits::default()).unwrap_err();
+        // Assert the *reason*, not just that something refused: no other
+        // denylist rule can fire for this fixture today, but a future one
+        // could, and would satisfy a bare `Protected { .. }` for the wrong
+        // reason while the case hole quietly reopened.
         assert!(
-            matches!(err, GuardDirError::Protected { .. }),
+            matches!(err, GuardDirError::Protected { reason, .. } if reason.contains(".git")),
             "got {err:?}"
         );
     }

@@ -39,17 +39,36 @@ proptest! {
         }
     }
 
-    /// Any path containing a `.git` component is protected, wherever it sits.
+    /// Any path containing a `.git` component is protected, wherever it sits
+    /// and **however it is spelled**.
+    ///
+    /// The case permutation is the point. This property claimed that
+    /// generality from the day it was written while only ever pushing the one
+    /// lowercase spelling — so when `protection_reason` compared `.git`
+    /// byte-exactly, this is the test that should have caught it and did not.
+    /// macOS volumes are case-insensitive, so `.GIT` names the same directory.
     #[test]
     fn dot_git_anywhere_is_protected(
         pre in prop::collection::vec("[a-z]{1,6}", 0..4),
         post in prop::collection::vec("[a-z]{1,6}", 0..4),
+        upper in prop::collection::vec(any::<bool>(), 4..=4),
     ) {
+        // All 16 case permutations of "git", behind the dot.
+        let spelling: String = std::iter::once('.')
+            .chain("git".chars().zip(&upper[1..]).map(|(c, &up)| {
+                if up { c.to_ascii_uppercase() } else { c }
+            }))
+            .collect();
+
         let mut p = home();
         for s in &pre { p.push(s); }
-        p.push(".git");
+        p.push(&spelling);
         for s in &post { p.push(s); }
-        prop_assert!(is_protected(&p, &home()), "{} must be protected", p.display());
+        prop_assert!(
+            is_protected(&p, &home()),
+            "{} must be protected (spelled {spelling})",
+            p.display()
+        );
     }
 
     /// Any path containing a `..` component is protected (fail-closed).

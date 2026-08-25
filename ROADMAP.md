@@ -304,9 +304,22 @@ instead.**
   *inside* the allowlist would still reach `remove_dir_all`. No caller produces
   one (`scanner.rs` plans files only), and closing it generally is `guard_dir`'s
   job — see the v0.3 item, which M4 depends on.
-- [ ] **M2 — Large & Old Files** — read-only walk of `discovery_roots` with
-  size/age thresholds, feeding `Consent.granted`. Never pre-selected, never in
-  Smart Scan's default selection.
+- [ ] **M2 — Large & Old Files** — *backend done; GUI outstanding.*
+  - [x] **Engine + command layer.** `core/src/largeold.rs` walks
+    `discovery_roots` read-only with size/age thresholds, prunes protected
+    subtrees wholesale (so `.git` working trees and `/Applications` never
+    appear), skips symlinks, keeps the largest N while still reporting the true
+    totals, and reports `truncated` / `skipped_unreadable` rather than
+    under-reporting silently. It yields plain `PathBuf` and never mints a
+    `SafePath`. `gui_core::dispose_selected_with_sink` is the only caller that
+    populates `Consent.granted`: it re-`guard`s every path, re-reads sizes from
+    disk (never trusting the frontend's numbers), de-duplicates, and **refuses
+    the whole request** if any item is protected, missing, or a directory — a
+    partial run is never what the user confirmed. Selections use a 1 MiB drift
+    tolerance and exact count matching, deliberately *not* the 64 MiB
+    cache-tuned `grew_beyond` (see `SELECTION_CHURN_BYTES`).
+  - [ ] **The module UI.** Rows never pre-selected, never in a Smart Scan
+    default, with the `partial` flag surfaced. Visual → taste gate.
 - [ ] **M3 — Space Lens** — parallel depth-capped directory-size walk producing a
   tree DTO. Purely read-only; never touches the executor.
 - [ ] **M4 — Uninstaller (leftovers-only)** — leftovers for a chosen bundle id

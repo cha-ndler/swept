@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use macclean_core::audit::AuditLog;
 use macclean_core::executor::{execute, Consent, Sink, SystemSink};
+use macclean_core::largeold;
 use macclean_core::loginitems::{self, LoginItem};
+use macclean_core::plan::{Disposal, Plan, PlannedAction};
 use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, scan_with_progress, Progress, ScanConfig};
 
@@ -285,4 +287,243 @@ fn is_readable(dir: &Path) -> bool {
         Ok(_) => true,
         Err(e) => e.kind() == std::io::ErrorKind::NotFound,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Large & Old Files
+//
+// The first feature that looks outside the disposal allowlist. Everything here
+// keeps the M1 spine intact: the walk yields paths to *show*, and turning one
+// into an action takes a separate per-path grant that runs through `guard` at
+// that moment.
+// ---------------------------------------------------------------------------
+
+/// Byte tolerance for a hand-picked *selection*.
+///
+/// Deliberately **not** [`CHURN_BYTES`]. That allowance is 64 MiB because a
+/// rebuilt cache scan genuinely churns in the seconds a user spends reading a
+/// sheet. A selection has no such churn: it is a fixed list of files the user
+/// pointed at, and Large & Old only shows files of 100 MiB and up — so a
+/// 64 MiB slack would be wide enough for a materially different file to pass
+/// as "the same one". The only legitimate drift is a file that appended while
+/// the sheet was open.
+const SELECTION_CHURN_BYTES: u64 = 1024 * 1024;
+
+/// Why a selection no longer matches what was confirmed, if it does not.
+///
+/// The count must match **exactly**: unlike a rescan, the set here is the list
+/// of paths the caller sent, so any difference means the UI and the backend
+/// disagree about what was chosen — which is precisely the state in which
+/// nothing should be acted on.
+fn selection_drifted(fresh_count: usize, fresh_bytes: u64, expected: Expected) -> Option<String> {
+    if fresh_count != expected.count {
+        return Some("the selection is not the one you confirmed".to_string());
+    }
+    if fresh_bytes > expected.bytes.saturating_add(SELECTION_CHURN_BYTES) {
+        return Some("the selected files grew since the preview".to_string());
+    }
+    None
+}
+
+/// One row in the Large & Old list.
+///
+/// Note what is absent: there is no `selected` field and no default selection.
+/// These are never pre-ticked and never part of a Smart Scan default — the
+/// whole point is that a human chooses each one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LargeOldItem {
+    pub path: String,
+    pub size_bytes: u64,
+    pub modified_ms: Option<u64>,
+}
+
+/// What the Large & Old walk found, for the UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LargeOldReportDto {
+    pub items: Vec<LargeOldItem>,
+    /// Total matches, which may exceed `items.len()` when the list is capped.
+    pub matched: usize,
+    pub matched_bytes: u64,
+    pub examined: usize,
+    pub truncated: bool,
+    pub skipped_unreadable: usize,
+    /// True when the report describes less than the whole disk, for any
+    /// reason. The UI must say so rather than presenting a figure as complete.
+    pub partial: bool,
+}
+
+/// Read-only: find large (optionally old) files across the discovery scope.
+pub fn large_and_old(
+    home: &Path,
+    min_size_bytes: u64,
+    older_than_days: Option<u64>,
+) -> LargeOldReportDto {
+    let min_age = older_than_days.map(|d| Duration::from_secs(d * 24 * 60 * 60));
+    let report = largeold::find_in(home, min_size_bytes, min_age);
+    LargeOldReportDto {
+        items: report
+            .items
+            .iter()
+            .map(|f| LargeOldItem {
+                path: f.path.display().to_string(),
+                size_bytes: f.size_bytes,
+                modified_ms: f.modified_ms,
+            })
+            .collect(),
+        matched: report.matched,
+        matched_bytes: report.matched_bytes,
+        examined: report.examined,
+        truncated: report.truncated,
+        skipped_unreadable: report.skipped_unreadable,
+        partial: report.is_partial(),
+    }
+}
+
+/// Act on individually-chosen paths, using per-path grants.
+///
+/// This is the only caller that populates `Consent::granted`, and it is
+/// deliberately strict, because the safety argument for grants rests on each
+/// one being a real, individual, still-valid human choice:
+///
+/// - **An empty selection acts on nothing.** Same rule as `clean`: the caller
+///   must name what it wants.
+/// - **Every path is re-`guard`ed here**, so the denylist decides before
+///   anything else. A path the guard refuses fails the *whole* request rather
+///   than being skipped, because a partial run does not match the list the user
+///   was looking at when they confirmed.
+/// - **Sizes are re-read from disk, never taken from the frontend.** Trusting
+///   caller-supplied sizes would let an understated total slip past the
+///   mass-delete threshold.
+/// - The executor still applies every other bound: exact-match grants, the
+///   `MAX_GRANTS` cap, the directory refusal, Trash-not-unlink, and the audit
+///   note marking each action as user-granted.
+pub fn dispose_selected_with_sink(
+    home: &Path,
+    paths: &[String],
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+    sink: &dyn Sink,
+    audit: &mut AuditLog,
+) -> Result<CleanSummary, String> {
+    if paths.is_empty() {
+        return Err("refused: nothing was selected.".to_string());
+    }
+
+    let mut actions = Vec::with_capacity(paths.len());
+    let mut granted = Vec::with_capacity(paths.len());
+    let mut rejected: Vec<String> = Vec::new();
+
+    for raw in paths {
+        let safe = match safety::guard(Path::new(raw), home) {
+            Ok(s) => s,
+            Err(e) => {
+                rejected.push(format!("{raw}: {e}"));
+                continue;
+            }
+        };
+        // Re-read the size from disk. The frontend's number is a display value;
+        // this one is what the mass-delete threshold is measured against.
+        let size_bytes = match std::fs::symlink_metadata(safe.as_path()) {
+            // The walk never returns a directory, so one arriving here means
+            // the UI sent something it did not get from us. The executor would
+            // refuse it anyway, but refusing the whole request says so plainly
+            // instead of silently acting on the rest of the list.
+            Ok(m) if m.is_dir() => {
+                rejected.push(format!("{raw}: is a directory"));
+                continue;
+            }
+            Ok(m) => m.len(),
+            Err(e) => {
+                rejected.push(format!("{raw}: {e}"));
+                continue;
+            }
+        };
+        // Two spellings of one file must not count as two items — that would
+        // inflate the total the mass-delete threshold is measured against, and
+        // the second attempt would then "fail" on a file we just moved.
+        if granted.iter().any(|g: &safety::SafePath| g == &safe) {
+            continue;
+        }
+        granted.push(safe.clone());
+        actions.push(PlannedAction {
+            path: safe,
+            size_bytes,
+            disposal: Disposal::Trash,
+            category: "large-and-old".to_string(),
+        });
+    }
+
+    if !rejected.is_empty() {
+        // Refuse wholesale. Acting on the rest would touch a different set than
+        // the one that was confirmed.
+        let shown: Vec<&str> = rejected.iter().take(3).map(|s| s.as_str()).collect();
+        let more = rejected.len().saturating_sub(shown.len());
+        let suffix = if more > 0 {
+            format!(" (and {more} more)")
+        } else {
+            String::new()
+        };
+        return Err(format!(
+            "refused: {} of {} selected items are no longer valid, so nothing was \
+             touched. Scan again and review. First problems: {}{}",
+            rejected.len(),
+            paths.len(),
+            shown.join("; "),
+            suffix
+        ));
+    }
+
+    let plan = Plan {
+        actions,
+        skipped_protected: 0,
+    };
+
+    if let Some(exp) = expected {
+        if let Some(why) = selection_drifted(plan.count(), plan.total_bytes(), exp) {
+            return Err(format!(
+                "refused: {why}, so nothing was touched. This would now act on {} items \
+                 ({} bytes), but you confirmed {} items ({} bytes). Scan again and review.",
+                plan.count(),
+                plan.total_bytes(),
+                exp.count,
+                exp.bytes
+            ));
+        }
+    }
+
+    let consent = Consent {
+        execute: true,
+        allow_permanent: false,
+        confirmed_mass_delete: confirm_mass_delete,
+        granted,
+    };
+
+    match execute(&plan, consent, home, sink, audit) {
+        Ok(report) => Ok(CleanSummary {
+            dry_run: report.dry_run,
+            executed: report.executed,
+            refused: report.refused,
+            bytes_freed: report.bytes_executed,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Real-app entry point for acting on a Large & Old selection.
+pub fn dispose_selected(
+    paths: Vec<String>,
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+) -> Result<CleanSummary, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    let audit_path = default_audit_path().map_err(|e| e.to_string())?;
+    let mut audit = AuditLog::open(&audit_path).map_err(|e| e.to_string())?;
+    dispose_selected_with_sink(
+        &home,
+        &paths,
+        expected,
+        confirm_mass_delete,
+        &SystemSink,
+        &mut audit,
+    )
 }

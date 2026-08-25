@@ -437,7 +437,11 @@ pub fn dispose_selected_with_sink(
     let mut actions = Vec::with_capacity(paths.len());
     let mut granted = Vec::with_capacity(paths.len());
     let mut rejected: Vec<String> = Vec::new();
-    let discoverable = safety::allowlist::discovery_roots(home);
+    // The roots as the WALK resolves them, not as `discovery_roots` spells
+    // them. Comparing against the literal spelling would refuse every row the
+    // feature had just offered on any Mac whose ~/Documents is a symlink into
+    // iCloud Drive — a functional break disguised as a safety check.
+    let discoverable = largeold::resolve_roots(&safety::allowlist::discovery_roots(home), home);
 
     for raw in paths {
         let safe = match safety::guard(Path::new(raw), home) {

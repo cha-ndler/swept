@@ -148,6 +148,38 @@ impl LargeOldReport {
     }
 }
 
+/// The roots as the walk actually uses them: canonicalized, with unresolvable
+/// and protected ones dropped.
+///
+/// Exported because the *disposal* path has to confine selections against
+/// exactly these, and the two must not drift. `allowlist::discovery_roots`
+/// spells `~/Documents`, but the walk canonicalizes first — so on a Mac keeping
+/// Documents in iCloud Drive the walk emits `/…/CloudStorage/Docs/…`, and a
+/// scope check against the literal spelling would refuse every row the feature
+/// had just offered.
+pub fn resolve_roots(roots: &[PathBuf], home: &Path) -> Vec<PathBuf> {
+    roots
+        .iter()
+        // Canonicalize each root, for two reasons — and *not* the obvious one.
+        // A symlinked root is descended either way (`read_dir` follows it), so
+        // this is not what makes an iCloud-Drive `~/Documents` work.
+        //
+        // What it actually buys:
+        //   1. `is_protected` below is a component-wise check on the path as
+        //      given, so an uncanonicalized root named `Downloads` would sail
+        //      past it while resolving somewhere the denylist forbids.
+        //   2. Every emitted path is then canonical, which the disposal path
+        //      relies on: it refuses any selection whose spelling is not
+        //      already its own canonical form, and that is what stops a symlink
+        //      swapped in after the walk from redirecting a grant.
+        //
+        // A root that cannot be resolved is simply absent — nothing to report,
+        // not an error.
+        .filter_map(|r| std::fs::canonicalize(r).ok())
+        .filter(|r| !is_protected(r, home))
+        .collect()
+}
+
 /// Walk the discovery roots and report the largest (optionally oldest) files.
 ///
 /// Never mutates anything, never follows a symlink, and never returns a path
@@ -159,27 +191,7 @@ pub fn find(cfg: &LargeOldConfig) -> LargeOldReport {
     let mut keep: BinaryHeap<Reverse<Found>> = BinaryHeap::new();
     let now = SystemTime::now();
 
-    for root in &cfg.roots {
-        // Canonicalize the root itself, for two reasons — and *not* the obvious
-        // one. A symlinked root is descended either way (`read_dir` follows it,
-        // and walkdir stats the root with `fs::metadata`), so this is not what
-        // makes iCloud-Drive-style `~/Documents` work.
-        //
-        // What it actually buys:
-        //   1. `is_protected` below is a component-wise check on the path as
-        //      given, so an uncanonicalized root named `Downloads` would sail
-        //      past it while resolving somewhere the denylist forbids.
-        //   2. Every emitted path is then canonical, which the disposal path
-        //      relies on: it refuses any selection whose spelling is not
-        //      already its own canonical form, and that is what stops a symlink
-        //      swapped in after the walk from redirecting a grant.
-        let Ok(root) = std::fs::canonicalize(root) else {
-            continue; // Missing root: nothing to report, not an error.
-        };
-        if is_protected(&root, &cfg.home) {
-            continue;
-        }
-
+    for root in resolve_roots(&cfg.roots, &cfg.home) {
         let walk = WalkDir::new(&root)
             .follow_links(false)
             .into_iter()

@@ -434,6 +434,36 @@ fn a_symlink_swapped_in_after_selection_cannot_redirect_the_disposal() {
 }
 
 #[test]
+fn a_row_from_a_symlinked_discovery_root_is_still_actionable() {
+    // The scope check must be made against the roots as the WALK resolves them,
+    // not as `discovery_roots` spells them. ~/Documents is a symlink on any Mac
+    // keeping Documents in iCloud Drive: the walk canonicalizes the root and so
+    // emits /real/path/..., while the literal `~/Documents` prefix would never
+    // match it — refusing every row the feature just offered.
+    let (_g, home) = fixture_home();
+    let real = home.join("CloudStorage/Docs");
+    write_sized(&real.join("big.iso"), 4096);
+
+    let linked = home.join("Documents");
+    fs::remove_dir_all(&linked).unwrap();
+    std::os::unix::fs::symlink(&real, &linked).unwrap();
+
+    // Take the path from the walk itself, exactly as the UI would.
+    let dto = large_and_old(&home, 1024, None);
+    let offered: Vec<String> = dto.items.iter().map(|i| i.path.clone()).collect();
+    assert_eq!(offered.len(), 1, "the walk must find it: {offered:?}");
+
+    let (_p, mut audit) = audit_at(&home);
+    let summary =
+        dispose_selected_with_sink(&home, &offered, None, false, &sink(&home), &mut audit).unwrap();
+
+    assert_eq!(
+        summary.executed, 1,
+        "a row the walk offered must be actionable"
+    );
+}
+
+#[test]
 fn a_path_outside_the_discovery_scope_is_refused() {
     // Disposal must never be wider than discovery. `guard` only enforces the
     // denylist, which every ordinary file on the volume passes — so without a

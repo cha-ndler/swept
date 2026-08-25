@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use macclean_core::audit::AuditLog;
 use macclean_core::executor::{execute, Consent, Sink, SystemSink};
+use macclean_core::largeold;
 use macclean_core::loginitems::{self, LoginItem};
+use macclean_core::plan::{Disposal, Plan, PlannedAction};
 use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, scan_with_progress, Progress, ScanConfig};
 
@@ -285,4 +287,343 @@ fn is_readable(dir: &Path) -> bool {
         Ok(_) => true,
         Err(e) => e.kind() == std::io::ErrorKind::NotFound,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Large & Old Files
+//
+// The first feature that looks outside the disposal allowlist. Everything here
+// keeps the M1 spine intact: the walk yields paths to *show*, and turning one
+// into an action takes a separate per-path grant that runs through `guard` at
+// that moment.
+// ---------------------------------------------------------------------------
+
+/// Refuse, and leave a record of having refused.
+///
+/// The command layer rejects several things before the executor is ever
+/// reached — an empty selection, an item that is no longer what was listed, a
+/// selection that drifted. Those used to return `Err` and write nothing, which
+/// is the same gap `executor::record_run_refusal` exists to close: a frontend
+/// sending a protected or foreign path is exactly the signal worth having in
+/// the log, and it was the one thing the log never mentioned.
+fn refuse_and_record(audit: &mut AuditLog, reason: String) -> Result<CleanSummary, String> {
+    match macclean_core::executor::record_run_refusal(audit, &reason) {
+        Ok(()) => Err(reason),
+        // Still refusing either way; say that the record failed too rather than
+        // reporting a clean refusal that left no trace.
+        Err(e) => Err(format!(
+            "{reason} (and the audit log could not be written: {e})"
+        )),
+    }
+}
+
+/// Byte tolerance for a hand-picked *selection*.
+///
+/// Deliberately **not** [`CHURN_BYTES`]. That allowance is 64 MiB because a
+/// rebuilt cache scan genuinely churns in the seconds a user spends reading a
+/// sheet. A selection has no such churn: it is a fixed list of files the user
+/// pointed at, and Large & Old only shows files of 100 MiB and up — so a
+/// 64 MiB slack would be wide enough for a materially different file to pass
+/// as "the same one". The only legitimate drift is a file that appended while
+/// the sheet was open.
+const SELECTION_CHURN_BYTES: u64 = 1024 * 1024;
+
+/// Why a selection no longer matches what was confirmed, if it does not.
+///
+/// The count must match **exactly**: unlike a rescan, the set here is the list
+/// of paths the caller sent, so any difference means the UI and the backend
+/// disagree about what was chosen — which is precisely the state in which
+/// nothing should be acted on.
+fn selection_drifted(fresh_count: usize, fresh_bytes: u64, expected: Expected) -> Option<String> {
+    if fresh_count != expected.count {
+        return Some("the selection is not the one you confirmed".to_string());
+    }
+    if fresh_bytes > expected.bytes.saturating_add(SELECTION_CHURN_BYTES) {
+        return Some("the selected files grew since the preview".to_string());
+    }
+    None
+}
+
+/// One row in the Large & Old list.
+///
+/// Note what is absent: there is no `selected` field and no default selection.
+/// These are never pre-ticked and never part of a Smart Scan default — the
+/// whole point is that a human chooses each one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LargeOldItem {
+    pub path: String,
+    pub size_bytes: u64,
+    pub modified_ms: Option<u64>,
+}
+
+/// What the Large & Old walk found, for the UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LargeOldReportDto {
+    pub items: Vec<LargeOldItem>,
+    /// Total matches, which may exceed `items.len()` when the list is capped.
+    pub matched: usize,
+    pub matched_bytes: u64,
+    pub examined: usize,
+    pub truncated: bool,
+    pub skipped_unreadable: usize,
+    pub skipped_hardlinked: usize,
+    pub skipped_unrepresentable: usize,
+    /// True when the report describes less than the whole disk, for any
+    /// reason. The UI must say so rather than presenting a figure as complete.
+    pub partial: bool,
+}
+
+/// Read-only: find large (optionally old) files across the discovery scope.
+pub fn large_and_old(
+    home: &Path,
+    min_size_bytes: u64,
+    older_than_days: Option<u64>,
+) -> LargeOldReportDto {
+    // `saturating_mul`, matching `build_config`. An unchecked multiply here
+    // panics in debug and *wraps* in release, and a wrapped age threshold turns
+    // "older than N days" into a near-zero one — presenting freshly-modified
+    // files to the user as old, which are then exactly the rows they grant.
+    let min_age = older_than_days.map(|d| Duration::from_secs(d.saturating_mul(86_400)));
+    let report = largeold::find_in(home, min_size_bytes, min_age);
+    LargeOldReportDto {
+        items: report
+            .items
+            .iter()
+            // `to_str`, not `display()`. The disposal path identifies a
+            // selection by requiring the string it receives back to equal the
+            // path emitted here, so a lossy conversion would break that
+            // identity check — and in a collision it could not detect the
+            // break. The walk already drops non-UTF-8 names, making this
+            // filter_map total rather than a second policy.
+            .filter_map(|f| {
+                f.path.to_str().map(|p| LargeOldItem {
+                    path: p.to_string(),
+                    size_bytes: f.size_bytes,
+                    modified_ms: f.modified_ms,
+                })
+            })
+            .collect(),
+        matched: report.matched,
+        matched_bytes: report.matched_bytes,
+        examined: report.examined,
+        truncated: report.truncated,
+        skipped_unreadable: report.skipped_unreadable,
+        skipped_hardlinked: report.skipped_hardlinked,
+        skipped_unrepresentable: report.skipped_unrepresentable,
+        partial: report.is_partial(),
+    }
+}
+
+/// Act on individually-chosen paths, using per-path grants.
+///
+/// This is the only caller that populates `Consent::granted`, and it is
+/// deliberately strict, because the safety argument for grants rests on each
+/// one being a real, individual, still-valid human choice:
+///
+/// - **An empty selection acts on nothing.** Same rule as `clean`: the caller
+///   must name what it wants.
+/// - **Every path is re-`guard`ed here**, so the denylist decides before
+///   anything else. A path the guard refuses fails the *whole* request rather
+///   than being skipped, because a partial run does not match the list the user
+///   was looking at when they confirmed.
+/// - **Sizes are re-read from disk, never taken from the frontend.** Trusting
+///   caller-supplied sizes would let an understated total slip past the
+///   mass-delete threshold.
+/// - The executor still applies every other bound: exact-match grants, the
+///   `MAX_GRANTS` cap, the directory refusal, Trash-not-unlink, and the audit
+///   note marking each action as user-granted.
+pub fn dispose_selected_with_sink(
+    home: &Path,
+    paths: &[String],
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+    sink: &dyn Sink,
+    audit: &mut AuditLog,
+) -> Result<CleanSummary, String> {
+    if paths.is_empty() {
+        return refuse_and_record(audit, "refused: nothing was selected.".to_string());
+    }
+
+    let mut actions = Vec::with_capacity(paths.len());
+    let mut granted = Vec::with_capacity(paths.len());
+    let mut rejected: Vec<String> = Vec::new();
+    // The roots as the WALK resolves them, not as `discovery_roots` spells
+    // them. Comparing against the literal spelling would refuse every row the
+    // feature had just offered on any Mac whose ~/Documents is a symlink into
+    // iCloud Drive — a functional break disguised as a safety check.
+    let discoverable = largeold::resolve_roots(&safety::allowlist::discovery_roots(home), home);
+
+    for raw in paths {
+        let safe = match safety::guard(Path::new(raw), home) {
+            Ok(s) => s,
+            Err(e) => {
+                rejected.push(format!("{raw}: {e}"));
+                continue;
+            }
+        };
+
+        // The path must already BE its canonical self.
+        //
+        // Without this, `granted` is minted from the same resolution as the
+        // plan, in the same instant — a rubber stamp derived from the request
+        // rather than independent evidence of a human choice. That neutralizes
+        // the executor's TOCTOU defense: if the listed file is replaced by a
+        // symlink between the walk and the confirmation, both the action and
+        // the grant resolve to the *new* target, they agree, and a file the
+        // user never saw is disposed of.
+        //
+        // The walk emits canonical paths, so demanding one here is free and
+        // exact: anything that resolves elsewhere is, by definition, not the
+        // file that was listed.
+        //
+        // Identity is by *path*, not by inode: a file replaced at the same path
+        // between the walk and this call is acted on in place of the one that
+        // was shown. That is recoverable (Trash) and audited under the real
+        // path, and closing it would mean carrying inode+generation through the
+        // UI — noted so it is a known limit rather than an assumed guarantee.
+        if safe.as_path() != Path::new(raw) {
+            rejected.push(format!(
+                "{raw}: resolves to {safe} — not the file that was listed"
+            ));
+            continue;
+        }
+
+        // Disposal must never be wider than discovery.
+        //
+        // `guard` enforces the denylist, which is a much weaker statement than
+        // "this came from the list we showed you": every ordinary file on the
+        // volume passes it. Confining to the discovery scope is what keeps this
+        // entry point from being a general-purpose file remover that happens to
+        // be reachable from the Large & Old screen.
+        //
+        // Be precise about what this does and does not guarantee. The invariant
+        // enforced here is **disposal ⊆ discovery_roots**, not "⊆ what this
+        // particular walk offered". Two consequences, both live only once the
+        // feature grows beyond its current shape:
+        //
+        //   * `LargeOldConfig::roots` is public, so a caller that *narrows* the
+        //     walk (a future "search Downloads only" filter) would still get
+        //     the full ceiling here. The first such filter must thread its
+        //     resolved roots through to this call, not rely on these agreeing.
+        //   * The scope is resolved again, now, rather than being carried from
+        //     the walk — so a root that did not exist during the scan but does
+        //     at this moment is in scope. The reverse is fail-closed.
+        //
+        // Both stay under the ceiling, so neither is an escape; they are the
+        // reason the ceiling is stated as the ceiling.
+        if !safety::allowlist::is_allowed(safe.as_path(), &discoverable) {
+            rejected.push(format!("{raw}: outside the discovery scope"));
+            continue;
+        }
+        // Re-read the size from disk. The frontend's number is a display value;
+        // this one is what the mass-delete threshold is measured against.
+        let size_bytes = match std::fs::symlink_metadata(safe.as_path()) {
+            // The walk never returns a directory, so one arriving here means
+            // the UI sent something it did not get from us. The executor would
+            // refuse it anyway, but refusing the whole request says so plainly
+            // instead of silently acting on the rest of the list.
+            Ok(m) if m.is_dir() => {
+                rejected.push(format!("{raw}: is a directory"));
+                continue;
+            }
+            Ok(m) => m.len(),
+            Err(e) => {
+                rejected.push(format!("{raw}: {e}"));
+                continue;
+            }
+        };
+        // Two spellings of one file must not count as two items — that would
+        // inflate the total the mass-delete threshold is measured against, and
+        // the second attempt would then "fail" on a file we just moved.
+        if granted.iter().any(|g: &safety::SafePath| g == &safe) {
+            continue;
+        }
+        granted.push(safe.clone());
+        actions.push(PlannedAction {
+            path: safe,
+            size_bytes,
+            disposal: Disposal::Trash,
+            category: "large-and-old".to_string(),
+        });
+    }
+
+    if !rejected.is_empty() {
+        // Refuse wholesale. Acting on the rest would touch a different set than
+        // the one that was confirmed.
+        let shown: Vec<&str> = rejected.iter().take(3).map(|s| s.as_str()).collect();
+        let more = rejected.len().saturating_sub(shown.len());
+        let suffix = if more > 0 {
+            format!(" (and {more} more)")
+        } else {
+            String::new()
+        };
+        return refuse_and_record(
+            audit,
+            format!(
+                "refused: {} of {} selected items are no longer valid, so nothing was \
+                 touched. Scan again and review. First problems: {}{}",
+                rejected.len(),
+                paths.len(),
+                shown.join("; "),
+                suffix
+            ),
+        );
+    }
+
+    let plan = Plan {
+        actions,
+        skipped_protected: 0,
+    };
+
+    if let Some(exp) = expected {
+        if let Some(why) = selection_drifted(plan.count(), plan.total_bytes(), exp) {
+            return refuse_and_record(
+                audit,
+                format!(
+                    "refused: {why}, so nothing was touched. This would now act on {} items \
+                     ({} bytes), but you confirmed {} items ({} bytes). Scan again and review.",
+                    plan.count(),
+                    plan.total_bytes(),
+                    exp.count,
+                    exp.bytes
+                ),
+            );
+        }
+    }
+
+    let consent = Consent {
+        execute: true,
+        allow_permanent: false,
+        confirmed_mass_delete: confirm_mass_delete,
+        granted,
+    };
+
+    match execute(&plan, consent, home, sink, audit) {
+        Ok(report) => Ok(CleanSummary {
+            dry_run: report.dry_run,
+            executed: report.executed,
+            refused: report.refused,
+            bytes_freed: report.bytes_executed,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Real-app entry point for acting on a Large & Old selection.
+pub fn dispose_selected(
+    paths: Vec<String>,
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+) -> Result<CleanSummary, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    let audit_path = default_audit_path().map_err(|e| e.to_string())?;
+    let mut audit = AuditLog::open(&audit_path).map_err(|e| e.to_string())?;
+    dispose_selected_with_sink(
+        &home,
+        &paths,
+        expected,
+        confirm_mass_delete,
+        &SystemSink,
+        &mut audit,
+    )
 }

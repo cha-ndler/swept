@@ -298,6 +298,25 @@ fn is_readable(dir: &Path) -> bool {
 // that moment.
 // ---------------------------------------------------------------------------
 
+/// Refuse, and leave a record of having refused.
+///
+/// The command layer rejects several things before the executor is ever
+/// reached — an empty selection, an item that is no longer what was listed, a
+/// selection that drifted. Those used to return `Err` and write nothing, which
+/// is the same gap `executor::record_run_refusal` exists to close: a frontend
+/// sending a protected or foreign path is exactly the signal worth having in
+/// the log, and it was the one thing the log never mentioned.
+fn refuse_and_record(audit: &mut AuditLog, reason: String) -> Result<CleanSummary, String> {
+    match macclean_core::executor::record_run_refusal(audit, &reason) {
+        Ok(()) => Err(reason),
+        // Still refusing either way; say that the record failed too rather than
+        // reporting a clean refusal that left no trace.
+        Err(e) => Err(format!(
+            "{reason} (and the audit log could not be written: {e})"
+        )),
+    }
+}
+
 /// Byte tolerance for a hand-picked *selection*.
 ///
 /// Deliberately **not** [`CHURN_BYTES`]. That allowance is 64 MiB because a
@@ -347,6 +366,7 @@ pub struct LargeOldReportDto {
     pub examined: usize,
     pub truncated: bool,
     pub skipped_unreadable: usize,
+    pub skipped_hardlinked: usize,
     /// True when the report describes less than the whole disk, for any
     /// reason. The UI must say so rather than presenting a figure as complete.
     pub partial: bool,
@@ -358,7 +378,11 @@ pub fn large_and_old(
     min_size_bytes: u64,
     older_than_days: Option<u64>,
 ) -> LargeOldReportDto {
-    let min_age = older_than_days.map(|d| Duration::from_secs(d * 24 * 60 * 60));
+    // `saturating_mul`, matching `build_config`. An unchecked multiply here
+    // panics in debug and *wraps* in release, and a wrapped age threshold turns
+    // "older than N days" into a near-zero one — presenting freshly-modified
+    // files to the user as old, which are then exactly the rows they grant.
+    let min_age = older_than_days.map(|d| Duration::from_secs(d.saturating_mul(86_400)));
     let report = largeold::find_in(home, min_size_bytes, min_age);
     LargeOldReportDto {
         items: report
@@ -375,6 +399,7 @@ pub fn large_and_old(
         examined: report.examined,
         truncated: report.truncated,
         skipped_unreadable: report.skipped_unreadable,
+        skipped_hardlinked: report.skipped_hardlinked,
         partial: report.is_partial(),
     }
 }
@@ -406,12 +431,13 @@ pub fn dispose_selected_with_sink(
     audit: &mut AuditLog,
 ) -> Result<CleanSummary, String> {
     if paths.is_empty() {
-        return Err("refused: nothing was selected.".to_string());
+        return refuse_and_record(audit, "refused: nothing was selected.".to_string());
     }
 
     let mut actions = Vec::with_capacity(paths.len());
     let mut granted = Vec::with_capacity(paths.len());
     let mut rejected: Vec<String> = Vec::new();
+    let discoverable = safety::allowlist::discovery_roots(home);
 
     for raw in paths {
         let safe = match safety::guard(Path::new(raw), home) {
@@ -421,6 +447,38 @@ pub fn dispose_selected_with_sink(
                 continue;
             }
         };
+
+        // The path must already BE its canonical self.
+        //
+        // Without this, `granted` is minted from the same resolution as the
+        // plan, in the same instant — a rubber stamp derived from the request
+        // rather than independent evidence of a human choice. That neutralizes
+        // the executor's TOCTOU defense: if the listed file is replaced by a
+        // symlink between the walk and the confirmation, both the action and
+        // the grant resolve to the *new* target, they agree, and a file the
+        // user never saw is disposed of.
+        //
+        // The walk emits canonical paths, so demanding one here is free and
+        // exact: anything that resolves elsewhere is, by definition, not the
+        // file that was listed.
+        if safe.as_path() != Path::new(raw) {
+            rejected.push(format!(
+                "{raw}: resolves to {safe} — not the file that was listed"
+            ));
+            continue;
+        }
+
+        // Disposal must never be wider than discovery.
+        //
+        // `guard` enforces the denylist, which is a much weaker statement than
+        // "this came from the list we showed you": every ordinary file on the
+        // volume passes it. Confining to the discovery scope is what keeps this
+        // entry point from being a general-purpose file remover that happens to
+        // be reachable from the Large & Old screen.
+        if !safety::allowlist::is_allowed(safe.as_path(), &discoverable) {
+            rejected.push(format!("{raw}: outside the discovery scope"));
+            continue;
+        }
         // Re-read the size from disk. The frontend's number is a display value;
         // this one is what the mass-delete threshold is measured against.
         let size_bytes = match std::fs::symlink_metadata(safe.as_path()) {
@@ -463,14 +521,17 @@ pub fn dispose_selected_with_sink(
         } else {
             String::new()
         };
-        return Err(format!(
-            "refused: {} of {} selected items are no longer valid, so nothing was \
-             touched. Scan again and review. First problems: {}{}",
-            rejected.len(),
-            paths.len(),
-            shown.join("; "),
-            suffix
-        ));
+        return refuse_and_record(
+            audit,
+            format!(
+                "refused: {} of {} selected items are no longer valid, so nothing was \
+                 touched. Scan again and review. First problems: {}{}",
+                rejected.len(),
+                paths.len(),
+                shown.join("; "),
+                suffix
+            ),
+        );
     }
 
     let plan = Plan {
@@ -480,14 +541,17 @@ pub fn dispose_selected_with_sink(
 
     if let Some(exp) = expected {
         if let Some(why) = selection_drifted(plan.count(), plan.total_bytes(), exp) {
-            return Err(format!(
-                "refused: {why}, so nothing was touched. This would now act on {} items \
-                 ({} bytes), but you confirmed {} items ({} bytes). Scan again and review.",
-                plan.count(),
-                plan.total_bytes(),
-                exp.count,
-                exp.bytes
-            ));
+            return refuse_and_record(
+                audit,
+                format!(
+                    "refused: {why}, so nothing was touched. This would now act on {} items \
+                     ({} bytes), but you confirmed {} items ({} bytes). Scan again and review.",
+                    plan.count(),
+                    plan.total_bytes(),
+                    exp.count,
+                    exp.bytes
+                ),
+            );
         }
     }
 

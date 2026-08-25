@@ -28,6 +28,7 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -128,13 +129,22 @@ pub struct LargeOldReport {
     /// Directories that could not be read — almost always TCC, occasionally
     /// permissions. Surfaced so the UI can say the figure is a floor.
     pub skipped_unreadable: usize,
+    /// Files skipped because more than one name points at their data.
+    ///
+    /// Removing one name of a hard-linked file reclaims nothing until the last
+    /// one goes, so listing it would promise space that will not appear. Same
+    /// reasoning as excluding symlinks — counted rather than dropped silently.
+    pub skipped_hardlinked: usize,
 }
 
 impl LargeOldReport {
     /// True if the report describes less than the whole disk, for any reason.
     /// The UI must say so when this is set.
     pub fn is_partial(&self) -> bool {
-        self.truncated || self.skipped_unreadable > 0 || self.matched > self.items.len()
+        self.truncated
+            || self.skipped_unreadable > 0
+            || self.skipped_hardlinked > 0
+            || self.matched > self.items.len()
     }
 }
 
@@ -150,10 +160,19 @@ pub fn find(cfg: &LargeOldConfig) -> LargeOldReport {
     let now = SystemTime::now();
 
     for root in &cfg.roots {
-        // Canonicalize the root itself. `~/Documents` is a symlink on any Mac
-        // that keeps Documents in iCloud Drive, and with `follow_links(false)`
-        // an uncanonicalized root would be yielded as a symlink and never
-        // descended — the feature would silently find nothing for those users.
+        // Canonicalize the root itself, for two reasons — and *not* the obvious
+        // one. A symlinked root is descended either way (`read_dir` follows it,
+        // and walkdir stats the root with `fs::metadata`), so this is not what
+        // makes iCloud-Drive-style `~/Documents` work.
+        //
+        // What it actually buys:
+        //   1. `is_protected` below is a component-wise check on the path as
+        //      given, so an uncanonicalized root named `Downloads` would sail
+        //      past it while resolving somewhere the denylist forbids.
+        //   2. Every emitted path is then canonical, which the disposal path
+        //      relies on: it refuses any selection whose spelling is not
+        //      already its own canonical form, and that is what stops a symlink
+        //      swapped in after the walk from redirecting a grant.
         let Ok(root) = std::fs::canonicalize(root) else {
             continue; // Missing root: nothing to report, not an error.
         };
@@ -197,6 +216,14 @@ pub fn find(cfg: &LargeOldConfig) -> LargeOldReport {
                 continue;
             };
             if meta.len() < cfg.min_size {
+                continue;
+            }
+            // A hard-linked file's bytes are not reclaimed by removing one of
+            // its names. The module already excludes symlinks for exactly this
+            // reason; `nlink > 1` is the same situation with the link pointing
+            // the other way.
+            if meta.nlink() > 1 {
+                report.skipped_hardlinked += 1;
                 continue;
             }
             if let Some(min_age) = cfg.min_age {
@@ -245,8 +272,15 @@ fn is_at_least(meta: &std::fs::Metadata, min_age: Duration, now: SystemTime) -> 
 }
 
 /// Convenience for callers that only have a `&Path`.
+///
+/// Canonicalizes `home` first. `denylist::protection_reason` compares against
+/// it component-wise, so a non-canonical home silently disables the
+/// keychains/mail and home-root rules for the entire walk — every real caller
+/// happens to pass a canonical path today, which is precisely the kind of
+/// accident that stops being true later.
 pub fn find_in(home: &Path, min_size: u64, min_age: Option<Duration>) -> LargeOldReport {
-    let mut cfg = LargeOldConfig::new(home.to_path_buf()).min_size(min_size);
+    let home = safety::canonical_home(home).unwrap_or_else(|_| home.to_path_buf());
+    let mut cfg = LargeOldConfig::new(home).min_size(min_size);
     cfg.min_age = min_age;
     find(&cfg)
 }

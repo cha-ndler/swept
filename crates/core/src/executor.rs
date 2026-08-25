@@ -452,7 +452,7 @@ fn note_for(auth: Authorization) -> Option<String> {
 /// Sentinel path for an audit record about the run as a whole rather than one
 /// file. Not a path, and deliberately not shaped like one, so nothing that
 /// reads the log back (restore, in particular) can mistake it for a target.
-const WHOLE_RUN: &str = "(whole run — no action taken)";
+pub const WHOLE_RUN: &str = "(whole run — no action taken)";
 
 /// Record that an entire run was refused before it touched anything.
 ///
@@ -460,6 +460,13 @@ const WHOLE_RUN: &str = "(whole run — no action taken)";
 /// leave none: the early `return Err(...)` happened before any `record` call,
 /// so the most decisive thing the executor can do was the one thing the log
 /// never mentioned.
+/// Public so callers that refuse *before* reaching [`execute`] — the command
+/// layer's own validation, for instance — record the refusal the same way and
+/// under the same sentinel, rather than each inventing a shape for it.
+pub fn record_run_refusal(audit: &mut AuditLog, reason: &str) -> Result<(), ExecError> {
+    refuse_run(audit, reason)
+}
+
 fn refuse_run(audit: &mut AuditLog, reason: &str) -> Result<(), ExecError> {
     record(
         audit,

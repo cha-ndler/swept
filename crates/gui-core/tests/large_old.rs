@@ -68,6 +68,31 @@ fn the_report_serializes_the_shape_the_ui_expects() {
     );
 }
 
+#[test]
+fn an_absurd_age_filter_does_not_wrap_into_no_filter_at_all() {
+    // `older_than_days * 86_400` panics in debug and *wraps* in release. A
+    // wrapped threshold turns "older than N days" into a near-zero one, so
+    // freshly-modified files are presented to the user as old — and those rows
+    // are exactly what they then grant.
+    //
+    // The input matters. `u64::MAX` looks like the obvious adversarial value
+    // but wraps to ~2^64 — still astronomically large, so the filter still
+    // excludes everything and the test passes either way. (An earlier version
+    // of this test used it and did not catch the bug.) `2^57` is the real one:
+    // 86_400 = 2^7 · 675, so 2^57 · 86_400 ≡ 0 (mod 2^64) — the threshold
+    // collapses to *zero seconds* and every file on disk becomes "old".
+    let (_g, home) = fixture_home();
+    write_sized(&home.join("Documents/fresh.iso"), 4096);
+
+    let dto = large_and_old(&home, 1024, Some(1u64 << 57));
+
+    assert!(
+        dto.items.is_empty(),
+        "a saturated age threshold excludes everything; it must not wrap to zero \
+         and present a freshly-written file as old"
+    );
+}
+
 // --- the disposal half ------------------------------------------------------
 
 #[test]
@@ -389,24 +414,98 @@ fn a_symlink_swapped_in_after_selection_cannot_redirect_the_disposal() {
     std::os::unix::fs::symlink(&other, &picked).unwrap();
 
     let (_p, mut audit) = audit_at(&home);
-    let summary =
-        dispose_selected_with_sink(&home, &selection, None, false, &sink(&home), &mut audit)
-            .unwrap();
+    let err = dispose_selected_with_sink(&home, &selection, None, false, &sink(&home), &mut audit)
+        .unwrap_err();
 
-    // `guard` resolves the link to `other`, which is a valid file, so the
-    // request proceeds — but what gets acted on is `other`, and it is the path
-    // the grant now names too. The property that matters is that nothing
-    // outside the selection's *resolved* target is touched, and the audit says
-    // exactly what happened.
-    assert_eq!(summary.executed, 1);
+    // An earlier version of this test asserted the opposite — that the redirect
+    // succeeded — and rationalized it as "nothing outside the selection's
+    // *resolved* target is touched". That reasoning is circular: the resolved
+    // target is exactly what an attacker controls. The test carried the name of
+    // a safety property while pinning its absence.
+    assert!(err.contains("not the file that was listed"), "{err}");
     assert!(
-        !other.exists(),
-        "the resolved target is what was authorized and acted on"
+        other.exists(),
+        "a file the user never selected must survive"
     );
     assert!(
-        home.join("test-trash/other.iso").exists(),
-        "and it went to the Trash under its real name"
+        !home.join("test-trash/other.iso").exists(),
+        "and must not have been trashed under any name"
     );
+}
+
+#[test]
+fn a_path_outside_the_discovery_scope_is_refused() {
+    // Disposal must never be wider than discovery. `guard` only enforces the
+    // denylist, which every ordinary file on the volume passes — so without a
+    // scope check this entry point is a general-purpose file remover that
+    // happens to be reachable from the Large & Old screen.
+    let (_g, home) = fixture_home();
+    let secret = home.join("Projects/keys/private-material.txt");
+    write_sized(&secret, 4096);
+    let (_p, mut audit) = audit_at(&home);
+
+    let err =
+        dispose_selected_with_sink(&home, &[s(&secret)], None, false, &sink(&home), &mut audit)
+            .unwrap_err();
+
+    assert!(err.contains("outside the discovery scope"), "{err}");
+    assert!(
+        secret.exists(),
+        "a path no walk could have offered survives"
+    );
+}
+
+#[test]
+fn a_non_canonical_spelling_of_a_valid_file_is_refused() {
+    // The same guarantee from the other direction: routing a real, in-scope
+    // file through a symlinked intermediate directory produces a spelling the
+    // walk never emitted, so it cannot be what the user was shown.
+    let (_g, home) = fixture_home();
+    let real = home.join("Documents/nested/big.iso");
+    write_sized(&real, 4096);
+    std::os::unix::fs::symlink(home.join("Documents/nested"), home.join("Documents/alias"))
+        .unwrap();
+
+    let aliased = home.join("Documents/alias/big.iso");
+    let (_p, mut audit) = audit_at(&home);
+
+    let err =
+        dispose_selected_with_sink(&home, &[s(&aliased)], None, false, &sink(&home), &mut audit)
+            .unwrap_err();
+
+    assert!(err.contains("not the file that was listed"), "{err}");
+    assert!(real.exists());
+}
+
+#[test]
+fn every_refusal_leaves_a_record_in_the_audit_log() {
+    // A frontend sending a protected or out-of-scope path is precisely the
+    // signal worth having afterwards, and it was the one thing the log never
+    // mentioned: all of these returned before the executor was reached.
+    let (_g, home) = fixture_home();
+    let ok = home.join("Documents/big.iso");
+    write_sized(&ok, 4096);
+    let outside = home.join("Projects/thing.bin");
+    write_sized(&outside, 4096);
+
+    for (selection, expect) in [
+        (vec![], "nothing was selected"),
+        (vec![s(&outside)], "outside the discovery scope"),
+        (vec![s(&home.join("Library/Mail/x.db"))], "no longer valid"),
+    ] {
+        let (audit_path, mut audit) = audit_at(&home);
+        fs::write(&audit_path, "").unwrap();
+        let err =
+            dispose_selected_with_sink(&home, &selection, None, false, &sink(&home), &mut audit)
+                .unwrap_err();
+        assert!(err.contains(expect), "{err}");
+
+        let log = fs::read_to_string(&audit_path).unwrap();
+        assert!(
+            log.contains("\"disposition\":\"refused\""),
+            "refusal not recorded for {selection:?}, log was:\n{log}"
+        );
+    }
 }
 
 #[test]

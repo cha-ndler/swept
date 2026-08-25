@@ -312,10 +312,15 @@ instead.**
     totals, and reports `truncated` / `skipped_unreadable` rather than
     under-reporting silently. It yields plain `PathBuf` and never mints a
     `SafePath`. `gui_core::dispose_selected_with_sink` is the only caller that
-    populates `Consent.granted`: it re-`guard`s every path, re-reads sizes from
+    populates `Consent.granted`: it re-`guard`s every path, **requires each path
+    to already be its own canonical spelling** (so a symlink swapped in after
+    the walk cannot redirect a grant onto a file the user never saw),
+    **confines disposal to the discovery scope** (the denylist alone would let
+    any ordinary file on the volume through), re-reads sizes from
     disk (never trusting the frontend's numbers), de-duplicates, and **refuses
-    the whole request** if any item is protected, missing, or a directory — a
-    partial run is never what the user confirmed. Selections use a 1 MiB drift
+    the whole request** if any item is protected, missing, out of scope, or a
+    directory — a partial run is never what the user confirmed. Every such
+    refusal is recorded via `executor::record_run_refusal`. Selections use a 1 MiB drift
     tolerance and exact count matching, deliberately *not* the 64 MiB
     cache-tuned `grew_beyond` (see `SELECTION_CHURN_BYTES`).
   - [ ] **The module UI.** Rows never pre-selected, never in a Smart Scan

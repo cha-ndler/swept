@@ -126,7 +126,42 @@ fn nothing_it_returns_would_be_refused_by_the_guard() {
             "{} was offered but the guard refuses it",
             item.path.display()
         );
+        // Every emitted path is already its own canonical form. The disposal
+        // path depends on this: it refuses any selection whose spelling is not
+        // canonical, which is what stops a symlink swapped in after the walk
+        // from redirecting a grant onto another file. If the walk ever emitted
+        // a non-canonical spelling, that defence would reject legitimate rows.
+        assert_eq!(
+            fs::canonicalize(&item.path).unwrap(),
+            item.path,
+            "emitted paths must be canonical"
+        );
     }
+}
+
+#[test]
+fn a_hard_linked_file_is_not_offered_as_reclaimable() {
+    // Removing one name of a hard-linked file reclaims nothing until the last
+    // name goes. Listing it would promise space that will not appear — the same
+    // reasoning that excludes symlinks, with the link pointing the other way.
+    let (_g, home) = fixture_home();
+    let original = home.join("Documents/original.iso");
+    write_sized(&original, 8192);
+    fs::hard_link(&original, home.join("Documents/second-name.iso")).unwrap();
+    write_sized(&home.join("Documents/plain.iso"), 4096);
+
+    let report = find(&cfg(&home));
+
+    assert_eq!(paths(&report.items), vec!["plain.iso"]);
+    assert_eq!(report.skipped_hardlinked, 2, "both names are skipped");
+    assert_eq!(
+        report.matched_bytes, 4096,
+        "8192 counted twice would be the trap"
+    );
+    assert!(
+        report.is_partial(),
+        "and the UI is told something was left out"
+    );
 }
 
 #[test]
@@ -328,6 +363,57 @@ fn the_default_roots_are_the_discovery_scope_not_the_disposal_scope() {
             root.display()
         );
     }
+}
+
+#[test]
+fn home_canonicality_is_what_keeps_the_home_relative_denylist_working() {
+    // `protection_reason` compares against `home` component-wise, so a
+    // non-canonical `cfg.home` silently switches off the keychains/mail and
+    // home-root rules for the whole walk. This test pins the *reason*
+    // `find_in` canonicalizes.
+    //
+    // Note what it does NOT claim. With the default discovery roots the hazard
+    // is unreachable — none of them can reach `~/Library/Mail`, so a
+    // non-canonical home changes nothing observable through `find_in`. The
+    // canonicalize there is defensive hardening, and honest framing means
+    // testing it where it actually bites: a caller setting `cfg.roots`
+    // directly, which is a public field.
+    let (tmp, home) = fixture_home();
+    write_sized(&home.join("Library/Mail/messages.db"), 8192);
+
+    // The home root itself: refused by `eq_ci(path, home)`, which is the rule
+    // that needs both sides in the same spelling. (`~/Library` cannot be used
+    // for this — it is refused anyway for *containing* Mail, so it would prove
+    // nothing about the home comparison.)
+    let roots = vec![home.clone()];
+
+    // Canonical home: the root is recognised as the home directory and the walk
+    // refuses it, so nothing under it — mail included — is ever offered.
+    let mut good = LargeOldConfig::new(home.clone());
+    good.roots.clone_from(&roots);
+    good.min_size = 1024;
+    assert!(
+        find(&good).items.is_empty(),
+        "the home root must be recognised and refused"
+    );
+
+    // Non-canonical home (/var/folders is a symlink on macOS): `eq_ci` no
+    // longer matches, the home root stops being protected, and the walk hands
+    // back the mail store.
+    let uncanonical = tmp.path().to_path_buf();
+    assert_ne!(uncanonical, home, "fixture must really be non-canonical");
+    let mut bad = LargeOldConfig::new(uncanonical);
+    bad.roots = roots;
+    bad.min_size = 1024;
+    assert!(
+        find(&bad)
+            .items
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("Mail")),
+        "this is the hazard `find_in`'s canonicalize exists to prevent; if this \
+         ever stops happening the denylist grew a rule covering it, and this \
+         test should become a plain refusal check"
+    );
 }
 
 #[test]

@@ -367,6 +367,7 @@ pub struct LargeOldReportDto {
     pub truncated: bool,
     pub skipped_unreadable: usize,
     pub skipped_hardlinked: usize,
+    pub skipped_unrepresentable: usize,
     /// True when the report describes less than the whole disk, for any
     /// reason. The UI must say so rather than presenting a figure as complete.
     pub partial: bool,
@@ -388,10 +389,18 @@ pub fn large_and_old(
         items: report
             .items
             .iter()
-            .map(|f| LargeOldItem {
-                path: f.path.display().to_string(),
-                size_bytes: f.size_bytes,
-                modified_ms: f.modified_ms,
+            // `to_str`, not `display()`. The disposal path identifies a
+            // selection by requiring the string it receives back to equal the
+            // path emitted here, so a lossy conversion would break that
+            // identity check — and in a collision it could not detect the
+            // break. The walk already drops non-UTF-8 names, making this
+            // filter_map total rather than a second policy.
+            .filter_map(|f| {
+                f.path.to_str().map(|p| LargeOldItem {
+                    path: p.to_string(),
+                    size_bytes: f.size_bytes,
+                    modified_ms: f.modified_ms,
+                })
             })
             .collect(),
         matched: report.matched,
@@ -400,6 +409,7 @@ pub fn large_and_old(
         truncated: report.truncated,
         skipped_unreadable: report.skipped_unreadable,
         skipped_hardlinked: report.skipped_hardlinked,
+        skipped_unrepresentable: report.skipped_unrepresentable,
         partial: report.is_partial(),
     }
 }
@@ -465,6 +475,12 @@ pub fn dispose_selected_with_sink(
         // The walk emits canonical paths, so demanding one here is free and
         // exact: anything that resolves elsewhere is, by definition, not the
         // file that was listed.
+        //
+        // Identity is by *path*, not by inode: a file replaced at the same path
+        // between the walk and this call is acted on in place of the one that
+        // was shown. That is recoverable (Trash) and audited under the real
+        // path, and closing it would mean carrying inode+generation through the
+        // UI — noted so it is a known limit rather than an assumed guarantee.
         if safe.as_path() != Path::new(raw) {
             rejected.push(format!(
                 "{raw}: resolves to {safe} — not the file that was listed"
@@ -479,6 +495,22 @@ pub fn dispose_selected_with_sink(
         // volume passes it. Confining to the discovery scope is what keeps this
         // entry point from being a general-purpose file remover that happens to
         // be reachable from the Large & Old screen.
+        //
+        // Be precise about what this does and does not guarantee. The invariant
+        // enforced here is **disposal ⊆ discovery_roots**, not "⊆ what this
+        // particular walk offered". Two consequences, both live only once the
+        // feature grows beyond its current shape:
+        //
+        //   * `LargeOldConfig::roots` is public, so a caller that *narrows* the
+        //     walk (a future "search Downloads only" filter) would still get
+        //     the full ceiling here. The first such filter must thread its
+        //     resolved roots through to this call, not rely on these agreeing.
+        //   * The scope is resolved again, now, rather than being carried from
+        //     the walk — so a root that did not exist during the scan but does
+        //     at this moment is in scope. The reverse is fail-closed.
+        //
+        // Both stay under the ceiling, so neither is an escape; they are the
+        // reason the ceiling is stated as the ceiling.
         if !safety::allowlist::is_allowed(safe.as_path(), &discoverable) {
             rejected.push(format!("{raw}: outside the discovery scope"));
             continue;

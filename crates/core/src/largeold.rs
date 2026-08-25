@@ -120,7 +120,13 @@ pub struct LargeOldReport {
     pub items: Vec<Found>,
     /// How many files matched in total — may exceed `items.len()`.
     pub matched: usize,
-    /// Total size of everything that matched, not just what is listed.
+    /// Total apparent size of everything that matched, not just what is listed.
+    ///
+    /// An **upper bound** on reclaimable space, not a promise. APFS clones
+    /// (Finder's Duplicate, `cp -c`, many installers) share their blocks while
+    /// each name reports the full `st_size` and `nlink == 1`, so there is no
+    /// cheap stat-level signal to net them out. Hard links, which *are*
+    /// detectable, are excluded — see `skipped_hardlinked`.
     pub matched_bytes: u64,
     /// Entries looked at, including ones that were filtered out.
     pub examined: usize,
@@ -135,6 +141,10 @@ pub struct LargeOldReport {
     /// one goes, so listing it would promise space that will not appear. Same
     /// reasoning as excluding symlinks — counted rather than dropped silently.
     pub skipped_hardlinked: usize,
+    /// Files whose names are not valid UTF-8, so they cannot survive the round
+    /// trip to the UI and back byte-for-byte — which is what the disposal
+    /// path's identity check depends on.
+    pub skipped_unrepresentable: usize,
 }
 
 impl LargeOldReport {
@@ -144,6 +154,7 @@ impl LargeOldReport {
         self.truncated
             || self.skipped_unreadable > 0
             || self.skipped_hardlinked > 0
+            || self.skipped_unrepresentable > 0
             || self.matched > self.items.len()
     }
 }
@@ -230,18 +241,36 @@ pub fn find(cfg: &LargeOldConfig) -> LargeOldReport {
             if meta.len() < cfg.min_size {
                 continue;
             }
-            // A hard-linked file's bytes are not reclaimed by removing one of
-            // its names. The module already excludes symlinks for exactly this
-            // reason; `nlink > 1` is the same situation with the link pointing
-            // the other way.
-            if meta.nlink() > 1 {
-                report.skipped_hardlinked += 1;
-                continue;
-            }
             if let Some(min_age) = cfg.min_age {
                 if !is_at_least(&meta, min_age, now) {
                     continue;
                 }
+            }
+            // A hard-linked file's bytes are not reclaimed by removing one of
+            // its names. The module already excludes symlinks for exactly this
+            // reason; `nlink > 1` is the same situation with the link pointing
+            // the other way.
+            //
+            // Deliberately *after* the age filter. Counting files the age
+            // filter would have dropped anyway would make `is_partial()` fire
+            // on a report that is not actually missing anything the user asked
+            // for — and a "this figure is a floor" warning that cries wolf is
+            // worse than none.
+            if meta.nlink() > 1 {
+                report.skipped_hardlinked += 1;
+                continue;
+            }
+            // The path has to survive a round trip through JSON to the UI and
+            // back, byte for byte: the disposal path identifies a selection by
+            // requiring the string it receives to equal the path emitted here.
+            // A lossy conversion would break that identity check, so a name we
+            // cannot represent exactly is not offered at all.
+            //
+            // Unreachable on APFS and HFS+, which enforce valid UTF-8;
+            // reachable on a foreign volume mounted inside a discovery root.
+            if entry.path().to_str().is_none() {
+                report.skipped_unrepresentable += 1;
+                continue;
             }
 
             report.matched += 1;

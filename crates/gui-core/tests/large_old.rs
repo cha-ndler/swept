@@ -464,6 +464,36 @@ fn a_row_from_a_symlinked_discovery_root_is_still_actionable() {
 }
 
 #[test]
+fn the_ceiling_is_the_discovery_scope_not_one_walks_results() {
+    // Stating the invariant that is actually enforced, so nobody mistakes it
+    // for a stronger one. A path in a discovery root the user's *current* view
+    // never covered is still in scope — the confinement is to
+    // `discovery_roots`, not to "what this walk offered".
+    //
+    // That distinction becomes live the first time Large & Old grows a root
+    // filter ("search Downloads only"), which must then thread its resolved
+    // roots through rather than relying on these two agreeing.
+    let (_g, home) = fixture_home();
+    fs::create_dir_all(home.join("Movies")).unwrap();
+    let unseen = home.join("Movies/never-listed.iso");
+    write_sized(&unseen, 4096);
+
+    // A walk that only looked at Downloads offers nothing.
+    let dto = large_and_old(&home, 1024, None);
+    assert!(
+        dto.items.iter().any(|i| i.path.contains("never-listed")),
+        "with default roots the file IS offered — this test is about scope, \
+         not about hiding it"
+    );
+
+    let (_p, mut audit) = audit_at(&home);
+    let summary =
+        dispose_selected_with_sink(&home, &[s(&unseen)], None, false, &sink(&home), &mut audit)
+            .unwrap();
+    assert_eq!(summary.executed, 1, "inside the ceiling, so permitted");
+}
+
+#[test]
 fn a_path_outside_the_discovery_scope_is_refused() {
     // Disposal must never be wider than discovery. `guard` only enforces the
     // denylist, which every ordinary file on the volume passes — so without a

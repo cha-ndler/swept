@@ -165,6 +165,34 @@ fn a_hard_linked_file_is_not_offered_as_reclaimable() {
 }
 
 #[test]
+fn hard_links_the_age_filter_would_have_dropped_do_not_trigger_the_partial_flag() {
+    // `is_partial()` means "this figure is a floor, tell the user". Counting
+    // hard links that the age filter excluded anyway would fire that warning on
+    // a report which is not missing anything the user asked for — and a warning
+    // that cries wolf is worse than none.
+    let (_g, home) = fixture_home();
+    let a = home.join("Documents/fresh-a.iso");
+    write_sized(&a, 8192);
+    fs::hard_link(&a, home.join("Documents/fresh-b.iso")).unwrap();
+
+    // Everything in the fixture is brand new, so a one-year floor excludes all
+    // of it — including the hard-linked pair.
+    let mut c = cfg(&home);
+    c.min_age = Some(Duration::from_secs(365 * 24 * 3600));
+    let report = find(&c);
+
+    assert_eq!(report.matched, 0);
+    assert_eq!(
+        report.skipped_hardlinked, 0,
+        "the age filter already excluded them; they are not a hidden remainder"
+    );
+    assert!(
+        !report.is_partial(),
+        "so nothing was left out to warn about"
+    );
+}
+
+#[test]
 fn the_walk_never_mints_a_disposal_authority() {
     // `Found` carries a PathBuf, not a SafePath. This is a compile-time
     // property, so the test documents it and pins the observable half: the
@@ -372,12 +400,18 @@ fn home_canonicality_is_what_keeps_the_home_relative_denylist_working() {
     // home-root rules for the whole walk. This test pins the *reason*
     // `find_in` canonicalizes.
     //
-    // Note what it does NOT claim. With the default discovery roots the hazard
-    // is unreachable — none of them can reach `~/Library/Mail`, so a
-    // non-canonical home changes nothing observable through `find_in`. The
-    // canonicalize there is defensive hardening, and honest framing means
-    // testing it where it actually bites: a caller setting `cfg.roots`
-    // directly, which is a public field.
+    // A previous version of this comment claimed the hazard was unreachable
+    // through the default discovery roots, so `find_in`'s canonicalize was
+    // "defensive hardening" with no observable effect. That is **false**, and
+    // `a_default_root_symlinked_into_mail_needs_a_canonical_home` below is the
+    // counter-example: a *default* root that symlinks into a protected location
+    // reaches `~/Library/Mail` in one hop. Rules that match only directories
+    // (the home root, the contains-a-protected-location ancestor rule) cannot
+    // fire for a regular file — but the keychains/mail subpath rule fires the
+    // moment a root resolves inside one.
+    //
+    // This test keeps the direct, root-level demonstration; the one below pins
+    // `find_in` itself, which nothing was pinning at all.
     let (tmp, home) = fixture_home();
     write_sized(&home.join("Library/Mail/messages.db"), 8192);
 
@@ -414,6 +448,65 @@ fn home_canonicality_is_what_keeps_the_home_relative_denylist_working() {
          ever stops happening the denylist grew a rule covering it, and this \
          test should become a plain refusal check"
     );
+}
+
+#[test]
+fn a_default_root_symlinked_into_mail_needs_a_canonical_home() {
+    // The case that proves `find_in`'s canonicalize is load-bearing rather than
+    // decorative: `~/Downloads` is a *default* discovery root, and a user (or
+    // an installer) can symlink it anywhere. Point it at `~/Library/Mail` and
+    // the walk reaches a protected location in one hop — refused only if the
+    // home the denylist compares against is spelled the same way.
+    let (tmp, home) = fixture_home();
+    write_sized(&home.join("Library/Mail/messages.db"), 8192);
+
+    let downloads = home.join("Downloads");
+    fs::remove_dir_all(&downloads).unwrap();
+    std::os::unix::fs::symlink(home.join("Library/Mail"), &downloads).unwrap();
+
+    // `find_in` canonicalizes, so a non-canonical caller is still safe.
+    let uncanonical = tmp.path().to_path_buf();
+    assert_ne!(uncanonical, home, "fixture must really be non-canonical");
+    let report = macclean_core::largeold::find_in(&uncanonical, 1024, None);
+    assert!(
+        !report
+            .items
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("Mail")),
+        "find_in must canonicalize the home it is given, got {:?}",
+        paths(&report.items)
+    );
+
+    // And the same walk with the home left non-canonical is what it protects
+    // against — the mail store comes straight back.
+    let mut raw = LargeOldConfig::new(uncanonical);
+    raw.min_size = 1024;
+    assert!(
+        find(&raw)
+            .items
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("Mail")),
+        "if this stops leaking, the denylist gained a rule covering it and the \
+         assertion above became trivially true — make this a plain refusal check"
+    );
+}
+
+#[test]
+fn a_protected_root_is_dropped_by_resolve_roots() {
+    // `resolve_roots` is shared by the walk and the disposal path. Inside the
+    // walk its protection filter is redundant with `filter_entry`, but on the
+    // disposal path there is no `filter_entry` — so it is the only thing
+    // keeping a protected location out of the scope check there.
+    let (_g, home) = fixture_home();
+    fs::create_dir_all(home.join("Library/Mail")).unwrap();
+
+    let resolved = macclean_core::largeold::resolve_roots(
+        &[home.join("Documents"), home.join("Library/Mail")],
+        &home,
+    );
+
+    assert_eq!(resolved.len(), 1);
+    assert!(resolved[0].ends_with("Documents"));
 }
 
 #[test]

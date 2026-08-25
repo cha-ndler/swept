@@ -467,6 +467,12 @@ pub fn record_run_refusal(audit: &mut AuditLog, reason: &str) -> Result<(), Exec
     refuse_run(audit, reason)
 }
 
+/// Record that an entire run was refused before it touched anything.
+///
+/// Item 6 wants a durable trace of refusals, and a wholesale refusal used to
+/// leave none: the early `return Err(...)` happened before any `record` call,
+/// so the most decisive thing the executor can do was the one thing the log
+/// never mentioned.
 fn refuse_run(audit: &mut AuditLog, reason: &str) -> Result<(), ExecError> {
     record(
         audit,

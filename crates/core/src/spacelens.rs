@@ -77,6 +77,20 @@ pub const DEFAULT_MAX_CHILDREN: usize = 24;
 /// is ~165k entries — while still guaranteeing the walk ends.
 pub const DEFAULT_MAX_EXAMINED: usize = 1_000_000;
 
+/// Nodes materialized into the tree before it stops growing.
+///
+/// The depth and width caps bound the tree's *shape*, not its *size*: 24
+/// children over 4 levels admits a six-figure node count on a disk with enough
+/// wide directories — `node_modules` is the obvious way to get one — and the
+/// whole tree is serialized to the webview in a single payload. A real home is
+/// nowhere near this, which is exactly why the absence of a bound would not be
+/// noticed until it was.
+///
+/// Like the other two caps this is a *display* decision. Sizes are still
+/// computed to the bottom of the tree, so nothing below the cap is lost from
+/// the totals — the affected directories are simply drawn as `collapsed`.
+pub const DEFAULT_MAX_NODES: usize = 20_000;
+
 /// Hard bound on recursion, independent of `max_depth`.
 ///
 /// `max_depth` only stops *materializing* nodes; the size walk keeps
@@ -97,6 +111,8 @@ pub struct LensConfig {
     pub max_children: usize,
     /// Entry budget, shared across all roots.
     pub max_examined: usize,
+    /// Materialized-node budget, shared across all roots.
+    pub max_nodes: usize,
 }
 
 impl LensConfig {
@@ -108,6 +124,7 @@ impl LensConfig {
             max_depth: DEFAULT_MAX_DEPTH,
             max_children: DEFAULT_MAX_CHILDREN,
             max_examined: DEFAULT_MAX_EXAMINED,
+            max_nodes: DEFAULT_MAX_NODES,
         }
     }
 }
@@ -157,6 +174,16 @@ pub struct LensReport {
     /// Directories deeper than [`MAX_WALK_DEPTH`], whose contents are missing
     /// from the totals.
     pub skipped_too_deep: usize,
+    /// Nodes actually materialized into `roots`.
+    pub nodes: usize,
+    /// True if the tree stopped growing at `max_nodes`.
+    ///
+    /// Not a reason for [`Self::is_partial`], and deliberately so: like the
+    /// depth cap this stops the *drawing*, not the *measuring*. Every byte
+    /// below the cap is still in its ancestors' totals, and the directories
+    /// that were not expanded are marked `collapsed` so the UI can say there is
+    /// more inside without implying the figure is short.
+    pub node_budget_reached: bool,
     /// Files seen more than once through different hard links, counted once.
     ///
     /// Not a reason for [`Self::is_partial`]: deduplicating makes the figure
@@ -179,6 +206,9 @@ struct Ctx<'a> {
     max_children: usize,
     max_examined: usize,
     examined: AtomicUsize,
+    max_nodes: usize,
+    /// Nodes materialized so far, across every root thread.
+    nodes: AtomicUsize,
     /// `(dev, ino)` of every multiply-linked file already counted.
     ///
     /// Shared rather than per-root so that a file hard-linked into two
@@ -196,6 +226,7 @@ struct Tally {
     too_deep: usize,
     deduped: usize,
     truncated: bool,
+    node_budget_hit: bool,
 }
 
 /// What one directory contributed.
@@ -219,6 +250,8 @@ pub fn measure(cfg: &LensConfig) -> LensReport {
         max_children: cfg.max_children,
         max_examined: cfg.max_examined,
         examined: AtomicUsize::new(0),
+        max_nodes: cfg.max_nodes,
+        nodes: AtomicUsize::new(0),
         seen_links: Mutex::new(HashSet::new()),
     };
 
@@ -261,6 +294,7 @@ pub fn measure(cfg: &LensConfig) -> LensReport {
         report.skipped_too_deep += tally.too_deep;
         report.deduped_hardlinks += tally.deduped;
         report.truncated |= tally.truncated;
+        report.node_budget_reached |= tally.node_budget_hit;
         report.roots.push(Node {
             name: display_name(&path),
             bytes: result.bytes,
@@ -271,6 +305,8 @@ pub fn measure(cfg: &LensConfig) -> LensReport {
             collapsed: result.collapsed,
         });
     }
+    // The root nodes themselves are part of the tree the webview receives.
+    report.nodes = ctx.nodes.load(Ordering::Relaxed) + report.roots.len();
     // Largest root first, so the caller does not have to re-sort and two runs
     // over the same disk produce the same tree despite the threads.
     sort_children(&mut report.roots);
@@ -309,15 +345,35 @@ fn measure_dir(dir: &Path, depth: usize, ctx: &Ctx, tally: &mut Tally) -> DirRes
         }
     };
 
-    // Below the cap the sizes still roll up; only the nodes stop being built.
-    let materialize = depth < ctx.max_depth;
+    // Below either cap the sizes still roll up; only the nodes stop being built.
+    //
+    // The node budget is read once, here, rather than checked at each push. A
+    // directory that starts materializing finishes doing so, because a
+    // half-materialized listing would break the invariant the whole picture
+    // rests on: `cap_children` folds the *unlisted* remainder into a rollup, so
+    // children dropped after that decision would take their bytes with them and
+    // a node would no longer equal the sum of what is drawn beneath it.
+    //
+    // The cost is a bounded overshoot. Pushes happen on the way back up, so a
+    // chain of directories can all decide "yes" before any of them has counted,
+    // and each contributes at most `max_children + 1`. The excess is therefore
+    // capped at `max_depth * (max_children + 1)` per thread — a few hundred
+    // nodes against a budget of twenty thousand.
+    let materialize = depth < ctx.max_depth && ctx.nodes.load(Ordering::Relaxed) < ctx.max_nodes;
+    if !materialize && depth < ctx.max_depth {
+        tally.node_budget_hit = true;
+    }
     let mut out = DirResult::default();
+    // Whether this directory had anything in it at all, which is what separates
+    // "there is more here than I am showing you" from "this is empty".
+    let mut had_entries = false;
 
     for entry in entries {
         if ctx.examined.fetch_add(1, Ordering::Relaxed) >= ctx.max_examined {
             tally.truncated = true;
             break;
         }
+        had_entries = true;
         let Ok(entry) = entry else {
             tally.unreadable += 1;
             continue;
@@ -405,10 +461,17 @@ fn measure_dir(dir: &Path, depth: usize, ctx: &Ctx, tally: &mut Tally) -> DirRes
     }
 
     out.collapsed = if materialize {
-        cap_children(&mut out.children, ctx.max_children)
+        let folded = cap_children(&mut out.children, ctx.max_children);
+        // Counted after capping, so each node in the final tree is counted
+        // exactly once — the discarded siblings never existed as far as the
+        // budget is concerned.
+        ctx.nodes.fetch_add(out.children.len(), Ordering::Relaxed);
+        folded
     } else {
-        // Nodes were never built, but there is something down there.
-        true
+        // Nodes were never built. Only claim there is more inside if there
+        // actually was something to build from — an empty directory that
+        // happened to fall past a cap is empty, not withholding.
+        had_entries
     };
     out
 }

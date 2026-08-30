@@ -447,3 +447,131 @@ fn flatten(nodes: &[Node]) -> Vec<String> {
     go(nodes, &mut out);
     out
 }
+
+/// Total nodes in a tree, counting the roots themselves.
+fn count_nodes(nodes: &[Node]) -> usize {
+    nodes.iter().map(|n| 1 + count_nodes(&n.children)).sum()
+}
+
+#[test]
+fn the_node_budget_stops_the_tree_growing_without_losing_a_byte() {
+    let (_g, home) = fixture_home();
+    // Wide and nested: 12 directories of 12 files each, well past a budget of
+    // 10 nodes but nowhere near any of the other caps.
+    let mut written = 0;
+    for d in 0..12 {
+        for f in 0..12 {
+            write_sized(&home.join(format!("Documents/d{d:02}/f{f:02}.bin")), 4_000);
+            written += 1;
+        }
+    }
+    assert_eq!(written, 144);
+
+    let mut unbounded = cfg(&home);
+    unbounded.roots = vec![home.join("Documents")];
+    let full = measure(&unbounded);
+
+    let mut bounded = cfg(&home);
+    bounded.roots = vec![home.join("Documents")];
+    bounded.max_nodes = 10;
+    let capped = measure(&bounded);
+
+    // The figures are identical. This is the whole claim: the budget stops the
+    // drawing, not the measuring.
+    assert_eq!(capped.total_bytes, full.total_bytes);
+    assert_eq!(capped.total_files, full.total_files);
+    assert!(!capped.is_partial(), "a display cap is not an under-count");
+    assert!(capped.node_budget_reached);
+    assert!(!full.node_budget_reached);
+
+    // And the tree really is smaller.
+    assert!(
+        capped.nodes < full.nodes,
+        "capped {} vs full {}",
+        capped.nodes,
+        full.nodes
+    );
+    assert_eq!(
+        capped.nodes,
+        count_nodes(&capped.roots),
+        "the count is real"
+    );
+
+    // Bounded, with the documented overshoot: pushes happen on the way back up,
+    // so a chain of directories can each decide to materialize before any of
+    // them has counted, and each contributes at most `max_children + 1`.
+    let slack = bounded.max_depth * (bounded.max_children + 1);
+    assert!(
+        capped.nodes <= bounded.max_nodes + slack,
+        "{} nodes exceeds {} + {slack} of documented slack",
+        capped.nodes,
+        bounded.max_nodes
+    );
+
+    // Every level that is drawn still adds up.
+    for root in &capped.roots {
+        assert_sums_hold(root);
+    }
+}
+
+#[test]
+fn a_directory_the_budget_stopped_says_there_is_more_inside() {
+    let (_g, home) = fixture_home();
+    for d in 0..12 {
+        for f in 0..12 {
+            write_sized(&home.join(format!("Documents/d{d:02}/f{f:02}.bin")), 4_000);
+        }
+    }
+
+    let mut c = cfg(&home);
+    c.roots = vec![home.join("Documents")];
+    c.max_nodes = 10;
+    let report = measure(&c);
+
+    // Somewhere in the drawn tree is a directory with real bytes, no children,
+    // and `collapsed` set — otherwise the UI would render it as empty.
+    let mut stopped = 0;
+    fn visit(node: &Node, stopped: &mut usize) {
+        if node.is_dir && node.children.is_empty() && node.bytes > 0 {
+            assert!(
+                node.collapsed,
+                "{} has bytes and no children but does not admit it",
+                node.name
+            );
+            *stopped += 1;
+        }
+        for child in &node.children {
+            visit(child, stopped);
+        }
+    }
+    for root in &report.roots {
+        visit(root, &mut stopped);
+    }
+    assert!(stopped > 0, "the budget should have stopped something");
+}
+
+#[test]
+fn an_empty_directory_past_a_cap_does_not_claim_to_be_hiding_anything() {
+    let (_g, home) = fixture_home();
+    // `hollow` is at the depth cap *and* has nothing in it. The old rule set
+    // `collapsed` on anything it declined to expand, which told the UI to print
+    // "there is more inside" over a directory with nothing inside.
+    fs::create_dir_all(home.join("Documents/a/hollow")).unwrap();
+    write_sized(&home.join("Documents/a/full/big.bin"), 40_000);
+
+    let mut c = cfg(&home);
+    c.max_depth = 2;
+    let report = measure(&c);
+
+    let docs = root_named(&report.roots, "Documents");
+    let a = child_named(docs, "a");
+    let hollow = child_named(a, "hollow");
+    let full = child_named(a, "full");
+
+    assert!(
+        !hollow.collapsed,
+        "an empty directory is empty, not withholding"
+    );
+    assert_eq!(hollow.bytes, 0);
+    assert!(full.collapsed, "but one with contents still says so");
+}

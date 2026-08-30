@@ -372,11 +372,21 @@ instead.**
     measuring deeper. Needs a `space_lens_at(path)` command, which means
     accepting a path from the frontend — read-only, but still a new surface to
     confine to the discovery scope.
-  - [ ] **Bound the materialized node count.** The depth and width caps bound
-    the tree's *shape*, not its *size*: `24` children over `4` levels admits a
-    six-figure node count on a `node_modules`-heavy disk, and the whole thing
-    is serialized to the webview in one payload. Real homes are nowhere near
-    it, which is exactly why it will not be noticed until it is.
+  - [x] **Bound the materialized node count.** `24` children over `4` levels
+    admitted a six-figure node count on a `node_modules`-heavy disk, all
+    serialized to the webview in one payload — real homes are nowhere near it,
+    which is exactly why it would not have been noticed until it was.
+    `DEFAULT_MAX_NODES` (20k) is a third **display** cap alongside depth and
+    width: sizes are still computed to the bottom of the tree, so the totals do
+    not change and `partial` stays false — the directories that were not
+    expanded are simply `collapsed`. The budget is read once per directory
+    rather than per push, because a half-materialized listing would break
+    `bytes == sum(children)`: `cap_children` folds the *unlisted* remainder into
+    a rollup, so children dropped after that decision would take their bytes
+    with them. That costs a bounded overshoot of `max_depth * (max_children+1)`
+    per thread, which the test pins. Fixed the adjacent lie while here: a
+    directory that was empty *and* past a cap used to report `collapsed`, so the
+    UI offered "there is more inside" over nothing.
   - [ ] **Reveal in Finder.** The design artboard offers it; there is no such
     command, so the UI deliberately does not promise one. Adding it means
     `open -R` with a frontend-supplied path.

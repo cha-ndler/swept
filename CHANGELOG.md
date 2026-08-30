@@ -4,6 +4,72 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
+first two modules that look outside the cleanup allowlist.
+
+### Added
+- **Large & Old Files** — a read-only walk of `~/Documents`, `~/Downloads`,
+  `~/Desktop`, `~/Movies`, `~/Music` and `~/Pictures`, with size and age
+  filters. Nothing is ever pre-selected, there is no select-all, and acting on a
+  row requires a **per-path grant**. (#29, #30)
+- **Space Lens engine** — a parallel, depth-capped directory-size measurement
+  producing a tree for a treemap. It cannot authorize anything: no `SafePath`,
+  and no command that accepts a node back. (#31)
+- **Per-path grants** (`Consent.granted`) — the mechanism that lets a human
+  escalate one specific file outside the disposal allowlist, without widening
+  the allowlist itself. Capped, individually enumerated, still denylist-checked,
+  and audited with a distinct note. (#27)
+- **`guard_dir`** — a bounded, **fail-closed** tree walk that supplies the real
+  recursive count and size for a directory, and refuses to vouch for a tree it
+  could not fully read. Required before any directory-level disposal can ship.
+  (#28)
+- **A native Mac shell** — inset traffic lights over a vibrancy sidebar, a
+  persistent module sidebar that keeps each module's state alive across
+  switches, a design-token system ported from a first-party design canvas, the
+  scan ring, and the replacement of the last stock browser controls. (#22, #23,
+  #24)
+- **Menu-bar extra** showing the reclaimable figure — with **no** quick-clean
+  action, because clearing files from a menu means no preview and no
+  confirmation. (#26)
+- **Full Disk Access preflight** — the app probes the TCC-gated roots and says
+  when a scan is under-reporting, instead of quietly showing a smaller number.
+  (#25)
+- **Real scan progress**, with the scan moved off the UI thread. (#21)
+
+### Fixed
+- **The UI could show figures that described no real disk.** `CleanView` and
+  `StartupView` wrapped `invoke` in a bare `catch` that fell back to fixture
+  data — so *any* backend failure rendered fabricated sizes against the real
+  category ids, and a user could then run a real clean against numbers they had
+  never scanned. Fixtures moved out of the shipped bundle entirely. (#20)
+- **The denylist did not refuse ancestors of protected locations.**
+  `guard("~/Library")` succeeded: `PROTECTED_ABS_ROOTS` lists the absolute
+  `/Library` and `Path::starts_with` is component-wise. Only the allowlist — a
+  scope check, not a safety check — kept it out of reach. (#27)
+- **The `.git` rule compared bytes exactly** while every other denylist rule
+  folds case, so a repository spelled `.GIT` was invisible to it. (#28)
+- **13 of 16 opacity-modified colour classes emitted no CSS**, silently, with no
+  build error: Tailwind cannot split a `var()` holding a hex string into
+  channels. Tokens are now RGB channels. (#30)
+- **Every confirmation-sheet screenshot since the clean flow shipped was a
+  mid-animation frame** — `page.screenshot` does not disable animations, while
+  `toHaveScreenshot` does, so the reviewed image and the gated image were
+  different pictures. (#30)
+
+### Safety
+- Established the spine the modules rest on: **widen what we can see, never
+  widen what we can act on.** `allowlist::discovery_roots` is read-only and
+  wider; `allowlist::default_roots` — the disposal scope — is unchanged, and
+  every existing invariant test stayed green untouched. (#27)
+- Disposal outside the allowlist re-guards each path, requires it to already be
+  its own canonical spelling, confines it to the discovery scope, re-reads sizes
+  from disk, and **refuses the whole request** if any item no longer matches
+  what was confirmed. (#29)
+- Permanent removal is confined to the allowlist even when consented to, and the
+  desktop app cannot request it at all. (#27)
+
 ## [0.2.0] — 2026-06-07
 
 A pleasant desktop GUI (Tauri) over the v0.1 CLI, built oracle-first.
@@ -54,4 +120,6 @@ property-tested safety substrate.
 - Recursive/large removals require confirmation; audit failures abort the run.
 - Tests run only against throwaway temp-dir fixtures.
 
+[Unreleased]: https://github.com/cha-ndler/mac-cleaner/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/cha-ndler/mac-cleaner/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cha-ndler/mac-cleaner/releases/tag/v0.1.0

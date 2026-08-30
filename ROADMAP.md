@@ -304,7 +304,7 @@ instead.**
   *inside* the allowlist would still reach `remove_dir_all`. No caller produces
   one (`scanner.rs` plans files only), and closing it generally is `guard_dir`'s
   job — see the v0.3 item, which M4 depends on.
-- [ ] **M2 — Large & Old Files** — *backend done; GUI outstanding.*
+- [x] **M2 — Large & Old Files**
   - [x] **Engine + command layer.** `core/src/largeold.rs` walks
     `discovery_roots` read-only with size/age thresholds, prunes protected
     subtrees wholesale (so `.git` working trees and `/Applications` never
@@ -333,8 +333,41 @@ instead.**
     holding hex — tokens are now RGB channels), and **every confirmation-sheet
     screenshot since the clean flow shipped was a mid-animation frame**
     (`page.screenshot` does not disable animations; `toHaveScreenshot` does).
-- [ ] **M3 — Space Lens** — parallel depth-capped directory-size walk producing a
-  tree DTO. Purely read-only; never touches the executor.
+- [ ] **M3 — Space Lens** — *engine + command layer done; the visualization is
+  outstanding.*
+  - [x] **Engine + command layer.** `core/src/spacelens.rs` measures the
+    discovery roots with one thread per root and returns a tree DTO. It is the
+    first module that cannot authorize anything even in principle — no
+    `SafePath`, and no companion command that takes a node back — so a treemap
+    rectangle is a picture of the disk, never a proposal. Design decisions worth
+    keeping: **the caps are display decisions, not accounting ones** (sizes are
+    always computed to the bottom of the tree; past the depth cap a node keeps
+    its bytes and sets `collapsed`, and past the width cap the remainder becomes
+    one rollup node — so `bytes == sum(children)` holds at every level that has
+    children); **hard links are counted once** via a `(dev, ino)` set shared
+    across the root threads (the total is deterministic, the attribution is
+    not); **symlinks contribute nothing and are never descended**, which is also
+    what makes a link loop impossible; and `skipped_unreadable` /
+    `truncated` / `skipped_too_deep` drive `partial`, while
+    `deduped_hardlinks` deliberately does not — deduplicating makes the figure
+    more accurate, not less complete.
+  - [ ] **The visualization.** Treemap or sunburst, plus the `partial` notice.
+    *Visual → taste gate.*
+
+  Two things this surfaced that are **not** M3's to fix:
+  - **Space Lens reports allocated bytes (`st_blocks × 512`); Large & Old
+    reports apparent bytes (`st_size`).** Each is right for its own question,
+    but the same file can legitimately show two different sizes in two modules.
+    M7's single combined total has to pick one.
+  - **`/Applications` is in `allowlist::discovery_roots`, but `resolve_roots`
+    drops it** — it is on `PROTECTED_ABS_ROOTS`, and `resolve_roots` filters
+    protected roots. So neither Space Lens nor Large & Old ever looks there.
+    That is the right outcome for both (you do not reclaim space by disposing of
+    an app from a size list), and the entry is not dead — it exists for M4's
+    Uninstaller, which enumerates bundles directly rather than through
+    `resolve_roots`. Worth writing down because the two are easy to conflate:
+    the roots list says what may be *read*, and `resolve_roots` is a stricter
+    filter that two specific walkers apply on top of it.
 - [ ] **M4 — Uninstaller (leftovers-only)** — leftovers for a chosen bundle id
   under `~/Library/{Application Support,Caches,Preferences,Containers,…}`.
   **Removing the `.app` bundle itself is out of scope** — `/Applications` is on

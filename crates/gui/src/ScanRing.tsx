@@ -56,7 +56,12 @@ export function ScanRing({
       role="img"
       aria-label={`${value} ${unit} ${caption}`}
     >
-      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} aria-hidden="true">
+      <svg
+        width={SIZE}
+        height={SIZE}
+        viewBox={`0 0 ${SIZE} ${SIZE}`}
+        aria-hidden="true"
+      >
         <circle
           cx={SIZE / 2}
           cy={SIZE / 2}
@@ -66,7 +71,10 @@ export function ScanRing({
           className="stroke-white/[.055]"
         />
         {busy ? (
-          <g className="ring-spin" style={{ transformOrigin: `${SIZE / 2}px ${SIZE / 2}px` }}>
+          <g
+            className="ring-spin"
+            style={{ transformOrigin: `${SIZE / 2}px ${SIZE / 2}px` }}
+          >
             <circle
               cx={SIZE / 2}
               cy={SIZE / 2}
@@ -74,7 +82,7 @@ export function ScanRing({
               fill="none"
               strokeWidth={STROKE}
               strokeLinecap="round"
-              stroke="var(--accent-graphic)"
+              stroke="rgb(var(--accent-graphic))"
               strokeDasharray={`${C * 0.22} ${C}`}
             />
           </g>
@@ -100,7 +108,9 @@ export function ScanRing({
       <div className="absolute inset-0 grid place-content-center text-center">
         <p className="font-mono text-hero font-semibold tabular-nums">
           {value}
-          <span className="text-muted ml-1 text-heroUnit font-medium tracking-normal">{unit}</span>
+          <span className="text-muted ml-1 text-heroUnit font-medium tracking-normal">
+            {unit}
+          </span>
         </p>
         <p className="text-muted mt-2 text-caption">{caption}</p>
       </div>

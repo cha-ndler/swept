@@ -1,11 +1,12 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import CleanView from "./CleanView";
+import LargeOldView from "./LargeOldView";
 import StartupView from "./StartupView";
-import { ShieldIcon, StackIcon, WrenchIcon } from "./Shell";
+import { FilesIcon, ShieldIcon, StackIcon, WrenchIcon } from "./Shell";
 import { formatBytes } from "./format";
 
-type Module = "cleanup" | "startup";
+type Module = "cleanup" | "large-old" | "startup";
 
 /**
  * The app shell: a persistent module sidebar beside a content pane.
@@ -25,17 +26,19 @@ type Module = "cleanup" | "startup";
  * dishonesty as the sample-data fallback removed in v0.3.
  */
 function initialModule(): Module {
-  return new URLSearchParams(window.location.search).get("tab") === "startup"
-    ? "startup"
-    : "cleanup";
+  const tab = new URLSearchParams(window.location.search).get("tab");
+  return tab === "startup" || tab === "large-old" ? tab : "cleanup";
 }
 
 export default function App() {
   const [active, setActive] = useState<Module>(initialModule);
   // Mount-on-first-visit, then keep alive. Mounting every module up front would
   // run backend work the user never asked for.
-  const [visited, setVisited] = useState<Set<Module>>(() => new Set([initialModule()]));
+  const [visited, setVisited] = useState<Set<Module>>(
+    () => new Set([initialModule()]),
+  );
   const [reclaimable, setReclaimable] = useState<number | null>(null);
+  const [largeOldBytes, setLargeOldBytes] = useState<number | null>(null);
   const [loginCount, setLoginCount] = useState<number | null>(null);
 
   function open(m: Module) {
@@ -59,6 +62,14 @@ export default function App() {
           badge={reclaimable === null ? "—" : formatBytes(reclaimable)}
           active={active === "cleanup"}
           onClick={() => open("cleanup")}
+        />
+
+        <ModuleButton
+          icon={<FilesIcon />}
+          name="Large & Old"
+          badge={largeOldBytes === null ? "—" : formatBytes(largeOldBytes)}
+          active={active === "large-old"}
+          onClick={() => open("large-old")}
         />
 
         <SideLabel>Protect</SideLabel>
@@ -90,6 +101,11 @@ export default function App() {
             <CleanView onReclaimable={setReclaimable} />
           </Pane>
         )}
+        {visited.has("large-old") && (
+          <Pane show={active === "large-old"}>
+            <LargeOldView onTotal={setLargeOldBytes} />
+          </Pane>
+        )}
         {visited.has("startup") && (
           <Pane show={active === "startup"}>
             <StartupView onCount={setLoginCount} />
@@ -103,7 +119,10 @@ export default function App() {
 /** Keeps a visited module mounted so its state and data survive a switch. */
 function Pane({ show, children }: { show: boolean; children: ReactNode }) {
   return (
-    <div className={show ? "flex min-h-0 flex-1 flex-col" : "hidden"} aria-hidden={!show}>
+    <div
+      className={show ? "flex min-h-0 flex-1 flex-col" : "hidden"}
+      aria-hidden={!show}
+    >
       {children}
     </div>
   );
@@ -135,11 +154,21 @@ function ModuleButton({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={`flex h-[30px] items-center gap-2 rounded-control px-2 text-left transition-colors duration-fast ease-mac ${
-        active ? "bg-accentTint text-text" : "text-muted hover:bg-white/[.05] hover:text-text"
+        active
+          ? "bg-accentTint text-text"
+          : "text-muted hover:bg-white/[.05] hover:text-text"
       }`}
     >
-      <span className={`flex-none ${active ? "text-accentText" : "text-subtle"}`}>{icon}</span>
-      <span className={`flex-1 text-body ${active ? "font-semibold" : "font-medium"}`}>{name}</span>
+      <span
+        className={`flex-none ${active ? "text-accentText" : "text-subtle"}`}
+      >
+        {icon}
+      </span>
+      <span
+        className={`flex-1 text-body ${active ? "font-semibold" : "font-medium"}`}
+      >
+        {name}
+      </span>
       <span
         className={`font-mono text-micro tabular-nums ${
           active ? "text-accentText" : "text-subtle"

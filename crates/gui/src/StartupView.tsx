@@ -47,7 +47,9 @@ function Body({ items, error }: { items: LoginItem[] | null; error: string }) {
           <InfoIcon size={24} />
         </div>
         <p className="mt-4 text-title font-semibold">
-          {isDesktopApp() ? "Couldn’t read your login items" : "mac-cleaner runs as a desktop app"}
+          {isDesktopApp()
+            ? "Couldn’t read your login items"
+            : "mac-cleaner runs as a desktop app"}
         </p>
         <p className="text-muted mx-auto mt-1.5 max-w-md text-body">
           {isDesktopApp()
@@ -71,7 +73,9 @@ function Body({ items, error }: { items: LoginItem[] | null; error: string }) {
   return (
     <>
       <section className="rounded-card border border-separator bg-surface p-5">
-        <p className="font-mono text-display font-semibold tabular-nums">{active}</p>
+        <p className="font-mono text-display font-semibold tabular-nums">
+          {active}
+        </p>
         <p className="text-muted mt-1 text-body">
           app{active === 1 ? "" : "s"} run automatically at login
         </p>
@@ -79,8 +83,8 @@ function Body({ items, error }: { items: LoginItem[] | null; error: string }) {
 
       <div className="mt-3">
         <Banner tone="safe" icon={<ShieldIcon size={15} />}>
-          Read-only. mac-cleaner never changes your startup items — reviewing what starts
-          automatically is the whole feature.
+          Read-only. mac-cleaner never changes your startup items — reviewing
+          what starts automatically is the whole feature.
         </Banner>
       </div>
 
@@ -96,7 +100,9 @@ function Body({ items, error }: { items: LoginItem[] | null; error: string }) {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-body font-medium">{it.label}</p>
                 {it.program && (
-                  <p className="text-subtle mt-0.5 truncate font-mono text-caption">{it.program}</p>
+                  <p className="text-subtle mt-0.5 truncate font-mono text-caption">
+                    {it.program}
+                  </p>
                 )}
               </div>
               <Badge item={it} />

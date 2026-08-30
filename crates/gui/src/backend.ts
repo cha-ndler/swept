@@ -31,7 +31,10 @@ export class NotInAppError extends Error {
  * Invoke a Rust command. Rejects with `NotInAppError` outside the app, and
  * propagates the backend's own error otherwise. Never substitutes a fallback.
  */
-export async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export async function call<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
   if (!isDesktopApp()) throw new NotInAppError();
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(cmd, args);
@@ -62,5 +65,7 @@ export async function onScanProgress(
 ): Promise<() => void> {
   if (!isDesktopApp()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return await listen<ScanProgress>("scan://progress", (e) => handler(e.payload));
+  return await listen<ScanProgress>("scan://progress", (e) =>
+    handler(e.payload),
+  );
 }

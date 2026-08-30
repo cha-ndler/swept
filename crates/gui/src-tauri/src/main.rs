@@ -7,7 +7,9 @@ use tauri::{AppHandle, Emitter};
 
 use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
-use macclean_gui_core::{self as gui, CleanSummary, Expected, Filters, Permissions};
+use macclean_gui_core::{
+    self as gui, CleanSummary, Expected, Filters, LargeOldReportDto, Permissions,
+};
 
 /// Event channel the frontend listens on for scan progress.
 const SCAN_PROGRESS: &str = "scan://progress";
@@ -97,6 +99,45 @@ async fn clean(
     .map_err(|e| format!("clean task failed: {e}"))?
 }
 
+/// Read-only: the largest (optionally oldest) files across the *discovery*
+/// scope — `~/Documents`, `~/Downloads` and friends, far wider than anything
+/// the app may clean unattended.
+///
+/// Returning a row here authorizes nothing. Acting on one takes `dispose_paths`
+/// below, which re-guards every path individually.
+#[tauri::command]
+async fn large_and_old(
+    min_size_bytes: u64,
+    older_than_days: Option<u64>,
+) -> Result<LargeOldReportDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = gui::default_home().map_err(|e| e.to_string())?;
+        Ok(gui::large_and_old(&home, min_size_bytes, older_than_days))
+    })
+    .await
+    .map_err(|e| format!("large-and-old task failed: {e}"))?
+}
+
+/// Move individually-chosen paths to the Trash.
+///
+/// The only command that can act outside `allowlist::default_roots`, and it is
+/// the strictest one: `gui-core` re-guards each path, requires each to already
+/// be its own canonical spelling, confines them to the discovery scope, and
+/// refuses the *whole* request if any item no longer matches what was listed.
+/// Trash-only, never permanent.
+#[tauri::command]
+async fn dispose_paths(
+    paths: Vec<String>,
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+) -> Result<CleanSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        gui::dispose_selected(paths, expected, confirm_mass_delete)
+    })
+    .await
+    .map_err(|e| format!("dispose task failed: {e}"))?
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -124,7 +165,9 @@ fn main() {
             permissions,
             open_privacy_settings,
             set_tray_label,
-            clean
+            clean,
+            large_and_old,
+            dispose_paths
         ])
         .run(tauri::generate_context!())
         .expect("error while running mac-cleaner");

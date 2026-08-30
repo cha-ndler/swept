@@ -44,8 +44,14 @@ export function Segmented<T extends string>({
             aria-checked={on}
             disabled={disabled}
             onClick={() => onChange(o.value)}
-            className={`h-[22px] rounded-[5px] px-2.5 text-caption font-medium transition-colors duration-fast ease-mac ${
-              on ? "bg-surface3 text-text shadow-e2" : "text-muted hover:text-text"
+            // `whitespace-nowrap` is not cosmetic: without it a two-word label
+            // ("100 MB", "6 months") wraps inside a 22px-tall button at narrow
+            // widths, inflating the control to ~40px and breaking the 52px
+            // toolbar it sits in.
+            className={`h-[22px] whitespace-nowrap rounded-[5px] px-2.5 text-caption font-medium transition-colors duration-fast ease-mac ${
+              on
+                ? "bg-surface3 text-text shadow-e2"
+                : "text-muted hover:text-text"
             }`}
           >
             {o.label}

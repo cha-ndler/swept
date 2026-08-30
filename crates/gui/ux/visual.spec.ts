@@ -2,7 +2,13 @@ import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdirSync } from "node:fs";
-import { SAMPLE_LOGIN_ITEMS, SAMPLE_REPORT, SAMPLE_SUMMARY } from "./fixtures";
+import {
+  SAMPLE_DISPOSE_SUMMARY,
+  SAMPLE_LARGE_OLD,
+  SAMPLE_LOGIN_ITEMS,
+  SAMPLE_REPORT,
+  SAMPLE_SUMMARY,
+} from "./fixtures";
 
 const SHOTS = "ux/screenshots";
 
@@ -28,6 +34,8 @@ async function installBackend(
     summary?: unknown;
     hang?: boolean;
     perms?: unknown;
+    largeOld?: unknown;
+    disposeSummary?: unknown;
   } = {},
 ) {
   const payload = {
@@ -42,6 +50,8 @@ async function installBackend(
       containers_readable: true,
       all_readable: true,
     },
+    largeOld: opts.largeOld ?? SAMPLE_LARGE_OLD,
+    disposeSummary: opts.disposeSummary ?? SAMPLE_DISPOSE_SUMMARY,
   };
   await page.addInitScript((p) => {
     const w = window as unknown as Record<string, unknown>;
@@ -62,6 +72,8 @@ async function installBackend(
         if (cmd === "scan") return Promise.resolve(p.report);
         if (cmd === "login_items") return Promise.resolve(p.items);
         if (cmd === "clean") return Promise.resolve(p.summary);
+        if (cmd === "large_and_old") return Promise.resolve(p.largeOld);
+        if (cmd === "dispose_paths") return Promise.resolve(p.disposeSummary);
         return Promise.reject(new Error(`unstubbed command: ${cmd}`));
       },
       transformCallback: (cb: unknown) => cb,
@@ -70,7 +82,25 @@ async function installBackend(
 }
 
 async function capture(page: Page, name: string, project: string) {
-  await page.screenshot({ path: `${SHOTS}/${name}-${project}.png`, fullPage: true });
+  // `animations: "disabled"` is load-bearing, not tidiness.
+  //
+  // `toHaveScreenshot` disables animations by default; a bare `page.screenshot`
+  // does not. So the visual-regression gate below has always compared a settled
+  // frame, while the PNG written here — the one the `ux-critic` scores and the
+  // human taste gate looks at — was whatever frame of the `overlay-in`/
+  // `sheet-in` fade happened to be on screen. Every confirmation-sheet
+  // screenshot in this repo since the clean flow shipped has been a ghostly,
+  // half-transparent capture with no backdrop dim: the review surface was an
+  // artifact of the capture rather than the design.
+  //
+  // Playwright's own `toBeVisible()` does not help — an element at opacity 0 is
+  // "visible" to it (measured: `opacity: 0` at the instant the assertion
+  // passed), so waiting on the dialog never waited for the fade.
+  await page.screenshot({
+    path: `${SHOTS}/${name}-${project}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
 
   // Objective gate: no serious/critical accessibility violations.
   const results = await new AxeBuilder({ page }).analyze();
@@ -92,7 +122,12 @@ test("scan results", async ({ page }, testInfo) => {
 
 test("scan empty", async ({ page }, testInfo) => {
   await installBackend(page, {
-    report: { ...SAMPLE_REPORT, total_count: 0, total_bytes: 0, by_category: [] },
+    report: {
+      ...SAMPLE_REPORT,
+      total_count: 0,
+      total_bytes: 0,
+      by_category: [],
+    },
   });
   await page.goto("/");
   await expect(page.getByText("Nothing to clean")).toBeVisible();
@@ -117,7 +152,11 @@ test("scan loading", async ({ page }, testInfo) => {
 
 test("scan results with limited access", async ({ page }, testInfo) => {
   await installBackend(page, {
-    perms: { trash_readable: false, containers_readable: true, all_readable: false },
+    perms: {
+      trash_readable: false,
+      containers_readable: true,
+      all_readable: false,
+    },
   });
   await page.goto("/");
   await expect(page.getByText(/under-reporting/i)).toBeVisible();
@@ -148,7 +187,9 @@ test("scan done", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: /review & clean/i }).click();
   await page.getByRole("button", { name: /^move to/i }).click();
   await expect(page.getByText(/moved to the Trash/i)).toBeVisible();
-  await expect(page.getByRole("button", { name: /back to cleanup/i })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /back to cleanup/i }),
+  ).toBeVisible();
   await capture(page, "scan-done", testInfo.project.name);
 });
 
@@ -159,7 +200,9 @@ test("scan error", async ({ page }, testInfo) => {
       invoke: (cmd: string) => {
         if (cmd === "plugin:event|listen") return Promise.resolve(1);
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
-        return Promise.reject("Couldn’t read ~/Library/Caches (permission denied).");
+        return Promise.reject(
+          "Couldn’t read ~/Library/Caches (permission denied).",
+        );
       },
       transformCallback: (cb: unknown) => cb,
     };
@@ -174,4 +217,189 @@ test("startup tab", async ({ page }, testInfo) => {
   await page.goto("/?tab=startup");
   await expect(page.getByRole("heading", { name: "Startup" })).toBeVisible();
   await capture(page, "startup", testInfo.project.name);
+});
+
+// --- Large & Old -----------------------------------------------------------
+//
+// The one module that can act outside the cleanup allowlist, so its screenshots
+// carry the load-bearing claims: nothing pre-selected, the coverage caveat
+// visible, and a confirmation sheet worded harder than Cleanup's.
+
+test("large-old results", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/?tab=large-old");
+  await expect(
+    page.getByRole("heading", { name: "Large & Old" }),
+  ).toBeVisible();
+  await expect(page.getByText("5 files")).toBeVisible();
+  await capture(page, "large-old-results", testInfo.project.name);
+});
+
+test("nothing is pre-selected, and the action stays disabled until it is", async ({
+  page,
+}) => {
+  await installBackend(page);
+  await page.goto("/?tab=large-old");
+  await expect(
+    page.getByRole("heading", { name: "Large & Old" }),
+  ).toBeVisible();
+
+  // The safety claim, asserted rather than described: no row arrives ticked.
+  const boxes = page.getByRole("checkbox");
+  const n = await boxes.count();
+  expect(n).toBeGreaterThan(0);
+  for (let i = 0; i < n; i++) {
+    await expect(boxes.nth(i)).not.toBeChecked();
+  }
+
+  const act = page.getByRole("button", { name: /to Trash…$/ });
+  await expect(act).toBeDisabled();
+  await expect(page.getByText("Nothing selected")).toBeVisible();
+
+  await boxes.first().check();
+  await expect(act).toBeEnabled();
+});
+
+test("large-old confirm", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/?tab=large-old");
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: /to Trash…$/ }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await capture(page, "large-old-confirm", testInfo.project.name);
+});
+
+test("large-old done", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/?tab=large-old");
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: /to Trash…$/ }).click();
+  await page
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+  await expect(page.getByText(/files? moved to the Trash/)).toBeVisible();
+  await capture(page, "large-old-done", testInfo.project.name);
+});
+
+test("large-old empty", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    largeOld: {
+      ...SAMPLE_LARGE_OLD,
+      items: [],
+      matched: 0,
+      matched_bytes: 0,
+      skipped_unreadable: 0,
+      skipped_hardlinked: 0,
+      partial: false,
+    },
+  });
+  await page.goto("/?tab=large-old");
+  await expect(page.getByText("Nothing to review")).toBeVisible();
+  await capture(page, "large-old-empty", testInfo.project.name);
+});
+
+test("a complete walk shows no coverage caveat", async ({ page }) => {
+  await installBackend(page, {
+    largeOld: {
+      ...SAMPLE_LARGE_OLD,
+      skipped_unreadable: 0,
+      skipped_hardlinked: 0,
+      skipped_unrepresentable: 0,
+      truncated: false,
+      partial: false,
+    },
+  });
+  await page.goto("/?tab=large-old");
+  await expect(page.getByText("5 files")).toBeVisible();
+  await expect(page.getByText("This is a floor, not a total")).toHaveCount(0);
+});
+
+test("a refused disposal is surfaced, not swallowed", async ({
+  page,
+}, testInfo) => {
+  // The backend refuses the whole request when any item no longer matches what
+  // was listed. That message is the user's only signal that nothing happened,
+  // so it must reach the sheet rather than being replaced by a success state.
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__TAURI_INTERNALS__ = {
+      invoke: (cmd: string) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        if (cmd === "permissions")
+          return Promise.resolve({
+            trash_readable: true,
+            containers_readable: true,
+            all_readable: true,
+          });
+        if (cmd === "large_and_old")
+          return Promise.resolve({
+            items: [
+              {
+                path: "/Users/tester/Downloads/big.iso",
+                size_bytes: 4_294_967_296,
+                modified_ms: Date.now() - 90 * 86_400_000,
+              },
+            ],
+            matched: 1,
+            matched_bytes: 4_294_967_296,
+            examined: 1000,
+            truncated: false,
+            skipped_unreadable: 0,
+            skipped_hardlinked: 0,
+            skipped_unrepresentable: 0,
+            partial: false,
+          });
+        if (cmd === "dispose_paths")
+          return Promise.reject(
+            "refused: 1 of 1 selected items are no longer valid, so nothing was touched.",
+          );
+        return Promise.reject(new Error(`unstubbed command: ${cmd}`));
+      },
+      transformCallback: (cb: unknown) => cb,
+    };
+  });
+  await page.goto("/?tab=large-old");
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: /to Trash…$/ }).click();
+  await page
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+
+  await expect(page.getByRole("alert")).toContainText("no longer valid");
+  // Still on the sheet — not a success screen.
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await capture(page, "large-old-refused", testInfo.project.name);
+});
+
+test("large-old loading", async ({ page }, testInfo) => {
+  await installBackend(page, { hang: true });
+  await page.goto("/?tab=large-old");
+  await expect(
+    page.getByRole("heading", { name: "Large & Old" }),
+  ).toBeVisible();
+  await capture(page, "large-old-loading", testInfo.project.name);
+});
+
+test("large-old error", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__TAURI_INTERNALS__ = {
+      invoke: (cmd: string) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        if (cmd === "permissions")
+          return Promise.resolve({
+            trash_readable: true,
+            containers_readable: true,
+            all_readable: true,
+          });
+        return Promise.reject("cannot determine home directory");
+      },
+      transformCallback: (cb: unknown) => cb,
+    };
+  });
+  await page.goto("/?tab=large-old");
+  await expect(page.getByRole("alert")).toContainText("look for large files");
+  await capture(page, "large-old-error", testInfo.project.name);
 });

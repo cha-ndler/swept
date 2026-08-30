@@ -962,7 +962,11 @@
 
             <div class="group" style="flex:1;min-height:0;overflow:hidden">
               <div class="row" style="background:var(--surface-2);padding-top:8px;padding-bottom:8px">
-                <span class="check"></span>
+                <!-- A spacer, deliberately NOT a `.check`. A checkbox in the
+                     header row reads as select-all, which contradicts the one
+                     rule this screen exists to enforce: the user picks every
+                     file individually, and nothing is ever pre-selected. -->
+                <span style="width:14px;flex:none"></span>
                 <span class="main"><span class="nm" style="font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.07em;color:var(--text-3)">Name</span></span>
                 <span style="font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);width:96px">Last opened</span>
                 <span style="font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);width:74px;text-align:right">Size</span>

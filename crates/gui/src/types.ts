@@ -40,6 +40,35 @@ export interface Filters {
   min_size_bytes?: number;
 }
 
+// Mirrors macclean_gui_core::LargeOldItem.
+//
+// Note what is absent: there is no `selected` field. Rows in this view are
+// never pre-ticked and never part of a default clean — the entire safety
+// argument for acting outside the cleanup allowlist rests on a human having
+// chosen each one, so a selection state arriving from the backend would be the
+// wrong shape for it.
+export interface LargeOldItem {
+  path: string;
+  size_bytes: number;
+  /** Epoch milliseconds, or null if the mtime could not be read. */
+  modified_ms: number | null;
+}
+
+// Mirrors macclean_gui_core::LargeOldReportDto.
+export interface LargeOldReport {
+  items: LargeOldItem[];
+  /** Total matches, which may exceed items.length when the list is capped. */
+  matched: number;
+  matched_bytes: number;
+  examined: number;
+  truncated: boolean;
+  skipped_unreadable: number;
+  skipped_hardlinked: number;
+  skipped_unrepresentable: number;
+  /** True when this describes less than the whole disk, for any reason. */
+  partial: boolean;
+}
+
 // Mirrors macclean_gui_core::Permissions. Advisory only: it says what the app
 // could read just now, not what the user has toggled in System Settings.
 export interface Permissions {

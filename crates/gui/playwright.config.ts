@@ -26,7 +26,20 @@ export default defineConfig({
   webServer: {
     command: "npm run preview",
     url: "http://localhost:4173",
-    reuseExistingServer: !process.env.CI,
+    // Never reuse. `reuseExistingServer: !process.env.CI` is the Playwright
+    // default and it is wrong for this repo: it only checks that *something*
+    // answers on 4173, not that the something is this checkout's `dist`.
+    //
+    // Measured, not theorised — a `vite preview` left running in a sibling git
+    // worktree served every screenshot of an entire Space Lens run. The tests
+    // failed, which is the lucky outcome; had the two builds been closer, the
+    // oracle would have passed while scoring a different app, and the visual
+    // gate would have been protecting the wrong pixels.
+    //
+    // `npm run preview` uses `--strictPort`, so with reuse off an occupied
+    // 4173 is a loud startup failure instead of a silent substitution. The
+    // fix, when it happens, is to stop the other server.
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

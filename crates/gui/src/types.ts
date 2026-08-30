@@ -69,6 +69,42 @@ export interface LargeOldReport {
   partial: boolean;
 }
 
+// Mirrors macclean_gui_core::SpaceNodeDto.
+//
+// Note what is absent, and why it is a stronger absence than Large & Old's:
+// there is no `selected` field *and* no command that takes one of these back.
+// A rectangle here is a picture of the disk, never a proposal.
+export interface SpaceNode {
+  name: string;
+  /**
+   * `null` for a rollup node — which is not a place on disk — and for a name
+   * that is not valid UTF-8. The node is still drawn with its real size.
+   */
+  path: string | null;
+  /** Allocated bytes (what the file occupies), for this node and below. */
+  bytes: number;
+  files: number;
+  is_dir: boolean;
+  /** True when `children` is not a complete listing of what is inside. */
+  collapsed: boolean;
+  children: SpaceNode[];
+}
+
+// Mirrors macclean_gui_core::SpaceLensReportDto.
+export interface SpaceLensReport {
+  roots: SpaceNode[];
+  total_bytes: number;
+  total_files: number;
+  examined: number;
+  truncated: boolean;
+  skipped_unreadable: number;
+  skipped_too_deep: number;
+  /** Files reached through more than one name, counted once. */
+  deduped_hardlinks: number;
+  /** True when the tree describes less than what is on disk, for any reason. */
+  partial: boolean;
+}
+
 // Mirrors macclean_gui_core::Permissions. Advisory only: it says what the app
 // could read just now, not what the user has toggled in System Settings.
 export interface Permissions {

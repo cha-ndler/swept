@@ -7,6 +7,9 @@ import {
   SAMPLE_LARGE_OLD,
   SAMPLE_LOGIN_ITEMS,
   SAMPLE_REPORT,
+  SAMPLE_SPACE_LENS,
+  SAMPLE_SPACE_LENS_COMPLETE,
+  SAMPLE_SPACE_LENS_EMPTY,
   SAMPLE_SUMMARY,
 } from "./fixtures";
 
@@ -36,6 +39,7 @@ async function installBackend(
     perms?: unknown;
     largeOld?: unknown;
     disposeSummary?: unknown;
+    spaceLens?: unknown;
   } = {},
 ) {
   const payload = {
@@ -52,6 +56,7 @@ async function installBackend(
     },
     largeOld: opts.largeOld ?? SAMPLE_LARGE_OLD,
     disposeSummary: opts.disposeSummary ?? SAMPLE_DISPOSE_SUMMARY,
+    spaceLens: opts.spaceLens ?? SAMPLE_SPACE_LENS,
   };
   await page.addInitScript((p) => {
     const w = window as unknown as Record<string, unknown>;
@@ -74,6 +79,7 @@ async function installBackend(
         if (cmd === "clean") return Promise.resolve(p.summary);
         if (cmd === "large_and_old") return Promise.resolve(p.largeOld);
         if (cmd === "dispose_paths") return Promise.resolve(p.disposeSummary);
+        if (cmd === "space_lens") return Promise.resolve(p.spaceLens);
         return Promise.reject(new Error(`unstubbed command: ${cmd}`));
       },
       transformCallback: (cb: unknown) => cb,
@@ -82,6 +88,15 @@ async function installBackend(
 }
 
 async function capture(page: Page, name: string, project: string) {
+  // Park the pointer before capturing. Playwright leaves the virtual cursor
+  // wherever the last click put it, so a screenshot taken after an interaction
+  // records a hover state — and the reviewer then scores a frame no resting
+  // user ever sees. It is the same failure as the mid-animation captures fixed
+  // below, arriving through a different door: the drilled-in Space Lens shot
+  // came out with two of four wedges dimmed because the cursor was still
+  // sitting on the row that had just been clicked.
+  await page.mouse.move(0, 0);
+
   // `animations: "disabled"` is load-bearing, not tidiness.
   //
   // `toHaveScreenshot` disables animations by default; a bare `page.screenshot`
@@ -402,4 +417,140 @@ test("large-old error", async ({ page }, testInfo) => {
   await page.goto("/?tab=large-old");
   await expect(page.getByRole("alert")).toContainText("look for large files");
   await capture(page, "large-old-error", testInfo.project.name);
+});
+
+// --- Space Lens ------------------------------------------------------------
+//
+// The module with no action at all. Its screenshots carry a different claim
+// from every other view's: that there is nothing here to press. So the tests
+// below assert the *absence* of a disposal affordance as hard as the other
+// modules assert the presence of a confirmation — an accidental button here
+// would be a bigger regression than a wrong colour, and nothing else in the
+// suite would catch it.
+
+test("space-lens results", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/?tab=space-lens");
+  await expect(page.getByText("Read-only view")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Library/ })).toBeVisible();
+  await capture(page, "space-lens-results", testInfo.project.name);
+});
+
+test("space lens offers no way to act on anything", async ({ page }) => {
+  await installBackend(page);
+  await page.goto("/?tab=space-lens");
+  await expect(page.getByText("Read-only view")).toBeVisible();
+
+  // No disposal control anywhere in the module — not disabled, absent.
+  const main = page.getByRole("main");
+  await expect(
+    main.getByRole("button", { name: /trash|discard|clean|erase/i }),
+  ).toHaveCount(0);
+  await expect(main.getByRole("checkbox")).toHaveCount(0);
+
+  // And it says so in words, not only by omission.
+  await expect(page.getByText(/only measures/i)).toBeVisible();
+});
+
+test("drilling in changes the breadcrumb, the hub and the list", async ({
+  page,
+}, testInfo) => {
+  await installBackend(page);
+  await page.goto("/?tab=space-lens");
+
+  const up = page.getByRole("button", { name: "Go up one folder" });
+  await expect(up).toBeDisabled();
+
+  await page.getByRole("button", { name: /^Library/ }).click();
+
+  // The breadcrumb names where we are, and the list is now this folder's
+  // children rather than the roots.
+  await expect(
+    page.getByRole("navigation", { name: "Location" }),
+  ).toContainText("Library");
+  await expect(page.getByText("Largest inside")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Steam/ })).toBeVisible();
+  await expect(up).toBeEnabled();
+
+  await capture(page, "space-lens-drilled", testInfo.project.name);
+
+  // And back out again.
+  await up.click();
+  await expect(page.getByText("Largest locations")).toBeVisible();
+  await expect(up).toBeDisabled();
+});
+
+test("a folder measured no deeper is not a button", async ({ page }) => {
+  await installBackend(page);
+  await page.goto("/?tab=space-lens");
+  await page.getByRole("button", { name: /^Library/ }).click();
+
+  // `Containers` sits at the depth cap: real bytes, no children, nowhere to
+  // drill. Rendering it as a button that does nothing would be the same small
+  // dishonesty as a disabled control with no disabled styling.
+  await expect(page.getByRole("button", { name: /^Containers/ })).toHaveCount(
+    0,
+  );
+  // Two of Library’\s children sit at the cap, so scope to the first.
+  await expect(
+    page.getByText("More inside, not measured this deep").first(),
+  ).toBeVisible();
+});
+
+test("a rollup is shown as an aggregate, never as a place", async ({
+  page,
+}) => {
+  await installBackend(page);
+  await page.goto("/?tab=space-lens");
+  await page.getByRole("button", { name: /^Movies/ }).click();
+
+  await expect(page.getByText("12 more items")).toBeVisible();
+  await expect(page.getByRole("button", { name: /more items/ })).toHaveCount(0);
+  await expect(
+    page.getByText("Smaller items, not listed separately"),
+  ).toBeVisible();
+});
+
+test("a complete measurement shows no coverage caveat", async ({ page }) => {
+  await installBackend(page, { spaceLens: SAMPLE_SPACE_LENS_COMPLETE });
+  await page.goto("/?tab=space-lens");
+  await expect(page.getByRole("button", { name: /^Library/ })).toBeVisible();
+  await expect(page.getByText("This is a floor, not a total")).toHaveCount(0);
+});
+
+test("space-lens empty", async ({ page }, testInfo) => {
+  await installBackend(page, { spaceLens: SAMPLE_SPACE_LENS_EMPTY });
+  await page.goto("/?tab=space-lens");
+  await expect(page.getByText("Nothing to measure")).toBeVisible();
+  await capture(page, "space-lens-empty", testInfo.project.name);
+});
+
+test("space-lens loading", async ({ page }, testInfo) => {
+  await installBackend(page, { hang: true });
+  await page.goto("/?tab=space-lens");
+  await expect(page.getByRole("heading", { name: "Space Lens" })).toBeVisible();
+  await capture(page, "space-lens-loading", testInfo.project.name);
+});
+
+test("space-lens error", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__TAURI_INTERNALS__ = {
+      invoke: (cmd: string) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        if (cmd === "permissions")
+          return Promise.resolve({
+            trash_readable: true,
+            containers_readable: true,
+            all_readable: true,
+          });
+        return Promise.reject("cannot determine home directory");
+      },
+      transformCallback: (cb: unknown) => cb,
+    };
+  });
+  await page.goto("/?tab=space-lens");
+  await expect(page.getByRole("alert")).toContainText("measure your folders");
+  await capture(page, "space-lens-error", testInfo.project.name);
 });

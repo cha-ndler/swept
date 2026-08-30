@@ -459,7 +459,39 @@ un-notarized, and it is Apple Silicon only.
 - [ ] **D5 — Release hygiene** — single-source the version (currently
   triplicated across `tauri.conf.json`, `src-tauri/Cargo.toml` and
   `package.json` with nothing enforcing agreement); feed `CHANGELOG.md` into
-  release notes; add the missing `[0.2.0]` link reference; publish checksums;
-  run the `package` job on PRs so bundling regressions surface before merge.
+  release notes; publish checksums. *(The `[0.2.0]` link reference landed with
+  the docs refresh, #33.)*
+  **Reversed:** this item used to call for running the `package` job on pull
+  requests. That is now the opposite of what the repo can afford — see the CI
+  budget note below — so bundling stays validated locally for PRs and in CI only
+  on main and tags.
+
+### CI budget — a real constraint, not a preference
+
+The Actions allowance was exhausted. The cause is structural: this is a
+macOS-targeted tool, GitHub bills macOS runners at **10x** on a private
+repository, and every job here has to be macOS. Four jobs at ~3-4 minutes is
+~140 billed minutes — about fourteen runs against a 2,000-minute month.
+
+Neither macOS job can move to Linux without giving up what it tests. `check` is
+the safety kernel's oracle and the kernel exists to reason about macOS path
+semantics (case-insensitive volumes, `/Users` and `/var/folders` being symlinks,
+what `realpath` does and does not normalise); a green Linux run would be testing
+different rules. `gui` compares `*-darwin.png` visual baselines, and Chromium
+renders text differently on Linux, so every snapshot would fail — the gate would
+be measuring the runner.
+
+What changed instead: prose and design assets are `paths-ignore`d (the docs PR
+burned a full four-job macOS run for a README), superseded PR runs are
+cancelled, `release-build` and `package` are main-and-tags only, and Playwright
+browsers and the Tauri CLI are cached. Roughly a third off a code PR and all of
+it off a docs PR.
+
+- [ ] **Watch whether that is enough.** If it is not, the remaining levers are
+  ordered by how much they cost in signal: cache more aggressively; drop the
+  `gui` job to run only when GUI-adjacent paths change; run the UX oracle on a
+  schedule rather than per-PR. Making the repo public removes the constraint
+  entirely (Actions are free for public repositories) — that is **D6's call to
+  make, not CI's**, and it must not be done for billing reasons alone.
 - [ ] **D6 — Public flip** — *(separate, on the human's word.)* Tidy the stale
   merged remote branches, then make the repo public.

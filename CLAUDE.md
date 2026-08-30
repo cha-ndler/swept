@@ -15,6 +15,9 @@ refuse and preview.
 
 | Task | Command |
 |------|---------|
+| **The full gate (do this before every PR)** | `./scripts/verify.sh` |
+| Rust half only (the fast loop) | `./scripts/verify.sh --rust` |
+| GUI half only | `./scripts/verify.sh --gui` |
 | Test (the oracle) | `cargo test --workspace` |
 | Lint (must be clean) | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Format | `cargo fmt --all` (check: `cargo fmt --all --check`) |
@@ -22,7 +25,17 @@ refuse and preview.
 | Preview a scan (read-only) | `cargo run -p macclean -- scan` |
 | Build release | `cargo build --release` |
 
-**A change is not done until `cargo test --workspace` and `cargo clippy … -D warnings` both pass.** Never report success you haven't observed — run the `verifier` subagent if unsure.
+**A change is not done until `./scripts/verify.sh` passes.** It runs the same nine
+gates CI does, in the same order, and names anything it skipped rather than
+counting a skip as a pass. Never report success you haven't observed — run the
+`verifier` subagent if unsure.
+
+**Local verification is the primary oracle, not a rehearsal for CI.** GitHub
+bills macOS runners at **10x** on a private repository, and this project cannot
+move its jobs to Linux without giving up the thing they test (macOS path
+semantics for the safety kernel; `*-darwin.png` baselines for the visual gate).
+The monthly allowance is therefore a real constraint, and it has been exhausted
+once already.
 
 ---
 
@@ -126,6 +139,22 @@ into a fresh session. Hard-won conventions baked into them:
 - **Confirm CI by conclusion, not the watcher.** `gh run watch --exit-status` can
   return before the run finishes — always verify with `gh run view <id> --json
   status,conclusion` (status=completed AND conclusion=success) before merging.
+- **A job that fails in ~2 seconds having run ZERO steps is a billing stop, not a
+  broken build.** When the Actions allowance is exhausted GitHub simply refuses
+  to start jobs, and the result is indistinguishable from a real failure at a
+  glance: red X, `conclusion: failure`, no log. Check
+  `gh api repos/{owner}/{repo}/actions/runs/<id>/jobs` — if `steps` is empty and
+  `completed_at - started_at` is a couple of seconds, the code is fine and the
+  month is not. Do **not** start debugging the build.
+- **CI is the second opinion; `./scripts/verify.sh` is the first.** Merge on a
+  confirmed-green local run, and say in the PR that verification was local when
+  CI did not run. Never write "CI green" for a run that never started.
+- **The workflow is shaped around the 10x macOS multiplier** (see the header
+  comment in `.github/workflows/ci.yml`): prose and design assets are
+  `paths-ignore`d entirely, superseded PR runs are cancelled, and
+  `release-build`/`package` are main-and-tags only because they produce
+  artifacts rather than signal. Before adding a job or widening a trigger, work
+  out what it costs — a macOS minute is ten.
 - **Sync local main after every merge.** `gh pr merge` can drop you on a stale
   local `main`; start each iteration with `git checkout -B main origin/main -q`.
 - **Verify the branch before committing and the push after.** A blocked `checkout`

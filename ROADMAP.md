@@ -304,7 +304,7 @@ instead.**
   *inside* the allowlist would still reach `remove_dir_all`. No caller produces
   one (`scanner.rs` plans files only), and closing it generally is `guard_dir`'s
   job — see the v0.3 item, which M4 depends on.
-- [x] **M2 — Large & Old Files**
+- [ ] **M2 — Large & Old Files** — *module shipped; one follow-up open.*
   - [x] **Engine + command layer.** `core/src/largeold.rs` walks
     `discovery_roots` read-only with size/age thresholds, prunes protected
     subtrees wholesale (so `.git` working trees and `/Applications` never
@@ -333,6 +333,11 @@ instead.**
     holding hex — tokens are now RGB channels), and **every confirmation-sheet
     screenshot since the clean flow shipped was a mid-animation frame**
     (`page.screenshot` does not disable animations; `toHaveScreenshot` does).
+  - [ ] **The scope line under-states the scope.** `LargeOldView` prints
+    "Documents · Downloads · Desktop · Movies · Music · Pictures", but
+    `discovery_roots` also includes `~/Library/Application Support` — which the
+    walk really does search. Found while writing the user docs. A one-string fix,
+    but it changes a screenshot, so it goes through the visual gate.
 - [ ] **M3 — Space Lens** — *engine, command layer and visualization done; the
   follow-ups below are open.*
   - [x] **Engine + command layer.** `core/src/spacelens.rs` measures the

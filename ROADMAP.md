@@ -323,8 +323,16 @@ instead.**
     refusal is recorded via `executor::record_run_refusal`. Selections use a 1 MiB drift
     tolerance and exact count matching, deliberately *not* the 64 MiB
     cache-tuned `grew_beyond` (see `SELECTION_CHURN_BYTES`).
-  - [ ] **The module UI.** Rows never pre-selected, never in a Smart Scan
-    default, with the `partial` flag surfaced. Visual → taste gate.
+  - [x] **The module UI.** Sidebar module + `LargeOldView`: rows never
+    pre-selected, no select-all, primary action disabled until a human ticks
+    something, the `partial` flag surfaced as a "this is a floor, not a total"
+    notice, and a confirmation sheet that **names the chosen files** and
+    discloses the mass-delete threshold when it is crossed. Two silent failures
+    surfaced on the way and are fixed at the root: **13 of 16 opacity-modified
+    colour classes app-wide emitted no CSS** (Tailwind cannot alpha a `var()`
+    holding hex — tokens are now RGB channels), and **every confirmation-sheet
+    screenshot since the clean flow shipped was a mid-animation frame**
+    (`page.screenshot` does not disable animations; `toHaveScreenshot` does).
 - [ ] **M3 — Space Lens** — parallel depth-capped directory-size walk producing a
   tree DTO. Purely read-only; never touches the executor.
 - [ ] **M4 — Uninstaller (leftovers-only)** — leftovers for a chosen bundle id

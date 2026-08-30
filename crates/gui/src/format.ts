@@ -8,7 +8,10 @@ export function formatBytes(bytes: number): string {
  * The same figure split into its parts, so the hero can set the number and its
  * unit at different sizes without re-parsing a formatted string.
  */
-export function formatBytesParts(bytes: number): { value: string; unit: string } {
+export function formatBytesParts(bytes: number): {
+  value: string;
+  unit: string;
+} {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   let size = bytes;
   let unit = 0;

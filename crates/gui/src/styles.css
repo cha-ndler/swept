@@ -8,14 +8,27 @@
    graphic pair 3.70:1, so no combination below can fail WCAG AA.
 
    `tailwind.config.js` maps these to utility classes — nothing in the app should
-   reference a raw colour. */
+   reference a raw colour.
+
+   COLOURS ARE SPACE-SEPARATED RGB CHANNELS, not hex, and that is load-bearing.
+   Tailwind cannot split a `var()` holding `#ff6482` into channels, so a class
+   like `bg-cat-large/40` produced **no CSS at all** and the element rendered
+   transparent — silently, with no build error. Measured before this change: 13
+   of the 16 opacity-modified colour classes in the app were dead that way,
+   including the under-reporting notice's amber tint and the confirmation
+   sheet's green "recoverable" callout. Storing channels lets the config say
+   `rgb(var(--x) / <alpha-value>)`, which works in every WebKit version this app
+   can run on (`color-mix` would need macOS 13.1+).
+
+   Consequence: any raw reference outside Tailwind must wrap it —
+   `rgb(var(--cat-large))`, never `var(--cat-large)`. */
 :root {
   /* -- surfaces: a four-step elevation ladder, darkest at the back ---------- */
-  --bg-window: #17171a; /* the content canvas                                 */
-  --sidebar: #232328; /* vibrancy tint (lighter than content, per macOS)      */
-  --surface-1: #1f1f23; /* resting cards and list groups                      */
-  --surface-2: #26262b; /* hover, popovers, raised controls                   */
-  --surface-3: #2e2e34; /* sheets and modals — the highest layer              */
+  --bg-window: 23 23 26; /* the content canvas                                 */
+  --sidebar: 35 35 40; /* vibrancy tint (lighter than content, per macOS)      */
+  --surface-1: 31 31 35; /* resting cards and list groups                      */
+  --surface-2: 38 38 43; /* hover, popovers, raised controls                   */
+  --surface-3: 46 46 52; /* sheets and modals — the highest layer              */
 
   /* -- hairlines: macOS separates with light, not with boxes ---------------- */
   --separator: rgba(255, 255, 255, 0.075);
@@ -23,32 +36,32 @@
   --border-strong: rgba(255, 255, 255, 0.2);
 
   /* -- text ----------------------------------------------------------------- */
-  --text: #f2f2f7; /* >= 12.09:1 on every surface                             */
-  --text-2: #b4b4bd; /* >=  6.56:1                                           */
-  --text-3: #9a9aa3; /* >=  4.83:1 — still AA, never merely decorative       */
+  --text: 242 242 247; /* >= 12.09:1 on every surface                             */
+  --text-2: 180 180 189; /* >=  6.56:1                                           */
+  --text-3: 154 154 163; /* >=  4.83:1 — still AA, never merely decorative       */
 
   /* -- accent: THREE roles that are never interchangeable -------------------
      This split is the point. The vivid system blue is the natural choice for a
      button and it is only 3.65:1 against white, so it cannot legally carry a
      white label. Any new blue must declare which role it is. */
-  --accent-fill: #0a66cc; /* the only blue that may carry a white label (5.55:1) */
-  --accent-graphic: #0a84ff; /* rings, bars, tints. NEVER text                  */
-  --accent-text: #409cff; /* accent-coloured text (>= 4.77:1)                   */
-  --accent-tint: rgba(10, 132, 255, 0.16);
+  --accent-fill: 10 102 204; /* the only blue that may carry a white label (5.55:1) */
+  --accent-graphic: 10 132 255; /* rings, bars, tints. NEVER text                  */
+  --accent-text: 64 156 255; /* accent-coloured text (>= 4.77:1)                   */
+  --accent-tint: rgb(var(--accent-graphic) / 0.16);
 
   /* -- semantic ------------------------------------------------------------- */
-  --success: #30d158;
-  --warning: #ffd60a;
-  --danger-fill: #c9241b; /* white label: 5.60:1                              */
-  --danger-text: #ff6961; /* danger-coloured text: >= 4.78:1                  */
+  --success: 48 209 88;
+  --warning: 255 214 10;
+  --danger-fill: 201 36 27; /* white label: 5.60:1                              */
+  --danger-text: 255 105 97; /* danger-coloured text: >= 4.78:1                  */
 
   /* -- category hues: one per cleaner, stable across every view -------------- */
-  --cat-caches: #0a84ff;
-  --cat-logs: #bf5af2;
-  --cat-trashes: #ff9f0a;
-  --cat-build: #30d158;
-  --cat-large: #ff6482;
-  --cat-browser: #64d2ff;
+  --cat-caches: 10 132 255;
+  --cat-logs: 191 90 242;
+  --cat-trashes: 255 159 10;
+  --cat-build: 48 209 88;
+  --cat-large: 255 100 130;
+  --cat-browser: 100 210 255;
 
   /* -- elevation: exactly three levels --------------------------------------- */
   --e2: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.22);
@@ -57,7 +70,12 @@
   /* -- motion: two durations, one curve --------------------------------------- */
   --t-fast: 150ms; /* hover, selection, checkbox, segment                      */
   --t-sheet: 220ms; /* sheet and modal entry                                   */
-  --ease: cubic-bezier(0.32, 0.72, 0, 1); /* macOS-like: fast out, soft settle */
+  --ease: cubic-bezier(
+    0.32,
+    0.72,
+    0,
+    1
+  ); /* macOS-like: fast out, soft settle */
 
   color-scheme: dark;
 }
@@ -70,10 +88,10 @@ body,
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
-    sans-serif;
-  background: var(--bg-window);
-  color: var(--text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  background: rgb(var(--bg-window));
+  color: rgb(var(--text));
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -92,17 +110,18 @@ body {
      translucency was not worth a one-way door on distribution, so the sidebar
      gets its lift from being lighter than the content pane plus the same subtle
      top-light macOS gives a real sidebar. */
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(255, 255, 255, 0.05),
       rgba(255, 255, 255, 0.012)
     ),
-    var(--sidebar);
+    rgb(var(--sidebar));
   border-right: 1px solid rgba(0, 0, 0, 0.45);
 }
 
 .content {
-  background: var(--bg-window);
+  background: rgb(var(--bg-window));
 }
 
 /* Scrollbars: the default webview scrollbar is a bright, chunky, unmistakably
@@ -136,7 +155,7 @@ input[type="number"]::-webkit-outer-spin-button {
 /* Keyboard focus stays visible everywhere; the webview default is easy to lose
    against these surfaces. */
 :focus-visible {
-  outline: 2px solid var(--accent-text);
+  outline: 2px solid rgb(var(--accent-text));
   outline-offset: 2px;
   border-radius: 4px;
 }

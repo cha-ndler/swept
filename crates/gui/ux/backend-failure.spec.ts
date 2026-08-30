@@ -22,8 +22,13 @@ async function stubBackend(page: Page, behavior: string) {
   `);
 }
 
-test("a failing scan shows the error state, not fixture data", async ({ page }) => {
-  await stubBackend(page, `Promise.reject("permission denied reading ~/Library/Caches")`);
+test("a failing scan shows the error state, not fixture data", async ({
+  page,
+}) => {
+  await stubBackend(
+    page,
+    `Promise.reject("permission denied reading ~/Library/Caches")`,
+  );
   await page.goto("/");
 
   await expect(page.getByText(/couldn.t finish/i)).toBeVisible();
@@ -34,7 +39,9 @@ test("a failing scan shows the error state, not fixture data", async ({ page }) 
   await expect(page.getByText("Xcode derived data")).toHaveCount(0);
 });
 
-test("a failing login-items call shows an error, not fixture items", async ({ page }) => {
+test("a failing login-items call shows an error, not fixture items", async ({
+  page,
+}) => {
   await stubBackend(page, `Promise.reject("permission denied")`);
   await page.goto("/?tab=startup");
 
@@ -79,11 +86,15 @@ test("the shipped bundle contains no fixture data", async () => {
 // The plain-browser path (`npm run dev`, or anyone opening dist/ directly).
 // There is no backend to ask, so the app must say that rather than invent a
 // disk. This is the state the old code hid behind fixture data.
-test("outside the desktop app it says so instead of showing a disk", async ({ page }) => {
+test("outside the desktop app it says so instead of showing a disk", async ({
+  page,
+}) => {
   await page.goto("/");
   await expect(page.getByText(/runs as a desktop app/i)).toBeVisible();
   await expect(page.getByText("6.4 GiB")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /review & clean/i })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /review & clean/i }),
+  ).toHaveCount(0);
 });
 
 // A confirmation sheet must never outlive the report it describes.
@@ -94,7 +105,9 @@ test("outside the desktop app it says so instead of showing a disk", async ({ pa
 // left the sheet open, so it read "Move 0 items" while an empty selection was
 // mapped backend-side to "no filter", i.e. every category. Confirming it would
 // have run an unrestricted clean the user had confirmed as zero items.
-test("a failed re-scan closes the confirmation instead of emptying it", async ({ page }) => {
+test("a failed re-scan closes the confirmation instead of emptying it", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, unknown>;
     let scans = 0;
@@ -113,13 +126,24 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
             skipped_protected: 0,
             items: [],
             by_category: [
-              { category: "user-logs", name: "Logs", description: "d", count: 120, bytes: 1024 },
+              {
+                category: "user-logs",
+                name: "Logs",
+                description: "d",
+                count: 120,
+                bytes: 1024,
+              },
             ],
           });
         }
         if (cmd === "clean") {
           ((w as Record<string, unknown>).__cleanCalls as unknown[]).push(args);
-          return Promise.resolve({ dry_run: false, executed: 0, refused: 0, bytes_freed: 0 });
+          return Promise.resolve({
+            dry_run: false,
+            executed: 0,
+            refused: 0,
+            bytes_freed: 0,
+          });
         }
         return Promise.resolve([]);
       },
@@ -141,5 +165,9 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
 
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByText(/couldn.t finish/i)).toBeVisible();
-  expect(await page.evaluate(() => (window as never as Record<string, unknown[]>).__cleanCalls)).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => (window as never as Record<string, unknown[]>).__cleanCalls,
+    ),
+  ).toEqual([]);
 });

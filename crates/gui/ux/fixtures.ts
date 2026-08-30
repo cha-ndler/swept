@@ -1,4 +1,9 @@
-import type { CleanSummary, LoginItem, ScanReport } from "../src/types";
+import type {
+  CleanSummary,
+  LargeOldReport,
+  LoginItem,
+  ScanReport,
+} from "../src/types";
 
 const GiB = 1024 * 1024 * 1024;
 const MiB = 1024 * 1024;
@@ -55,7 +60,8 @@ export const SAMPLE_LOGIN_ITEMS: LoginItem[] = [
   },
   {
     label: "com.google.keystone.agent",
-    program: "~/Library/Google/GoogleSoftwareUpdate/.../GoogleSoftwareUpdateAgent",
+    program:
+      "~/Library/Google/GoogleSoftwareUpdate/.../GoogleSoftwareUpdateAgent",
     run_at_load: true,
     disabled: false,
     source: "~/Library/LaunchAgents/com.google.keystone.agent.plist",
@@ -83,4 +89,54 @@ export const SAMPLE_SUMMARY: CleanSummary = {
   executed: 4213,
   refused: 0,
   bytes_freed: Math.round(6.44 * GiB),
+};
+
+// A representative Large & Old result. Deliberately includes the "partial"
+// case: the coverage notice is a safety-relevant surface, so it must be in the
+// screenshots rather than only in the happy path.
+const DAY = 86_400_000;
+export const SAMPLE_LARGE_OLD: LargeOldReport = {
+  items: [
+    {
+      path: "/Users/tester/Movies/wedding-master-4k.mov",
+      size_bytes: Math.round(18.4 * GiB),
+      modified_ms: Date.now() - 1120 * DAY,
+    },
+    {
+      path: "/Users/tester/Downloads/Xcode_15.4.xip",
+      size_bytes: Math.round(7.9 * GiB),
+      modified_ms: Date.now() - 410 * DAY,
+    },
+    {
+      path: "/Users/tester/Documents/archive/2019-project-backup.zip",
+      size_bytes: Math.round(3.2 * GiB),
+      modified_ms: Date.now() - 1900 * DAY,
+    },
+    {
+      path: "/Users/tester/Downloads/ubuntu-24.04-desktop-amd64.iso",
+      size_bytes: Math.round(2.6 * GiB),
+      modified_ms: Date.now() - 240 * DAY,
+    },
+    {
+      path: "/Users/tester/Pictures/lightroom-export-2021.tar",
+      size_bytes: Math.round(1.1 * GiB),
+      modified_ms: Date.now() - 60 * DAY,
+    },
+  ],
+  matched: 5,
+  matched_bytes: Math.round(33.2 * GiB),
+  examined: 168_402,
+  truncated: false,
+  skipped_unreadable: 2,
+  skipped_hardlinked: 1,
+  skipped_unrepresentable: 0,
+  partial: true,
+};
+
+// What `dispose_paths` returns after the two largest rows are chosen.
+export const SAMPLE_DISPOSE_SUMMARY: CleanSummary = {
+  dry_run: false,
+  executed: 2,
+  refused: 0,
+  bytes_freed: Math.round(26.3 * GiB),
 };

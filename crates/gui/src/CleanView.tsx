@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBytes } from "./format";
-import type { CategorySummary, CleanSummary, Filters, Permissions, ScanReport } from "./types";
+import type {
+  CategorySummary,
+  CleanSummary,
+  Filters,
+  Permissions,
+  ScanReport,
+} from "./types";
 import { call, describeError, isDesktopApp, onScanProgress } from "./backend";
 import type { ScanProgress } from "./backend";
 import { Banner, InfoIcon, LockIcon, ShieldIcon, Toolbar } from "./Shell";
@@ -18,11 +24,11 @@ type Phase = "none" | "confirm" | "cleaning" | "done";
  * would claim a relationship that isn't there.
  */
 const CATEGORY_HUE: Record<string, string> = {
-  "user-caches": "var(--cat-caches)",
-  "xcode-derived-data": "var(--cat-build)",
-  "user-logs": "var(--cat-logs)",
-  trash: "var(--cat-trashes)",
-  "homebrew-downloads": "var(--cat-browser)",
+  "user-caches": "rgb(var(--cat-caches))",
+  "xcode-derived-data": "rgb(var(--cat-build))",
+  "user-logs": "rgb(var(--cat-logs))",
+  trash: "rgb(var(--cat-trashes))",
+  "homebrew-downloads": "rgb(var(--cat-browser))",
 };
 
 function hue(id: string): string {
@@ -102,7 +108,9 @@ export default function CleanView({
       // The menu bar shows the string the window is already showing, so the two
       // cannot drift apart. Best-effort: a scan that succeeded must not surface
       // an error because a tray label failed to update.
-      void call("set_tray_label", { label: formatBytes(r.total_bytes) }).catch(() => {});
+      void call("set_tray_label", { label: formatBytes(r.total_bytes) }).catch(
+        () => {},
+      );
       setView(r.by_category.length ? "results" : "empty");
     } catch (e) {
       setReport(null);
@@ -147,7 +155,10 @@ export default function CleanView({
   }
 
   const cats = report?.by_category ?? [];
-  const sel = useMemo(() => cats.filter((c) => selected.has(c.category)), [cats, selected]);
+  const sel = useMemo(
+    () => cats.filter((c) => selected.has(c.category)),
+    [cats, selected],
+  );
   const selBytes = sel.reduce((s, c) => s + c.bytes, 0);
   const selCount = sel.reduce((s, c) => s + c.count, 0);
   const segments: RingSegment[] = sel.map((c) => ({
@@ -221,20 +232,28 @@ export default function CleanView({
                 onRetry={() => void runScan(currentFilters())}
               />
             )}
-            {view === "empty" && <EmptyState onRescan={() => void runScan(currentFilters())} />}
+            {view === "empty" && (
+              <EmptyState onRescan={() => void runScan(currentFilters())} />
+            )}
             {view === "results" && perms && !perms.all_readable && (
               <AccessNotice perms={perms} />
             )}
             {view === "results" && (
               <div className="flex flex-col gap-7 md:flex-row md:items-start">
                 <div className="flex flex-none flex-col items-center text-center md:w-[240px]">
-                  <ScanRing segments={segments} total={selBytes} caption="reclaimable" />
+                  <ScanRing
+                    segments={segments}
+                    total={selBytes}
+                    caption="reclaimable"
+                  />
 
                   <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-separator bg-white/[.04] px-2.5 py-1">
                     <span className="text-success">
                       <ShieldIcon size={12} />
                     </span>
-                    <span className="text-muted text-caption">Preview only</span>
+                    <span className="text-muted text-caption">
+                      Preview only
+                    </span>
                   </div>
 
                   <button
@@ -268,7 +287,8 @@ export default function CleanView({
                           {report.skipped_protected} protected item
                           {report.skipped_protected === 1 ? "" : "s"} skipped
                         </strong>{" "}
-                        by the safety guard — Keychains, Mail and repositories are never eligible.
+                        by the safety guard — Keychains, Mail and repositories
+                        are never eligible.
                       </Banner>
                     </div>
                   )}
@@ -307,7 +327,9 @@ function FiltersBar({
 }) {
   return (
     <div className="flex items-center gap-3">
-      <span className="text-muted hidden text-caption lg:inline">Older than</span>
+      <span className="text-muted hidden text-caption lg:inline">
+        Older than
+      </span>
       <NumberField
         value={olderDays}
         onChange={(v) => onChange(v, minSize)}
@@ -348,11 +370,14 @@ function AccessNotice({ perms }: { perms: Permissions }) {
         <LockIcon size={16} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-body font-medium">This scan may be under-reporting</p>
+        <p className="text-body font-medium">
+          This scan may be under-reporting
+        </p>
         <p className="text-muted mt-1 text-caption leading-relaxed">
-          macOS is withholding {missing.join(" and ")} until you grant Full Disk Access, so
-          anything in {missing.length === 1 ? "it" : "them"} is missing from the total above.
-          Nothing else is affected, and the figures shown are still real.
+          macOS is withholding {missing.join(" and ")} until you grant Full Disk
+          Access, so anything in {missing.length === 1 ? "it" : "them"} is
+          missing from the total above. Nothing else is affected, and the
+          figures shown are still real.
         </p>
       </div>
       <button
@@ -381,7 +406,11 @@ function CategoryRow({
   return (
     <li>
       <label className="flex cursor-pointer items-center gap-3 rounded-card border border-separator bg-surface px-4 py-3 transition-colors duration-fast ease-mac hover:bg-surface2">
-        <Checkbox checked={checked} onChange={onToggle} label={`Select ${cat.name}`} />
+        <Checkbox
+          checked={checked}
+          onChange={onToggle}
+          label={`Select ${cat.name}`}
+        />
         {/* Ties this row to its arc in the ring. */}
         <span
           className="h-2 w-2 flex-none rounded-full"
@@ -390,7 +419,9 @@ function CategoryRow({
         />
         <div className="min-w-0 flex-1">
           <span className="truncate text-body font-medium">{cat.name}</span>
-          <p className="text-subtle mt-0.5 truncate text-caption">{cat.description}</p>
+          <p className="text-subtle mt-0.5 truncate text-caption">
+            {cat.description}
+          </p>
         </div>
         <div className="shrink-0 text-right">
           <span className="block font-mono text-body font-semibold tabular-nums">
@@ -436,7 +467,8 @@ function ConfirmModal({
           </span>
           <div>
             <h2 id="confirm-title" className="text-title font-semibold">
-              Move {count.toLocaleString()} item{count === 1 ? "" : "s"} to the Trash?
+              Move {count.toLocaleString()} item{count === 1 ? "" : "s"} to the
+              Trash?
             </h2>
             <p className="text-muted mt-1 text-body">
               <span className="font-mono font-semibold tabular-nums text-text">
@@ -452,8 +484,9 @@ function ConfirmModal({
             <ShieldIcon size={15} />
           </span>
           <p className="text-muted text-body leading-relaxed">
-            This is <strong className="font-semibold text-text">recoverable</strong>. Files go to
-            the Trash, and every action is written to the audit log.
+            This is{" "}
+            <strong className="font-semibold text-text">recoverable</strong>.
+            Files go to the Trash, and every action is written to the audit log.
           </p>
         </div>
 
@@ -480,19 +513,33 @@ function ConfirmModal({
   );
 }
 
-function StatusIcon({ tone, children }: { tone: "success" | "danger"; children: React.ReactNode }) {
+function StatusIcon({
+  tone,
+  children,
+}: {
+  tone: "success" | "danger";
+  children: React.ReactNode;
+}) {
   const cls =
     tone === "success"
       ? "border-success/25 bg-success/10 text-success"
       : "border-danger/25 bg-danger/10 text-danger";
   return (
-    <div className={`mx-auto grid h-12 w-12 place-items-center rounded-panel border ${cls}`}>
+    <div
+      className={`mx-auto grid h-12 w-12 place-items-center rounded-panel border ${cls}`}
+    >
       {children}
     </div>
   );
 }
 
-function DoneCard({ summary, onBack }: { summary: CleanSummary; onBack: () => void }) {
+function DoneCard({
+  summary,
+  onBack,
+}: {
+  summary: CleanSummary;
+  onBack: () => void;
+}) {
   return (
     <section className="rounded-card border border-separator bg-surface p-10 text-center">
       <StatusIcon tone="success">
@@ -541,7 +588,9 @@ function Scanning({ progress }: { progress: ScanProgress | null }) {
           ? "Looking through your caches, logs and build artifacts."
           : `${examined.toLocaleString()} files examined`}
       </p>
-      <p className="text-subtle mt-4 text-caption">Read-only. Nothing is changed by a scan.</p>
+      <p className="text-subtle mt-4 text-caption">
+        Read-only. Nothing is changed by a scan.
+      </p>
     </section>
   );
 }
@@ -589,8 +638,9 @@ function ErrorState({
           : "This page is a preview shell with no access to your disk. Open the mac-cleaner app to scan."}
       </p>
       <p className="text-subtle mx-auto mt-3 max-w-md text-caption">
-        Nothing was scanned and nothing was changed. No results are shown because there are none —
-        mac-cleaner never shows sample figures in place of your real disk.
+        Nothing was scanned and nothing was changed. No results are shown
+        because there are none — mac-cleaner never shows sample figures in place
+        of your real disk.
       </p>
       {inApp && (
         <button

@@ -37,6 +37,17 @@ export function StackIcon({ size }: { size?: number }) {
   );
 }
 
+/** Stacked documents — the Large & Old module. Files, not junk. */
+export function FilesIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M4.2 1.9h4.4l3.2 3.2v7.1a.9.9 0 0 1-.9.9H4.2a.9.9 0 0 1-.9-.9V2.8a.9.9 0 0 1 .9-.9Z" />
+      <path d="M8.6 1.9v3.2h3.2" />
+      <path d="M13.6 4.6v8.5a1.9 1.9 0 0 1-1.9 1.9H5.4" />
+    </Icon>
+  );
+}
+
 export function WrenchIcon({ size }: { size?: number }) {
   return (
     <Icon size={size}>
@@ -80,7 +91,13 @@ export function InfoIcon({ size }: { size?: number }) {
  * treats an element as a drag handle if the attribute is on the event target
  * itself — so it goes on the empty stretch, never on a parent of the controls.
  */
-export function Toolbar({ title, children }: { title: string; children?: ReactNode }) {
+export function Toolbar({
+  title,
+  children,
+}: {
+  title: string;
+  children?: ReactNode;
+}) {
   return (
     <header className="flex h-[52px] flex-none items-center gap-2.5 border-b border-separator px-5">
       <h1 className="text-title font-semibold">{title}</h1>
@@ -91,7 +108,13 @@ export function Toolbar({ title, children }: { title: string; children?: ReactNo
 }
 
 /** An inset grouped list: one card, hairline-separated rows. */
-export function Group({ children, className = "" }: { children: ReactNode; className?: string }) {
+export function Group({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <div
       className={`overflow-hidden rounded-card border border-separator bg-surface ${className}`}

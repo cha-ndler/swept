@@ -15,3 +15,4 @@ pub mod plan;
 pub mod report;
 pub mod scanner;
 pub mod spacelens;
+pub mod uninstall;

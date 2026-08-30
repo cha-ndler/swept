@@ -9,6 +9,7 @@ use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
 use macclean_gui_core::{
     self as gui, CleanSummary, Expected, Filters, LargeOldReportDto, Permissions,
+    SpaceLensReportDto,
 };
 
 /// Event channel the frontend listens on for scan progress.
@@ -118,6 +119,21 @@ async fn large_and_old(
     .map_err(|e| format!("large-and-old task failed: {e}"))?
 }
 
+/// Read-only: the size of everything in the discovery scope, as a tree.
+///
+/// There is deliberately no companion command that takes a node back. Space
+/// Lens is a picture of the disk — acting on something seen in it means finding
+/// it in a module that can, and consenting there.
+#[tauri::command]
+async fn space_lens() -> Result<SpaceLensReportDto, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let home = gui::default_home().map_err(|e| e.to_string())?;
+        Ok(gui::space_lens(&home))
+    })
+    .await
+    .map_err(|e| format!("space-lens task failed: {e}"))?
+}
+
 /// Move individually-chosen paths to the Trash.
 ///
 /// The only command that can act outside `allowlist::default_roots`, and it is
@@ -167,7 +183,8 @@ fn main() {
             set_tray_label,
             clean,
             large_and_old,
-            dispose_paths
+            dispose_paths,
+            space_lens
         ])
         .run(tauri::generate_context!())
         .expect("error while running mac-cleaner");

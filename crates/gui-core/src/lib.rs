@@ -22,6 +22,7 @@ use macclean_core::loginitems::{self, LoginItem};
 use macclean_core::plan::{Disposal, Plan, PlannedAction};
 use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, scan_with_progress, Progress, ScanConfig};
+use macclean_core::spacelens;
 
 /// Scan/clean filters as the frontend sends them.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -411,6 +412,84 @@ pub fn large_and_old(
         skipped_hardlinked: report.skipped_hardlinked,
         skipped_unrepresentable: report.skipped_unrepresentable,
         partial: report.is_partial(),
+    }
+}
+
+/// One rectangle in the Space Lens treemap.
+///
+/// Like [`LargeOldItem`] there is no `selected` field, but for a stronger
+/// reason: there is no command that takes one of these. Space Lens is a picture
+/// of the disk, and a picture is not a proposal — nothing in this DTO can be
+/// handed back to the backend to act on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SpaceNodeDto {
+    pub name: String,
+    /// `None` for a rollup node (not a place on disk) and for a name that is
+    /// not valid UTF-8. The node is still drawn with its real size — see the
+    /// `spacelens` module docs on why lossy names are acceptable *here* and
+    /// not in Large & Old.
+    pub path: Option<String>,
+    pub bytes: u64,
+    pub files: u64,
+    pub is_dir: bool,
+    /// True when `children` is not a complete listing of what is inside.
+    pub collapsed: bool,
+    pub children: Vec<SpaceNodeDto>,
+}
+
+/// The measured tree, for the UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SpaceLensReportDto {
+    pub roots: Vec<SpaceNodeDto>,
+    pub total_bytes: u64,
+    pub total_files: u64,
+    pub examined: usize,
+    pub truncated: bool,
+    pub skipped_unreadable: usize,
+    pub skipped_too_deep: usize,
+    /// Files reached through more than one hard link, counted once. Not a
+    /// reason for `partial` — it makes the total more accurate, not less.
+    pub deduped_hardlinks: usize,
+    /// True when the tree describes less than what is on disk, for any reason.
+    /// The UI must present the total as a floor when this is set.
+    pub partial: bool,
+}
+
+/// Read-only: measure the discovery scope for the treemap.
+///
+/// Authorizes nothing and returns nothing actionable.
+pub fn space_lens(home: &Path) -> SpaceLensReportDto {
+    let report = spacelens::measure_in(home);
+    SpaceLensReportDto {
+        roots: report.roots.iter().map(space_node).collect(),
+        total_bytes: report.total_bytes,
+        total_files: report.total_files,
+        examined: report.examined,
+        truncated: report.truncated,
+        skipped_unreadable: report.skipped_unreadable,
+        skipped_too_deep: report.skipped_too_deep,
+        deduped_hardlinks: report.deduped_hardlinks,
+        partial: report.is_partial(),
+    }
+}
+
+fn space_node(node: &spacelens::Node) -> SpaceNodeDto {
+    SpaceNodeDto {
+        name: node.name.clone(),
+        // `and_then(to_str)`, so a path that cannot round-trip becomes `None`
+        // rather than a lossy string. The walk already declines to address such
+        // a node, and this is the second half of that same decision: a name to
+        // draw, never an address to trust.
+        path: node
+            .path
+            .as_deref()
+            .and_then(|p| p.to_str())
+            .map(String::from),
+        bytes: node.bytes,
+        files: node.files,
+        is_dir: node.is_dir,
+        collapsed: node.collapsed,
+        children: node.children.iter().map(space_node).collect(),
     }
 }
 

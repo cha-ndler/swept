@@ -14,3 +14,4 @@ pub mod loginitems;
 pub mod plan;
 pub mod report;
 pub mod scanner;
+pub mod spacelens;

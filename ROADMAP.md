@@ -333,8 +333,8 @@ instead.**
     holding hex — tokens are now RGB channels), and **every confirmation-sheet
     screenshot since the clean flow shipped was a mid-animation frame**
     (`page.screenshot` does not disable animations; `toHaveScreenshot` does).
-- [ ] **M3 — Space Lens** — *engine + command layer done; the visualization is
-  outstanding.*
+- [ ] **M3 — Space Lens** — *engine, command layer and visualization done; the
+  follow-ups below are open.*
   - [x] **Engine + command layer.** `core/src/spacelens.rs` measures the
     discovery roots with one thread per root and returns a tree DTO. It is the
     first module that cannot authorize anything even in principle — no
@@ -351,8 +351,35 @@ instead.**
     `truncated` / `skipped_too_deep` drive `partial`, while
     `deduped_hardlinks` deliberately does not — deduplicating makes the figure
     more accurate, not less complete.
-  - [ ] **The visualization.** Treemap or sunburst, plus the `partial` notice.
-    *Visual → taste gate.*
+  - [x] **The visualization.** A three-ring sunburst with a breadcrumb, a
+    largest-children list beside it, and the `partial` caveat. The module's own
+    claim — that it cannot act — is carried by a **"Read-only view"** mark in
+    the toolbar and a footer naming Large & Old as where consent happens; the
+    UX suite asserts the *absence* of any disposal control, which nothing else
+    in the app has to. The sunburst is `aria-hidden` and the list carries the
+    same navigation as real buttons, so no wedge is the only way to anything.
+    Three things surfaced on the way, all fixed at the root: **the UX oracle
+    was scoring a different git worktree** (a stale `vite preview` on 4173 plus
+    `reuseExistingServer: true` — now `false`, so an occupied port fails loudly
+    instead of silently substituting a build); **screenshots recorded whatever
+    hover state the last click left behind** (`capture()` now parks the
+    pointer, the same class of bug as the mid-animation frames); and
+    **`opacity-45` as a de-emphasis took row text from 12.09:1 to 4.06:1**,
+    caught by axe — emphasis is now drawn by lifting the match, never by fading
+    the rest.
+  - [ ] **Re-measure on drill-in.** The tree is whatever one walk produced, so
+    drilling past `DEFAULT_MAX_DEPTH` stops at a `collapsed` node instead of
+    measuring deeper. Needs a `space_lens_at(path)` command, which means
+    accepting a path from the frontend — read-only, but still a new surface to
+    confine to the discovery scope.
+  - [ ] **Bound the materialized node count.** The depth and width caps bound
+    the tree's *shape*, not its *size*: `24` children over `4` levels admits a
+    six-figure node count on a `node_modules`-heavy disk, and the whole thing
+    is serialized to the webview in one payload. Real homes are nowhere near
+    it, which is exactly why it will not be noticed until it is.
+  - [ ] **Reveal in Finder.** The design artboard offers it; there is no such
+    command, so the UI deliberately does not promise one. Adding it means
+    `open -R` with a frontend-supplied path.
 
   Two things this surfaced that are **not** M3's to fix:
   - **Space Lens reports allocated bytes (`st_blocks × 512`); Large & Old

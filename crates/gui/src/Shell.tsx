@@ -48,6 +48,32 @@ export function FilesIcon({ size }: { size?: number }) {
   );
 }
 
+/** The aperture — Space Lens. Something you look through, not something you use. */
+export function LensIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <circle cx="8" cy="8" r="6.3" />
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M8 1.7v3.9M8 10.4v3.9M1.7 8h3.9M10.4 8h3.9" />
+    </Icon>
+  );
+}
+
+/** Breadcrumb separator and the "go up" affordance. */
+export function ChevronIcon({
+  size,
+  dir = "right",
+}: {
+  size?: number;
+  dir?: "left" | "right";
+}) {
+  return (
+    <Icon size={size}>
+      <path d={dir === "right" ? "M6 3.5 10.5 8 6 12.5" : "M10 3.5 5.5 8 10 12.5"} />
+    </Icon>
+  );
+}
+
 export function WrenchIcon({ size }: { size?: number }) {
   return (
     <Icon size={size}>

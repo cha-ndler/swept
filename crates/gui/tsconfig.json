@@ -16,5 +16,11 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  // `ux/fixtures.ts` is included on purpose: it claims to mirror the backend
+  // DTOs, and until now nothing checked that claim — Playwright transpiles
+  // with esbuild, which strips types without verifying them, so a fixture
+  // could drift from `types.ts` and only the screenshots would ever know.
+  // The spec files themselves stay out: they would need Node type
+  // definitions, and their payloads reach the app as `unknown` anyway.
+  "include": ["src", "ux/fixtures.ts"]
 }

@@ -2,11 +2,12 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import CleanView from "./CleanView";
 import LargeOldView from "./LargeOldView";
+import SpaceLensView from "./SpaceLensView";
 import StartupView from "./StartupView";
-import { FilesIcon, ShieldIcon, StackIcon, WrenchIcon } from "./Shell";
+import { FilesIcon, LensIcon, ShieldIcon, StackIcon, WrenchIcon } from "./Shell";
 import { formatBytes } from "./format";
 
-type Module = "cleanup" | "large-old" | "startup";
+type Module = "cleanup" | "large-old" | "space-lens" | "startup";
 
 /**
  * The app shell: a persistent module sidebar beside a content pane.
@@ -25,9 +26,11 @@ type Module = "cleanup" | "large-old" | "startup";
  * dead rows would promise a capability that isn't there — the same class of
  * dishonesty as the sample-data fallback removed in v0.3.
  */
+const MODULES = ["cleanup", "large-old", "space-lens", "startup"] as const;
+
 function initialModule(): Module {
   const tab = new URLSearchParams(window.location.search).get("tab");
-  return tab === "startup" || tab === "large-old" ? tab : "cleanup";
+  return MODULES.includes(tab as Module) ? (tab as Module) : "cleanup";
 }
 
 export default function App() {
@@ -39,6 +42,7 @@ export default function App() {
   );
   const [reclaimable, setReclaimable] = useState<number | null>(null);
   const [largeOldBytes, setLargeOldBytes] = useState<number | null>(null);
+  const [measuredBytes, setMeasuredBytes] = useState<number | null>(null);
   const [loginCount, setLoginCount] = useState<number | null>(null);
 
   function open(m: Module) {
@@ -64,12 +68,25 @@ export default function App() {
           onClick={() => open("cleanup")}
         />
 
+        {/* Explore, not Clean. Neither of these two removes anything on its
+            own — Large & Old needs a per-file grant and Space Lens cannot act
+            at all — so grouping them under the same heading as the sweep would
+            misdescribe what pressing them does. */}
+        <SideLabel>Explore</SideLabel>
         <ModuleButton
           icon={<FilesIcon />}
           name="Large & Old"
           badge={largeOldBytes === null ? "—" : formatBytes(largeOldBytes)}
           active={active === "large-old"}
           onClick={() => open("large-old")}
+        />
+
+        <ModuleButton
+          icon={<LensIcon />}
+          name="Space Lens"
+          badge={measuredBytes === null ? "—" : formatBytes(measuredBytes)}
+          active={active === "space-lens"}
+          onClick={() => open("space-lens")}
         />
 
         <SideLabel>Protect</SideLabel>
@@ -104,6 +121,11 @@ export default function App() {
         {visited.has("large-old") && (
           <Pane show={active === "large-old"}>
             <LargeOldView onTotal={setLargeOldBytes} />
+          </Pane>
+        )}
+        {visited.has("space-lens") && (
+          <Pane show={active === "space-lens"}>
+            <SpaceLensView onTotal={setMeasuredBytes} />
           </Pane>
         )}
         {visited.has("startup") && (

@@ -245,9 +245,15 @@ export const SAMPLE_SPACE_LENS: SpaceLensReport = {
   truncated: false,
   skipped_unreadable: 3,
   skipped_too_deep: 0,
+  nodes: countNodes(SPACE_ROOTS),
+  node_budget_reached: false,
   deduped_hardlinks: 118,
   partial: true,
 };
+
+function countNodes(nodes: SpaceNode[]): number {
+  return nodes.reduce((n, c) => n + 1 + countNodes(c.children), 0);
+}
 
 /** The same tree with nothing missing, for asserting the caveat stays away. */
 export const SAMPLE_SPACE_LENS_COMPLETE: SpaceLensReport = {
@@ -264,6 +270,8 @@ export const SAMPLE_SPACE_LENS_EMPTY: SpaceLensReport = {
   truncated: false,
   skipped_unreadable: 0,
   skipped_too_deep: 0,
+  nodes: 0,
+  node_budget_reached: false,
   deduped_hardlinks: 0,
   partial: false,
 };

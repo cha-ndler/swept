@@ -78,6 +78,8 @@ fn the_payload_serializes_with_the_field_names_the_frontend_reads() {
         "truncated",
         "skipped_unreadable",
         "skipped_too_deep",
+        "nodes",
+        "node_budget_reached",
         "deduped_hardlinks",
         "partial",
     ] {

@@ -447,6 +447,12 @@ pub struct SpaceLensReportDto {
     pub truncated: bool,
     pub skipped_unreadable: usize,
     pub skipped_too_deep: usize,
+    /// How many nodes this payload actually contains.
+    pub nodes: usize,
+    /// True if the tree stopped growing at the node budget. Like the depth cap
+    /// this stops the drawing, not the measuring — so it is **not** a reason
+    /// for `partial`; the affected directories are marked `collapsed` instead.
+    pub node_budget_reached: bool,
     /// Files reached through more than one hard link, counted once. Not a
     /// reason for `partial` — it makes the total more accurate, not less.
     pub deduped_hardlinks: usize,
@@ -468,6 +474,8 @@ pub fn space_lens(home: &Path) -> SpaceLensReportDto {
         truncated: report.truncated,
         skipped_unreadable: report.skipped_unreadable,
         skipped_too_deep: report.skipped_too_deep,
+        nodes: report.nodes,
+        node_budget_reached: report.node_budget_reached,
         deduped_hardlinks: report.deduped_hardlinks,
         partial: report.is_partial(),
     }

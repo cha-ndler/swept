@@ -99,6 +99,14 @@ export interface SpaceLensReport {
   truncated: boolean;
   skipped_unreadable: number;
   skipped_too_deep: number;
+  /** How many nodes this payload actually contains. */
+  nodes: number;
+  /**
+   * True when the tree stopped growing at the node budget. Like the depth cap
+   * this stops the drawing, not the measuring, so it is deliberately **not** a
+   * reason for `partial` — the affected folders are `collapsed` instead.
+   */
+  node_budget_reached: boolean;
   /** Files reached through more than one name, counted once. */
   deduped_hardlinks: number;
   /** True when the tree describes less than what is on disk, for any reason. */

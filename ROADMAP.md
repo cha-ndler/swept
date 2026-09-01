@@ -410,13 +410,57 @@ instead.**
     `resolve_roots`. Worth writing down because the two are easy to conflate:
     the roots list says what may be *read*, and `resolve_roots` is a stricter
     filter that two specific walkers apply on top of it.
-- [ ] **M4 — Uninstaller (leftovers-only)** — leftovers for a chosen bundle id
-  under `~/Library/{Application Support,Caches,Preferences,Containers,…}`.
-  **Removing the `.app` bundle itself is out of scope** — `/Applications` is on
-  `PROTECTED_ABS_ROOTS` and carving it out is a denylist amendment needing
-  explicit sign-off. **Depends on `guard_dir`** (see v0.3): leftover trees are
-  directory actions, and `guard()` alone only suffices while every target is a
-  single file. *Riskiest task in the plan.*
+- [ ] **M4 — Uninstaller (leftovers-only)** — *discovery over the id-keyed
+  locations is done; containers, the human-name tier and disposal are open.*
+  **Removing the `.app` bundle itself stays out of scope** — `/Applications` is
+  on `PROTECTED_ABS_ROOTS` and carving it out is a denylist amendment needing
+  explicit sign-off. *Riskiest task in the plan.*
+  - [x] **Leftover discovery, id-keyed.** `core/src/uninstall.rs` searches nine
+    locations for a bundle id and reports what it finds, read-only. The whole
+    module exists to get one predicate right, because the failure mode is
+    offering a **still-installed** app's data and nothing downstream objects —
+    the denylist has no opinion about who owns `~/Library/Caches/com.acme.Notes`.
+    The rule, in three load-bearing parts: **segments, never bytes**
+    (`com.acme.Note` must not claim `com.acme.Notes`); **byte-exact case**, with
+    the near-miss counted rather than folded — everywhere else in this codebase
+    folding can only *protect* more paths and is right, here it can only *claim*
+    more and is wrong in both directions at once; and **the longest installed
+    owner wins**, so `com.acme.Suite.Reader` is withheld from `com.acme.Suite`
+    while Reader is installed. Nested helper ids go into the owner index and are
+    used **only to withhold, never to claim**, which handles a crash reporter
+    embedded in six vendors' apps with no special case. Also: an unreadable
+    `/Applications` **refuses the scan** rather than reporting an orphan, and
+    `inventory_roots` deliberately does **not** go through `resolve_roots` —
+    that function drops denylisted roots and documents it as "nothing to
+    report", which is right for a size walk and catastrophic for an authority
+    check, since a shrunken inventory makes installed apps look uninstalled.
+    Sizes count every *name*, the opposite of Space Lens, because a disposal
+    unlinks names.
+  - [ ] **Containers and the human-name tier.** `~/Library/Containers` holds the
+    app's redirected home — `Data/Documents` is where a sandboxed app puts the
+    user's only copy of a file — so it must be decomposed into its cache-like
+    parts via an **inclusion** list, never offered as one row. Group Containers
+    are shared by construction and stay unclaimable. `~/Library/Application
+    Support` is matched by exact id today; most apps name that directory after
+    themselves, so the name tier needs sole-ownership and corroboration gates.
+  - [ ] **Directory-aware disposal.** The part that actually needs `guard_dir`:
+    `PlannedAction` is files-only and `executor::authorize` refuses every
+    directory target. One reviewed change, `deletion-safety-reviewer` required.
+  - [ ] **The module UI.** *Visual → taste gate.*
+
+  Open questions the design surfaced, for the human:
+  - **Where does the bundle id come from once the app is gone?** Either the UI
+    records identity *before* the user removes the app, or an "orphan sweep"
+    enumerates leftovers first and infers candidates. This decides whether
+    `uninstall.rs` needs an `orphans()` entry point.
+  - **Is a subprocess ever acceptable here?** Reading
+    `com.apple.security.application-groups` via `codesign` is the only
+    mechanical route to Group Containers, and there is no subprocess anywhere in
+    this workspace today. Answered "no" for now, which makes group containers
+    permanently unclaimable.
+  - **Should disposal require the app be quit?** `cfprefsd` can resurrect
+    `~/Library/Preferences/<id>.plist` after removal, so "removed" would be true
+    at the moment of the action and false a second later.
 - [ ] **M5 — Privacy** — browser caches/cookies/history. **Cookies sign the user
   out everywhere** — separately opt-in, never pre-selected, never in Smart Scan
   defaults, labelled with that consequence.

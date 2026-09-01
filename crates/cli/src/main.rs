@@ -137,6 +137,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 allow_permanent: permanent,
                 confirmed_mass_delete: confirm,
                 granted: Vec::new(),
+                granted_dirs: Vec::new(),
             };
             let audit_path = resolve_audit_path(audit, &home)?;
             let mut log = AuditLog::open(&audit_path)?;

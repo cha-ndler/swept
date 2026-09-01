@@ -132,6 +132,7 @@ pub fn gui_consent(confirm_mass_delete: bool) -> Consent {
         allow_permanent: false,
         confirmed_mass_delete: confirm_mass_delete,
         granted: Vec::new(),
+        granted_dirs: Vec::new(),
     }
 }
 
@@ -660,6 +661,7 @@ pub fn dispose_selected_with_sink(
     let plan = Plan {
         actions,
         skipped_protected: 0,
+        dirs: Vec::new(),
     };
 
     if let Some(exp) = expected {
@@ -683,6 +685,7 @@ pub fn dispose_selected_with_sink(
         allow_permanent: false,
         confirmed_mass_delete: confirm_mass_delete,
         granted,
+        granted_dirs: Vec::new(),
     };
 
     match execute(&plan, consent, home, sink, audit) {

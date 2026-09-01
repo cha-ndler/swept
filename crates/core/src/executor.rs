@@ -21,7 +21,7 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use safety::{allowlist, guard, SafePath};
+use safety::{allowlist, guard, guard_dir, DirLimits, SafeDir, SafePath};
 
 use crate::audit::{now_ms, AuditEntry, AuditLog, Disposition, Phase};
 use crate::plan::{Disposal, Plan};
@@ -33,14 +33,21 @@ use crate::plan::{Disposal, Plan};
 pub trait Sink {
     /// Move to the Trash (recoverable).
     ///
-    /// This one has **no** directory backstop, and the asymmetry is deliberate
-    /// rather than an oversight. `trash::delete` and `fs::rename` both accept a
-    /// directory, and neither has a file-only variant — so if a directory were
-    /// swapped onto the name after `authorize` inspected it, a whole tree would
-    /// move to the Trash. That outcome is recoverable and fully audited, which
-    /// is what makes it tolerable where the same race on [`Sink::delete`] would
-    /// not be. The one dishonesty it can produce: the audit record would carry
-    /// the planned *file's* `size_bytes` for a tree.
+    /// This one accepts a directory, and since M4 that is a legitimate use: a
+    /// `PlannedDirAction` — a tree walked in full by `safety::guard_dir` and
+    /// named by an explicit grant — is moved here as one recoverable unit,
+    /// with the freshly-walked recursive size and entry count on its audit
+    /// record.
+    ///
+    /// It also has **no** directory backstop for the *file* path, and that
+    /// asymmetry is deliberate rather than an oversight. `trash::delete` and
+    /// `fs::rename` both accept a directory, and neither has a file-only
+    /// variant — so if a directory were swapped onto a file's name after
+    /// `authorize` inspected it, a whole tree would move to the Trash. That
+    /// outcome is recoverable and fully audited, which is what makes it
+    /// tolerable where the same race on [`Sink::delete`] would not be. The one
+    /// dishonesty it can produce: the audit record would carry the planned
+    /// *file's* `size_bytes` for a tree.
     fn trash(&self, path: &Path) -> io::Result<()>;
 
     /// Irreversibly remove a single *file*.
@@ -124,28 +131,55 @@ pub struct Consent {
     ///   a grant can never resurrect `/Applications` or `~/Library/Mail`.
     /// - Matching is **exact**. A grant authorizes one path and confers nothing
     ///   on its children, so granting a directory does not grant its contents.
-    /// - Grants must name **files**, though not as a special rule: the executor
-    ///   refuses *every* directory target, granted or allowlisted, because
-    ///   nothing plans directory actions yet. See [`authorize`].
-    /// - The list is capped at [`MAX_GRANTS`] and over-long lists refuse the
-    ///   whole run rather than being truncated.
+    /// - Grants in this list name **files**. A file action that names a
+    ///   directory is refused whatever authorized it — see [`authorize`];
+    ///   directories have their own list below and their own action shape.
+    /// - The list is capped at [`MAX_GRANTS`] (shared with `granted_dirs`) and
+    ///   over-long lists refuse the whole run rather than being truncated.
     /// - Every grant-authorized disposal is audited with a distinguishing note.
     pub granted: Vec<SafePath>,
+    /// Directories the user picked out individually — the Uninstaller's
+    /// leftover trees. The same bounds as `granted`, plus:
+    ///
+    /// - Entries are [`SafeDir`]s, so each tree was walked in full by
+    ///   [`safety::guard_dir`] and found free of protected paths at every
+    ///   depth. There is no other constructor, so the walk happened.
+    /// - Matching is **exact** and confers nothing on children or parents.
+    /// - There is **no allowlist route** for a directory: a tree inside
+    ///   `~/Library/Caches` still needs a grant. See [`authorize_dir`].
+    /// - A directory action carries no `Disposal`, so it can only ever be
+    ///   trashed. `allow_permanent` does not apply to it.
+    /// - The cap is `granted.len() + granted_dirs.len()`, so a selection cannot
+    ///   double its bound by splitting itself across the two lists.
+    pub granted_dirs: Vec<SafeDir>,
 }
 
-/// Upper bound on [`Consent::granted`].
+/// Upper bound on [`Consent::granted`] and [`Consent::granted_dirs`] combined.
 ///
 /// Grants come from a human ticking boxes in a list, so this is far above any
 /// plausible hand-picked selection while still ruling out a caller that tries
 /// to hand over a whole walk's worth of paths as "individually chosen".
 pub const MAX_GRANTS: usize = 1_000;
 
+/// What a run did — or, in a dry run, would do.
+///
+/// `planned` and `executed` count *actions*, and a directory action is one
+/// action standing for a whole tree. The magnitude a preview should show a
+/// human comes from [`Plan::count`] and [`Plan::total_bytes`], which see the
+/// tree; never from this struct's action counts.
 #[derive(Debug, Default)]
 pub struct ExecReport {
     pub planned: usize,
     pub executed: usize,
     pub refused: usize,
     pub bytes_executed: u64,
+    /// Names beneath the directory actions a dry run previewed, so a caller
+    /// that only has this struct can still say how many files those actions
+    /// stand for.
+    pub entries_planned: u64,
+    /// Names removed by directory actions, so a caller can say how many files
+    /// one "directory" stood for. Files count in `executed`, not here.
+    pub entries_executed: u64,
     /// True if this run only previewed (no mutations).
     pub dry_run: bool,
 }
@@ -200,20 +234,20 @@ pub fn execute(
 ) -> Result<ExecReport, ExecError> {
     let mut report = ExecReport::default();
 
-    // --- Bound the grant list, in both modes. ---
+    // --- Bound the grant lists, in both modes. ---
     //
     // Checked before the dry-run branch on purpose: a preview that quietly
     // succeeds while the real run would be refused is a preview that lies.
-    if consent.granted.len() > MAX_GRANTS {
+    // One cap over both lists, so a selection cannot double its bound by
+    // splitting itself between files and directories.
+    let grants = consent.granted.len() + consent.granted_dirs.len();
+    if grants > MAX_GRANTS {
         refuse_run(
             audit,
-            &format!(
-                "{} individually-granted paths exceeds the limit of {MAX_GRANTS}",
-                consent.granted.len()
-            ),
+            &format!("{grants} individually-granted paths exceeds the limit of {MAX_GRANTS}"),
         )?;
         return Err(ExecError::TooManyGrants {
-            count: consent.granted.len(),
+            count: grants,
             max: MAX_GRANTS,
         });
     }
@@ -239,7 +273,15 @@ pub fn execute(
         for a in &plan.actions {
             match authorize(&a.path, &allowed, &consent.granted) {
                 Authorization::Refused(reason) => {
-                    refuse(&mut report, audit, a.path.as_path(), a.size_bytes, reason)?;
+                    refuse(
+                        &mut report,
+                        audit,
+                        Phase::Planned,
+                        a.path.as_path(),
+                        a.size_bytes,
+                        None,
+                        reason,
+                    )?;
                 }
                 auth => {
                     record(
@@ -248,9 +290,41 @@ pub fn execute(
                         disposition_for(a.disposal, false),
                         a.path.as_path(),
                         a.size_bytes,
+                        None,
                         note_for(auth),
                     )?;
                     report.planned += 1;
+                }
+            }
+        }
+        // Directory actions preview under exactly the rule they execute
+        // under: by grant, and by nothing else. No re-walk here, for the
+        // reason given above — there is no mutation to precede.
+        for d in &plan.dirs {
+            match authorize_dir(&d.dir, &consent.granted_dirs) {
+                Err(reason) => refuse(
+                    &mut report,
+                    audit,
+                    Phase::Planned,
+                    d.dir.as_path(),
+                    d.dir.bytes(),
+                    Some(d.dir.entries() as u64),
+                    reason,
+                )?,
+                Ok(()) => {
+                    record(
+                        audit,
+                        Phase::Planned,
+                        Disposition::Trash,
+                        d.dir.as_path(),
+                        d.dir.bytes(),
+                        Some(d.dir.entries() as u64),
+                        Some(GRANT_DIR_NOTE.to_string()),
+                    )?;
+                    report.planned += 1;
+                    report.entries_planned = report
+                        .entries_planned
+                        .saturating_add(d.dir.entries() as u64);
                 }
             }
         }
@@ -285,8 +359,10 @@ pub fn execute(
                 refuse(
                     &mut report,
                     audit,
+                    Phase::Executed,
                     a.path.as_path(),
                     a.size_bytes,
+                    None,
                     &e.to_string(),
                 )?;
                 continue;
@@ -296,7 +372,15 @@ pub fn execute(
         // a grant widens where we may act, it never bypasses the denylist.
         let auth = authorize(&safe, &allowed, &consent.granted);
         if let Authorization::Refused(reason) = auth {
-            refuse(&mut report, audit, safe.as_path(), a.size_bytes, reason)?;
+            refuse(
+                &mut report,
+                audit,
+                Phase::Executed,
+                safe.as_path(),
+                a.size_bytes,
+                None,
+                reason,
+            )?;
             continue;
         }
         let note = note_for(auth);
@@ -324,6 +408,7 @@ pub fn execute(
                 disposition,
                 safe.as_path(),
                 a.size_bytes,
+                None,
                 note.clone(),
             )?;
         }
@@ -345,6 +430,7 @@ pub fn execute(
                         disposition,
                         safe.as_path(),
                         a.size_bytes,
+                        None,
                         note,
                     )?;
                 }
@@ -355,8 +441,130 @@ pub fn execute(
                 refuse(
                     &mut report,
                     audit,
+                    Phase::Executed,
                     safe.as_path(),
                     a.size_bytes,
+                    None,
+                    &e.to_string(),
+                )?;
+            }
+        }
+    }
+
+    // --- Directory actions: by grant only, re-walked immediately before. ---
+    for d in &plan.dirs {
+        report.planned += 1;
+        let planned = d.dir.as_path();
+        let planned_entries = Some(d.dir.entries() as u64);
+
+        // The TOCTOU re-walk. `guard_dir` runs the denylist on the root and on
+        // every entry at every depth, so a `.git` that appeared, a component
+        // swapped for a symlink, or a tree that outgrew `DirLimits` since the
+        // plan was built is refused here rather than trashed.
+        let fresh = match guard_dir(planned, home, DirLimits::default()) {
+            Ok(f) => f,
+            Err(e) => {
+                refuse(
+                    &mut report,
+                    audit,
+                    Phase::Executed,
+                    planned,
+                    d.dir.bytes(),
+                    planned_entries,
+                    &e.to_string(),
+                )?;
+                continue;
+            }
+        };
+        // A root that now resolves elsewhere is not the directory that was
+        // planned, whatever the walk found there.
+        if fresh.as_path() != planned {
+            // The one refusal a user most needs to reconstruct afterwards, so
+            // the record says where the granted path now leads.
+            refuse(
+                &mut report,
+                audit,
+                Phase::Executed,
+                planned,
+                d.dir.bytes(),
+                planned_entries,
+                &format!(
+                    "the directory now resolves elsewhere, to {}",
+                    fresh.as_path().display()
+                ),
+            )?;
+            continue;
+        }
+        // No growth. The mass-delete gate above measured the *planned*
+        // figures; a tree that gained entries or bytes since then could cross
+        // a threshold the user never confirmed. Shrinking is fine, and the
+        // fresh figures are what get audited.
+        if fresh.entries() > d.dir.entries() || fresh.bytes() > d.dir.bytes() {
+            refuse(
+                &mut report,
+                audit,
+                Phase::Executed,
+                planned,
+                fresh.bytes(),
+                Some(fresh.entries() as u64),
+                "the directory grew since it was planned, so the confirmed figures no longer \
+                 describe it",
+            )?;
+            continue;
+        }
+        // Authorization sits behind the re-walk, exactly as for files: a grant
+        // widens where we may act, it never bypasses the denylist. Matched
+        // against the fresh path.
+        if let Err(reason) = authorize_dir(&fresh, &consent.granted_dirs) {
+            refuse(
+                &mut report,
+                audit,
+                Phase::Executed,
+                fresh.as_path(),
+                fresh.bytes(),
+                Some(fresh.entries() as u64),
+                reason,
+            )?;
+            continue;
+        }
+        // Trash only. There is no permanent branch to fall into — the action
+        // type cannot express one — and the move is recoverable, so it is
+        // recorded after success like any other trash disposal.
+        //
+        // The residual, stated rather than assumed: the re-walk above is
+        // O(tree), and between its last `read_dir` and the move below content
+        // can still be added — a file, or for that matter a `.git` checkout —
+        // and it goes to the Trash with the tree, uncounted, so the record's
+        // `entries` and `size_bytes` understate what moved. This window cannot
+        // be closed from user space. It is tolerable for the same three
+        // reasons the file path's race is: the destination is recoverable,
+        // `remove_dir_all` appears nowhere in this crate, and the record
+        // names the path so the tree can be found and inspected.
+        match sink.trash(fresh.as_path()) {
+            Ok(()) => {
+                report.executed += 1;
+                report.bytes_executed = report.bytes_executed.saturating_add(fresh.bytes());
+                report.entries_executed = report
+                    .entries_executed
+                    .saturating_add(fresh.entries() as u64);
+                record(
+                    audit,
+                    Phase::Executed,
+                    Disposition::Trash,
+                    fresh.as_path(),
+                    fresh.bytes(),
+                    Some(fresh.entries() as u64),
+                    Some(GRANT_DIR_NOTE.to_string()),
+                )?;
+            }
+            Err(e) => {
+                refuse(
+                    &mut report,
+                    audit,
+                    Phase::Executed,
+                    fresh.as_path(),
+                    fresh.bytes(),
+                    Some(fresh.entries() as u64),
                     &e.to_string(),
                 )?;
             }
@@ -373,10 +581,19 @@ pub fn execute(
 /// nobody else vetted, the second is the tool doing its documented job.
 const GRANT_NOTE: &str = "user-granted path outside the allowlist";
 
-/// Refusal reason for a directory target. See [`authorize`] for why this is a
-/// blanket refusal rather than a `safety::guard_dir` gate.
-const DIRECTORY_REFUSAL: &str =
-    "directory target; recursive disposal is not enabled (needs directory-aware planning)";
+/// Audit note for a directory disposed of by grant. Distinct from
+/// [`GRANT_NOTE`] so the log tells one file from a whole tree at a glance.
+const GRANT_DIR_NOTE: &str =
+    "user-granted directory (uninstaller leftover), moved to the Trash as one recoverable unit";
+
+/// Refusal reason for a *file* action that names a directory. See
+/// [`authorize`] for why that is a blanket refusal rather than a
+/// `safety::guard_dir` gate.
+const DIRECTORY_REFUSAL: &str = "directory target; a file action cannot name a directory — \
+     directories are planned as directory actions and need an explicit grant";
+
+/// Refusal reason for a directory action nobody granted. See [`authorize_dir`].
+const DIR_REQUIRES_GRANT: &str = "directory target; disposal requires an explicit per-path grant";
 
 /// Why a path may be disposed of — or why it may not.
 #[derive(Clone, Copy)]
@@ -391,19 +608,18 @@ enum Authorization {
 /// Decide whether `safe` may be acted on. Called *after* the pre-mutation
 /// re-guard, so `safe` has already survived the denylist.
 fn authorize(safe: &SafePath, allowed: &[PathBuf], granted: &[SafePath]) -> Authorization {
-    // Directory targets are refused outright, wherever the authorization would
-    // have come from. One directory action stands for an unknown number of
-    // files, so a check on the directory's own path is not a check on what is
-    // about to be removed — the dangerous content is inside it.
+    // Directory targets are refused outright on *this* path, wherever the
+    // authorization would have come from. One directory action stands for an
+    // unknown number of files, so a check on the directory's own path is not
+    // a check on what is about to be removed — the dangerous content is
+    // inside it.
     //
-    // `safety::guard_dir` is the answer to that, and it now exists: it walks
-    // the tree, refuses a `.git` at any depth, and fails closed on anything it
-    // cannot read or that exceeds its bounds. What does not exist yet is a
-    // *planner* that produces directory actions — `scanner.rs` plans files
-    // only — so wiring `guard_dir` in here would add an unused destructive
-    // capability to a tool whose contract says to refuse when in doubt. M4
-    // introduces directory-aware planning and turns this refusal into a
-    // `guard_dir` gate, in one reviewed change.
+    // Directories have their own path through the executor: a
+    // `PlannedDirAction` carries a `SafeDir` from `safety::guard_dir` — the
+    // tree walked in full, refused on a `.git` at any depth, failed closed on
+    // anything unreadable or out of bounds — and is authorized by
+    // `authorize_dir`, by explicit grant only. A *file* action that names a
+    // directory is therefore always a mistake, and still refused here.
     //
     // Checked before authorization so the refusal reason names the real
     // problem rather than blaming the allowlist for it.
@@ -438,6 +654,24 @@ fn authorize(safe: &SafePath, allowed: &[PathBuf], granted: &[SafePath]) -> Auth
     }
 
     Authorization::Granted
+}
+
+/// Decide whether a directory may be acted on: by explicit grant, and by
+/// nothing else. Called *after* the pre-mutation re-walk, so `fresh` has
+/// already survived the denylist at every depth.
+///
+/// There is deliberately no allowlist branch. A single file inside
+/// `~/Library/Caches` is ordinary policy-driven cleanup; a whole directory
+/// there is a tree nobody itemised, and the allowlist was never a statement
+/// about trees. So a directory is disposable only because a human pointed at
+/// exactly this path — and, as with file grants, exact equality confers
+/// nothing on children or parents.
+fn authorize_dir(fresh: &SafeDir, granted: &[SafeDir]) -> Result<(), &'static str> {
+    if granted.iter().any(|g| g.as_path() == fresh.as_path()) {
+        Ok(())
+    } else {
+        Err(DIR_REQUIRES_GRANT)
+    }
 }
 
 /// The audit note an authorization deserves. `Refused` never reaches here —
@@ -480,6 +714,7 @@ fn refuse_run(audit: &mut AuditLog, reason: &str) -> Result<(), ExecError> {
         Disposition::Refused,
         Path::new(WHOLE_RUN),
         0,
+        None,
         Some(reason.to_string()),
     )
 }
@@ -497,6 +732,7 @@ fn record(
     disposition: Disposition,
     path: &Path,
     size_bytes: u64,
+    entries: Option<u64>,
     note: Option<String>,
 ) -> Result<(), ExecError> {
     audit
@@ -506,25 +742,35 @@ fn record(
             disposition,
             path: path.display().to_string(),
             size_bytes,
+            entries,
             note,
         })
         .map_err(ExecError::Audit)
 }
 
+/// Record a refusal and count it.
+///
+/// `phase` is the caller's, not a constant: a dry run must never write a line
+/// claiming something was executed, and a refusal is no exception. (It used to
+/// be — every preview refusal was logged as `executed`, and nothing pinned the
+/// phase, so it went unnoticed until directory actions copied the pattern.)
 fn refuse(
     report: &mut ExecReport,
     audit: &mut AuditLog,
+    phase: Phase,
     path: &Path,
     size: u64,
+    entries: Option<u64>,
     note: &str,
 ) -> Result<(), ExecError> {
     report.refused += 1;
     record(
         audit,
-        Phase::Executed,
+        phase,
         Disposition::Refused,
         path,
         size,
+        entries,
         Some(note.to_string()),
     )
 }

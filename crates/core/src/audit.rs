@@ -38,6 +38,12 @@ pub struct AuditEntry {
     /// Absolute, canonical path.
     pub path: String,
     pub size_bytes: u64,
+    /// Names beneath a directory target, when the record is for one. One log
+    /// line standing for thousands of files must say so as data, not only in
+    /// prose. Absent for a file, so every file record serializes exactly as it
+    /// always has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entries: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }

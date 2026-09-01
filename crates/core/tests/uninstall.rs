@@ -19,8 +19,10 @@ use std::path::{Path, PathBuf};
 use macclean_core::uninstall::{
     inventory, inventory_roots, leftovers_for, leftovers_for_named, owner_index, BundleId,
     DisplayName, Kind, Location, MatchedVia, Residence, UninstallConfig, UninstallError,
-    CONTAINER_STATE_PARTS, CONTAINER_USER_DATA_PARTS, DEFERRED_LOCATIONS, SEARCHED_LOCATIONS,
+    CFPREFSD_CAVEAT, CONTAINER_STATE_PARTS, CONTAINER_USER_DATA_PARTS, DEFERRED_LOCATIONS,
+    SEARCHED_LOCATIONS,
 };
+use safety::DirLimits;
 
 // --- fixtures --------------------------------------------------------------
 
@@ -1442,4 +1444,201 @@ fn an_unrelated_symlink_in_a_location_does_not_make_the_report_partial() {
     assert_eq!(offerable(&report), vec![caches]);
     assert_eq!(report.skipped_symlink, 0, "not ours, not a gap");
     assert!(!report.is_partial());
+}
+
+// --- an offer the tool cannot honour is not an offer -------------------------
+//
+// Disposal of a directory goes through `guard_dir`, which refuses a tree with
+// a protected path at any depth or one outside `DirLimits`. A row this scan
+// already knows `guard_dir` will refuse must not be offered: showing a user a
+// checkbox that is certain to fail is a lie of a different shape, and the
+// discovery half is the only place that knows in advance.
+
+#[test]
+fn a_leftover_tree_containing_a_git_checkout_is_shown_and_not_offered() {
+    let (_g, home, apps) = fixture();
+    // A vendored checkout inside a cache — an Electron app's plugin, say.
+    let dir = leftover_dir(&home, Location::Caches, "com.acme.App", 4_000);
+    write_file(&dir.join("plugins/vendor/.git/HEAD"), 100);
+    let clean = leftover_dir(&home, Location::Logs, "com.acme.App", 100);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    assert_eq!(offerable(&report), vec![clean]);
+    let row = report.rows.iter().find(|r| r.path == dir).expect("shown");
+    assert!(!row.offerable, "guard_dir is certain to refuse it");
+    assert!(!row.bulk_grantable);
+    assert!(row.undisposable.is_some());
+    assert!(row
+        .withheld
+        .as_deref()
+        .is_some_and(|w| w.contains("protected")));
+    assert_eq!(report.withheld_count, 1);
+}
+
+#[test]
+fn a_leftover_tree_beyond_the_dir_limits_is_flagged_and_not_offered() {
+    let (_g, home, apps) = fixture();
+    let dir = leftover_dir(&home, Location::Caches, "com.acme.App", 4_000);
+    for i in 0..5 {
+        write_file(&dir.join(format!("f{i}.bin")), 10);
+    }
+
+    // The limits are injectable only so a fixture can reach them: 50,000
+    // files is not a tempdir test.
+    let mut too_many = cfg(&home, &apps);
+    too_many.dir_limits.max_entries = 3;
+    let report = leftovers_for(&too_many, &id("com.acme.App")).unwrap();
+    assert!(
+        offerable(&report).is_empty(),
+        "more entries than guard_dir permits"
+    );
+    assert!(report.rows[0]
+        .undisposable
+        .is_some_and(|w| w.contains("entries")));
+
+    let mut too_big = cfg(&home, &apps);
+    too_big.dir_limits.max_bytes = 100;
+    let report = leftovers_for(&too_big, &id("com.acme.App")).unwrap();
+    assert!(
+        offerable(&report).is_empty(),
+        "larger than guard_dir permits"
+    );
+    assert!(report.rows[0]
+        .undisposable
+        .is_some_and(|w| w.contains("larger")));
+
+    // Depth needs no injection: the walk's own ceiling equals guard_dir's.
+    let (_g2, home2, apps2) = fixture();
+    let deep_root = leftover_dir(&home2, Location::Caches, "com.acme.App", 10);
+    let mut deep = deep_root.clone();
+    for i in 0..(DirLimits::default().max_depth + 1) {
+        deep = deep.join(format!("d{i}"));
+    }
+    write_file(&deep.join("leaf.bin"), 10);
+    let report = leftovers_for(&cfg(&home2, &apps2), &id("com.acme.App")).unwrap();
+    assert!(
+        offerable(&report).is_empty(),
+        "deeper than guard_dir permits"
+    );
+    assert!(report.rows[0]
+        .undisposable
+        .is_some_and(|w| w.contains("deep")));
+}
+
+#[test]
+fn the_flagged_limits_are_the_ones_disposal_will_apply() {
+    // If these ever diverge the flag lies in the dangerous direction: a row
+    // marked disposable that `guard_dir` then refuses, or the reverse.
+    let (_g, home, _apps) = fixture();
+    let ours = UninstallConfig::new(home).dir_limits;
+    let theirs = DirLimits::default();
+    assert_eq!(ours.max_entries, theirs.max_entries);
+    assert_eq!(ours.max_bytes, theirs.max_bytes);
+    assert_eq!(ours.max_depth, theirs.max_depth);
+}
+
+#[test]
+fn flagging_a_row_undisposable_does_not_make_the_report_partial() {
+    let (_g, home, apps) = fixture();
+    let dir = leftover_dir(&home, Location::Caches, "com.acme.App", 4_000);
+    write_file(&dir.join("vendor/.git/HEAD"), 100);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    assert!(!report.rows[0].offerable);
+    assert!(
+        !report.is_partial(),
+        "withholding is the module working; a caveat that fires on correct \
+         behaviour teaches people to ignore it"
+    );
+}
+
+#[test]
+fn an_undisposable_container_part_is_not_offered_while_its_siblings_are() {
+    let (_g, home, apps) = fixture();
+    let root = container(&home, "com.acme.App");
+    let caches = fill(&root, "Library/Caches", 1_000);
+    write_file(&caches.join("repo/.git/config"), 100);
+    let logs = fill(&root, "Library/Logs", 1_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    assert_eq!(offerable(&report), vec![logs]);
+    let row = report
+        .rows
+        .iter()
+        .find(|r| r.path == caches)
+        .expect("shown");
+    assert!(!row.offerable && row.undisposable.is_some());
+}
+
+#[test]
+fn an_undisposable_name_keyed_directory_is_not_offered() {
+    let (_g, home, apps) = fixture();
+    let dir = app_support(&home).join("Acme Notes");
+    write_file(&dir.join("com.acme.Notes.plist"), 100);
+    write_file(&dir.join("extensions/thing/.git/HEAD"), 100);
+
+    let report = leftovers_for_named(
+        &cfg(&home, &apps),
+        &id("com.acme.Notes"),
+        Some(&name("Acme Notes")),
+    )
+    .unwrap();
+
+    assert_eq!(report.rows.len(), 1);
+    assert!(!report.rows[0].offerable);
+    assert!(report.rows[0].undisposable.is_some());
+    assert_eq!(report.withheld_count, 1);
+}
+
+// --- caveats and bulk gestures ----------------------------------------------
+
+#[test]
+fn a_preferences_row_carries_the_cfprefsd_caveat() {
+    let (_g, home, apps) = fixture();
+    leftover_file(&home, Location::Preferences, "com.acme.App.plist", 100);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+    assert!(report.caveats.contains(&CFPREFSD_CAVEAT));
+
+    // And not on a report with nothing cfprefsd would touch.
+    let (_g2, home2, apps2) = fixture();
+    leftover_dir(&home2, Location::Caches, "com.acme.App", 100);
+    let report = leftovers_for(&cfg(&home2, &apps2), &id("com.acme.App")).unwrap();
+    assert!(!report.caveats.contains(&CFPREFSD_CAVEAT));
+
+    // A container's own preferences part counts too.
+    let (_g3, home3, apps3) = fixture();
+    let root = container(&home3, "com.acme.App");
+    fill(&root, "Library/Preferences", 100);
+    let report = leftovers_for(&cfg(&home3, &apps3), &id("com.acme.App")).unwrap();
+    assert!(report.caveats.contains(&CFPREFSD_CAVEAT));
+}
+
+#[test]
+fn a_license_shaped_file_marks_its_row_and_keeps_it_out_of_bulk() {
+    // Names only — nothing is opened. A licence, activation or receipt among a
+    // directory's immediate children is a reason a human should look before a
+    // select-all sweeps the row up; it is not a reason to withhold it.
+    let (_g, home, apps) = fixture();
+    let licensed = leftover_dir(&home, Location::ApplicationSupport, "com.acme.App", 4_000);
+    write_file(&licensed.join("license.lic"), 100);
+    let receipts = leftover_dir(&home, Location::Caches, "com.acme.App", 4_000);
+    fs::create_dir_all(receipts.join("Receipts")).unwrap();
+    let plain = leftover_dir(&home, Location::Logs, "com.acme.App", 4_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    for row in &report.rows {
+        assert!(row.offerable, "{:?}", row.path);
+        let expect = row.path == licensed || row.path == receipts;
+        assert_eq!(row.license_suspected, expect, "{:?}", row.path);
+        assert_eq!(row.bulk_grantable, !expect, "{:?}", row.path);
+    }
+    assert!(report
+        .rows
+        .iter()
+        .any(|r| r.path == plain && r.bulk_grantable));
 }

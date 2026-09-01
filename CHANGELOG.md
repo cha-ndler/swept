@@ -25,8 +25,11 @@ first two modules that look outside the cleanup allowlist.
   `Application Support` inside a container are shown and never offered; group
   containers are shown and never claimed; a human-name match in
   `~/Library/Application Support` is gated three times and never
-  bulk-grantable. No engine command exists yet, and nothing here can authorize
-  anything. (#36, #37)
+  bulk-grantable. A row disposal is certain to refuse — a `.git` inside the
+  tree, or a tree beyond the disposal bounds — is shown and never offered; a
+  licence-shaped name keeps a row out of any bulk gesture; and a report with a
+  preferences row carries the `cfprefsd` caveat. No engine command exists yet,
+  and nothing here can authorize anything. (#36, #37, #39)
 - **Large & Old Files** — a read-only walk of `~/Documents`, `~/Downloads`,
   `~/Desktop`, `~/Movies`, `~/Music` and `~/Pictures`, with size and age
   filters. Nothing is ever pre-selected, there is no select-all, and acting on a

@@ -43,6 +43,40 @@
 //! rule: its id is in the index, so every target that is not it is refused, and
 //! the index is a set, so how many apps embed it does not change the answer.
 //!
+//! # Three surfaces that are not id-keyed directories
+//!
+//! **A container is decomposed, never offered whole.** `~/Library/Containers/
+//! <id>` is the app's redirected home, and `Data/Documents` is where a
+//! sandboxed app puts the user's only copy of a file — Finder does not show
+//! it. Rows come from [`CONTAINER_STATE_PARTS`], an *inclusion* list under
+//! `Data` (an exclusion list fails open the next time Apple adds a directory),
+//! and the parts in [`CONTAINER_USER_DATA_PARTS`] are shown as
+//! [`Kind::UserData`] and never offered. The container root itself is never an
+//! offerable row.
+//!
+//! **A human name is a weaker key, and gated three times.** Most apps name
+//! their `Application Support` directory after themselves rather than their
+//! id, so [`leftovers_for_named`] accepts a [`DisplayName`] and, in that one
+//! location, offers a directory whose name is byte-equal to it — provided no
+//! installed app answers to the name, and at least one immediate child is
+//! keyed on the target's id. Rows carry [`MatchedVia::DisplayName`] and are
+//! never bulk-grantable. The corroboration gate is strict enough that on the
+//! reference machine it admits 4 of 89 human-named directories; that is the
+//! intended trade until a human loosens it.
+//!
+//! **A group container is shown and never claimed.** It is shared between
+//! apps by construction, and the entitlement that would settle ownership is
+//! in the bundle that is, by premise, gone. One whose name resembles the id is
+//! reported as [`Kind::Shared`] so the user knows it exists.
+//!
+//! # A note for the disposal half
+//!
+//! Confining a selection to the resolved location roots is **not** enough once
+//! containers are searched: `<container>/Data/Documents` is inside a location
+//! root and must never be acted on. The disposal half has to intersect the
+//! selection with the `offerable` rows of a fresh scan — the way Large & Old
+//! re-walks before it acts — rather than trust a path's prefix.
+//!
 //! # Sizes are per name, not per inode
 //!
 //! [`crate::spacelens`] counts a hard-linked file once, because it is
@@ -51,7 +85,7 @@
 //! they will reclaim a deduplicated figure would put a number in front of them
 //! that no action can produce. Same data, opposite question.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -85,29 +119,63 @@ pub const MAX_ROW_DEPTH: usize = 32;
 /// uninstalled, which is the one direction this module must never be wrong in.
 pub const APP_SCAN_DEPTH: usize = 4;
 
-/// Surfaces this half deliberately does not search, with the reason.
+/// Surfaces this module deliberately does not search, with the reason.
 ///
 /// Carried on every report so a caller cannot render a leftover list as though
-/// it were everything. This list shrinks as the later halves land; it is not a
-/// permanent exclusion.
+/// it were everything.
 pub const DEFERRED_LOCATIONS: &[(&str, &str)] = &[
     (
-        "~/Library/Containers",
-        "a sandbox container holds the app's redirected home — including the user's own \
-         documents — so it has to be decomposed into its cache-like parts rather than \
-         offered as one row",
+        "~/Library/Cookies",
+        "a cookie jar signs the user out of things; it belongs to the Privacy module and \
+         arrives with that module's consequence label, not as a cache-like part",
     ),
     (
-        "~/Library/Group Containers",
-        "shared between apps from one vendor by construction, and the entitlement that \
-         would settle ownership lives inside the bundle that is, by premise, gone",
+        "~/Library/Application Scripts, ~/Library/Autosave Information",
+        "not measured on the reference machine, and the location list is closed on purpose — \
+         a surface is added deliberately, with a canary edit, or not at all",
     ),
     (
-        "~/Library/Application Support (by human-readable name)",
-        "searched here by exact bundle id only; most apps name that directory after \
-         themselves instead, and matching a name needs corroboration rules first",
+        "/Library",
+        "denylisted: the tool can never act there, so a row would be an offer it cannot honour",
     ),
 ];
+
+/// Under `<container>/Data`, the parts that are the application's own
+/// regenerable state — the **only** parts of a container this module offers.
+///
+/// An inclusion list, not an exclusion list, on purpose: "everything except
+/// the user's folders" fails open the next time Apple adds a directory under
+/// `Data/Library`. Anything not named here is not a row.
+///
+/// `Library/Cookies` is deliberately absent even though it is regenerable: a
+/// cookie jar is the Privacy module's surface and arrives with that module's
+/// consequence label, not silently as a cache-like part.
+pub const CONTAINER_STATE_PARTS: &[&str] = &[
+    "Library/Caches",
+    "Library/HTTPStorages",
+    "Library/Logs",
+    "Library/Preferences",
+    "Library/Saved Application State",
+    "Library/WebKit",
+    "tmp",
+];
+
+/// Under `<container>/Data`, the parts that hold the user's data rather than
+/// the application's. Shown when non-empty, never offered.
+///
+/// `Documents` is where a sandboxed app puts the user's only copy of a file,
+/// and Finder does not surface it. `Library/Application Support` is where the
+/// same app keeps its databases — for a notes app, the notes. Both are
+/// leftovers in the narrow sense once the app is gone, and the last copy of
+/// something in the wide one.
+pub const CONTAINER_USER_DATA_PARTS: &[&str] = &["Documents", "Library/Application Support"];
+
+const CONTAINER_USER_DATA_REASON: &str = "a sandboxed app keeps the user's own data here — \
+     possibly the only copy — so it is shown, not offered";
+
+const GROUP_CONTAINER_REASON: &str = "a group container is shared between apps by \
+     construction, and the entitlement that would settle who owns it was in the bundle that \
+     is gone";
 
 // ---------------------------------------------------------------------------
 // Identity
@@ -166,6 +234,33 @@ impl fmt::Display for BundleId {
     }
 }
 
+/// A human-readable application name validated as usable as a match key.
+///
+/// Compared by byte-exact equality against a directory name and never joined
+/// onto a path, so the validation is about shape rather than metacharacters:
+/// empty, `.`, `..`, a separator or a NUL can never be a `read_dir` entry name
+/// and would only ever be a bug in the caller. Nothing is trimmed or folded —
+/// a name that differs from the directory by a byte does not match it, and
+/// that is the under-match this tier is built to prefer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayName(String);
+
+impl DisplayName {
+    pub fn parse(raw: &str) -> Option<Self> {
+        if raw.is_empty() || raw.len() > 255 || raw == "." || raw == ".." {
+            return None;
+        }
+        if raw.bytes().any(|b| b == b'/' || b == 0) {
+            return None;
+        }
+        Some(DisplayName(raw.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// One installed application bundle, as the inventory saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstalledApp {
@@ -175,6 +270,10 @@ pub struct InstalledApp {
     pub id: BundleId,
     /// `CFBundleName`, else `CFBundleDisplayName`, else the `.app` file stem.
     pub display_name: Option<String>,
+    /// Every name the bundle answers to — `CFBundleName`,
+    /// `CFBundleDisplayName` and the `.app` file stem — so the name tier can
+    /// withhold a directory any of them would claim.
+    pub names: BTreeSet<String>,
 }
 
 /// Every bundle id owned by something currently installed.
@@ -186,6 +285,9 @@ pub struct InstalledApp {
 #[derive(Clone, Debug, Default)]
 pub struct OwnerIndex {
     ids: BTreeSet<BundleId>,
+    /// Every name an installed bundle answers to, and which ids answer to it.
+    /// Consulted only to withhold: a name here is never a match key.
+    names: BTreeMap<String, BTreeSet<BundleId>>,
 }
 
 impl OwnerIndex {
@@ -199,6 +301,11 @@ impl OwnerIndex {
 
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
+    }
+
+    /// Installed apps that answer to `name`, byte-exact.
+    pub fn owners_of_name(&self, name: &str) -> Option<&BTreeSet<BundleId>> {
+        self.names.get(name)
     }
 
     /// The longest installed id whose segments prefix `stem`, if any.
@@ -237,6 +344,7 @@ pub enum Residence {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Location {
     Caches,
+    Containers,
     HttpStorages,
     WebKit,
     Preferences,
@@ -245,6 +353,7 @@ pub enum Location {
     LaunchAgents,
     Logs,
     ApplicationSupport,
+    GroupContainers,
 }
 
 impl Location {
@@ -254,6 +363,7 @@ impl Location {
     fn subpath(self) -> &'static str {
         match self {
             Location::Caches => "Library/Caches",
+            Location::Containers => "Library/Containers",
             Location::HttpStorages => "Library/HTTPStorages",
             Location::WebKit => "Library/WebKit",
             Location::Preferences => "Library/Preferences",
@@ -262,6 +372,7 @@ impl Location {
             Location::LaunchAgents => "Library/LaunchAgents",
             Location::Logs => "Library/Logs",
             Location::ApplicationSupport => "Library/Application Support",
+            Location::GroupContainers => "Library/Group Containers",
         }
     }
 
@@ -270,9 +381,10 @@ impl Location {
     }
 }
 
-/// Every location this half searches, in report order.
+/// Every location this module searches, in report order.
 pub const SEARCHED_LOCATIONS: &[Location] = &[
     Location::Caches,
+    Location::Containers,
     Location::HttpStorages,
     Location::WebKit,
     Location::Preferences,
@@ -281,6 +393,7 @@ pub const SEARCHED_LOCATIONS: &[Location] = &[
     Location::LaunchAgents,
     Location::Logs,
     Location::ApplicationSupport,
+    Location::GroupContainers,
 ];
 
 /// How an entry came to be attributed to the target.
@@ -293,16 +406,43 @@ pub enum MatchedVia {
     /// `<id>.<more segments>`, with no installed app owning the longer id — an
     /// orphaned extension or helper of the target.
     SiblingSegment(String),
+    /// The name is the id with a group-container prefix (`group.` or a team
+    /// id) removed. Only ever on a [`Kind::Shared`] row, which is never
+    /// offerable — so this is the one prefix strip in the module, and it can
+    /// only show, never claim.
+    IdWithPrefix(String),
+    /// The directory name is byte-equal to the display name the caller
+    /// supplied, and an id-keyed child corroborates it. The weak tier.
+    DisplayName(String),
+}
+
+/// What a row is, which decides whether this module may ever offer it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Kind {
+    /// The application's own regenerable state. The only kind that can be
+    /// offerable.
+    Leftover,
+    /// Inside a container's redirected home: the user's data, not the app's.
+    /// Shown so a decision about the container is made knowing it is there;
+    /// never offerable here.
+    UserData,
+    /// A group container whose name resembles the id. Shared between apps by
+    /// construction and never claimable; shown so the user knows it exists.
+    Shared,
 }
 
 /// One thing found. Deliberately **not** a `SafePath`: something to show a
 /// human, not something anyone may act on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Candidate {
-    /// Canonical, and always `<a resolved location root>/<a read_dir entry>`.
+    /// Canonical, and always `<a resolved location root>/<a read_dir entry>` —
+    /// or, for a container part, that followed by `Data/<an inclusion-list
+    /// part>`. Never the container root, and never built from a parsed string.
     pub path: PathBuf,
     pub location: Location,
     pub matched_via: MatchedVia,
+    /// What this row is. Only [`Kind::Leftover`] can be offerable.
+    pub kind: Kind,
     /// Apparent size (`st_size`), summed over every name beneath this entry.
     ///
     /// Apparent rather than allocated, matching `scanner.rs`, because this
@@ -352,6 +492,14 @@ pub struct LeftoverReport {
     /// Rows found and deliberately not offered (still-installed owner, live
     /// launch agent).
     pub withheld_count: usize,
+    /// `Application Support` directories that matched the caller's display
+    /// name but held nothing keyed on the id. Not shown: without corroboration
+    /// there is no evidence they are related at all, and a "related" row on
+    /// the caller's word alone is a guess.
+    ///
+    /// Deliberately not part of [`Self::is_partial`]: declining a name match
+    /// is the tier working.
+    pub skipped_uncorroborated_name: usize,
     /// Surfaces not searched at all. See [`DEFERRED_LOCATIONS`].
     pub deferred: &'static [(&'static str, &'static str)],
 }
@@ -568,17 +716,37 @@ fn read_bundle(bundle: &Path) -> Option<InstalledApp> {
                 .and_then(|s| s.to_str())
                 .map(str::to_string)
         });
+    let mut names = BTreeSet::new();
+    for key in ["CFBundleName", "CFBundleDisplayName"] {
+        if let Some(n) = dict.get(key).and_then(|v| v.as_string()) {
+            names.insert(n.to_string());
+        }
+    }
+    if let Some(stem) = bundle.file_stem().and_then(|s| s.to_str()) {
+        names.insert(stem.to_string());
+    }
     Some(InstalledApp {
         bundle_path: bundle.to_path_buf(),
         id,
         display_name,
+        names,
     })
 }
 
 /// Build the owner index from an inventory.
 pub fn owner_index(apps: &[InstalledApp]) -> OwnerIndex {
+    let mut names: BTreeMap<String, BTreeSet<BundleId>> = BTreeMap::new();
+    for app in apps {
+        for name in &app.names {
+            names
+                .entry(name.clone())
+                .or_default()
+                .insert(app.id.clone());
+        }
+    }
     OwnerIndex {
         ids: apps.iter().map(|a| a.id.clone()).collect(),
+        names,
     }
 }
 
@@ -653,10 +821,15 @@ fn stem(loc: Location, name: &str, is_dir: bool) -> Option<(&str, Option<&'stati
         (Location::LaunchAgents, false) => name.strip_suffix(".plist").map(|s| (s, Some(".plist"))),
 
         (
-            Location::Caches | Location::WebKit | Location::Logs | Location::ApplicationSupport,
+            Location::Caches
+            | Location::Containers
+            | Location::WebKit
+            | Location::Logs
+            | Location::ApplicationSupport,
             true,
         ) => Some((name, None)),
 
+        // Group containers never reach the matcher; see `group_container_row`.
         _ => None,
     }
 }
@@ -699,13 +872,29 @@ fn claim(stem: &str, target: &BundleId, index: &OwnerIndex) -> Claim {
 // The search
 // ---------------------------------------------------------------------------
 
-/// Find `target`'s leftovers.
+/// Find `target`'s leftovers, id-keyed only.
 ///
 /// Read-only from top to bottom: it opens no leftover file's contents, follows
-/// no symlink, and mutates nothing.
+/// no symlink, and mutates nothing. See [`leftovers_for_named`] for the
+/// human-name tier.
 pub fn leftovers_for(
     cfg: &UninstallConfig,
     target: &BundleId,
+) -> Result<LeftoverReport, UninstallError> {
+    leftovers_for_named(cfg, target, None)
+}
+
+/// Find `target`'s leftovers, with the human-name tier enabled when a
+/// `display_name` is supplied.
+///
+/// The name has to come from the caller because the bundle that declared it
+/// is, by premise, gone. Nothing is matched by name outside
+/// `~/Library/Application Support`, and nothing matched by name is ever
+/// bulk-grantable.
+pub fn leftovers_for_named(
+    cfg: &UninstallConfig,
+    target: &BundleId,
+    display_name: Option<&DisplayName>,
 ) -> Result<LeftoverReport, UninstallError> {
     let apps = inventory(cfg)?;
     let index = owner_index(&apps);
@@ -723,6 +912,7 @@ pub fn leftovers_for(
         skipped_case_variant: 0,
         skipped_unrepresentable: 0,
         withheld_count: 0,
+        skipped_uncorroborated_name: 0,
         deferred: DEFERRED_LOCATIONS,
     };
 
@@ -765,29 +955,51 @@ pub fn leftovers_for(
                 continue;
             };
 
+            // The name has to survive a round trip to the UI and back byte for
+            // byte, because a later grant identifies a selection by string
+            // equality with what was emitted here. Owned, so the borrow of
+            // `path` ends here: everything downstream takes it by value.
+            let Some(name) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_string)
+            else {
+                report.skipped_unrepresentable += 1;
+                continue;
+            };
+            let is_dir = file_type.is_dir();
+
             // A leftover that is a symlink points at data somewhere else —
             // frequently, on a real machine, deep inside another app's
             // container. Canonicalizing it is what would make the row *look*
             // legitimate, so it is dropped instead of resolved.
+            //
+            // Counted only when it is *this app's*, on either shape it might
+            // have had. An unrelated symlink elsewhere in a location — a stock
+            // Saved Application State holds four — is not a gap in this
+            // report, and before this was made target-specific every real
+            // scan came back `partial` because of them.
             if file_type.is_symlink() {
-                report.skipped_symlink += 1;
+                let ours = [true, false].into_iter().any(|as_dir| {
+                    stem(location, &name, as_dir)
+                        .is_some_and(|(s, _)| claim(s, target, &index) != Claim::NotOurs)
+                });
+                if ours {
+                    report.skipped_symlink += 1;
+                }
                 continue;
             }
 
-            // The name has to survive a round trip to the UI and back byte for
-            // byte, because a later grant identifies a selection by string
-            // equality with what was emitted here.
-            //
-            // Scoped so the borrow of `path` ends here: everything downstream
-            // takes the path by value.
-            let stemmed = {
-                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                    report.skipped_unrepresentable += 1;
-                    continue;
-                };
-                stem(location, name, file_type.is_dir()).map(|(s, suf)| (s.to_string(), suf))
-            };
-            let Some((stem_str, suffix)) = stemmed else {
+            // Group containers never reach the matcher: nothing in them is
+            // ever claimed, so they take a path that can only show.
+            if location == Location::GroupContainers {
+                group_container_row(path, &name, is_dir, target, cfg, &mut report);
+                continue;
+            }
+
+            let Some((stem_str, suffix)) =
+                stem(location, &name, is_dir).map(|(s, suf)| (s.to_string(), suf))
+            else {
                 continue;
             };
 
@@ -798,15 +1010,31 @@ pub fn leftovers_for(
                     // real under-match and the user should know it happened.
                     if stem_str.eq_ignore_ascii_case(target.as_str()) {
                         report.skipped_case_variant += 1;
+                    } else if location == Location::ApplicationSupport && is_dir {
+                        // The weak tier, in the one location it exists.
+                        if let Some(display_name) = display_name {
+                            name_tier_row(
+                                path,
+                                &name,
+                                display_name,
+                                target,
+                                &index,
+                                cfg,
+                                &mut report,
+                            );
+                        }
                     }
                 }
                 Claim::StillInstalled(owner) => {
+                    // For a container this is a live app's whole redirected
+                    // home: one withheld row, never decomposed.
                     report.withheld_count += 1;
                     let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
                     report.rows.push(Candidate {
                         path,
                         location,
                         matched_via: MatchedVia::SiblingSegment(stem_str.clone()),
+                        kind: Kind::Leftover,
                         size_bytes,
                         file_count,
                         size_is_floor: floor,
@@ -814,6 +1042,9 @@ pub fn leftovers_for(
                         bulk_grantable: false,
                         withheld: Some(format!("{owner} is still installed and this is its data")),
                     });
+                }
+                found if location == Location::Containers => {
+                    container_rows(path, &found, cfg, &mut report);
                 }
                 found => {
                     let Some(row) = build_row(path, location, suffix, &found, cfg, &mut report)
@@ -901,12 +1132,248 @@ fn build_row(
         path,
         location,
         matched_via,
+        kind: Kind::Leftover,
         size_bytes,
         file_count,
         size_is_floor: floor,
         offerable,
         bulk_grantable: bulk_grantable && offerable,
         withheld,
+    })
+}
+
+/// Decompose a matched container into rows. The container root is never one.
+///
+/// Every emitted path is `<container>/Data/<part>` with `part` from one of the
+/// two inclusion lists — constants joined onto a `read_dir`-provenance path.
+/// No parsed or caller-supplied string is ever joined here, which is what
+/// keeps "a row is never a location root" structural rather than checked.
+fn container_rows(
+    container: PathBuf,
+    found: &Claim,
+    cfg: &UninstallConfig,
+    report: &mut LeftoverReport,
+) {
+    let (matched_via, bulk_grantable) = match found {
+        Claim::Exact => (MatchedVia::Id, true),
+        Claim::OrphanSibling(tail) => (MatchedVia::SiblingSegment(tail.clone()), false),
+        _ => return,
+    };
+    let data = container.join("Data");
+    let parts = CONTAINER_STATE_PARTS
+        .iter()
+        .map(|p| (*p, Kind::Leftover))
+        .chain(
+            CONTAINER_USER_DATA_PARTS
+                .iter()
+                .map(|p| (*p, Kind::UserData)),
+        );
+    for (part, kind) in parts {
+        report.examined += 1;
+        let path = data.join(part);
+        // Absent is ordinary: the scaffold varies by macOS version.
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            report.skipped_symlink += 1;
+            continue;
+        }
+        if !meta.is_dir() {
+            continue;
+        }
+        // Covers `Data` and `Library` too: a symlink anywhere on the way —
+        // and 82 of 822 real containers have them, pointing back into the
+        // real home — makes the canonical spelling differ.
+        if std::fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) {
+            report.skipped_symlink += 1;
+            continue;
+        }
+        // Empty scaffolding — most of every container — is not a row.
+        match is_empty_dir(&path) {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(_) => {
+                report.skipped_unreadable += 1;
+                continue;
+            }
+        }
+        let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
+        let offerable = kind == Kind::Leftover;
+        if !offerable {
+            report.withheld_count += 1;
+        }
+        report.rows.push(Candidate {
+            path,
+            location: Location::Containers,
+            matched_via: matched_via.clone(),
+            kind,
+            size_bytes,
+            file_count,
+            size_is_floor: floor,
+            offerable,
+            bulk_grantable: bulk_grantable && offerable,
+            withheld: (!offerable).then(|| CONTAINER_USER_DATA_REASON.to_string()),
+        });
+    }
+}
+
+fn is_empty_dir(path: &Path) -> std::io::Result<bool> {
+    let mut entries = std::fs::read_dir(path)?;
+    match entries.next() {
+        None => Ok(true),
+        Some(Ok(_)) => Ok(false),
+        Some(Err(e)) => Err(e),
+    }
+}
+
+/// A group container whose name resembles the id: shown, never claimed.
+fn group_container_row(
+    path: PathBuf,
+    name: &str,
+    is_dir: bool,
+    target: &BundleId,
+    cfg: &UninstallConfig,
+    report: &mut LeftoverReport,
+) {
+    if !is_dir {
+        return;
+    }
+    let Some((rest, prefix)) = strip_group_prefix(name) else {
+        return;
+    };
+    if !segment_prefix(rest, target) {
+        return;
+    }
+    let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
+    report.withheld_count += 1;
+    report.rows.push(Candidate {
+        path,
+        location: Location::GroupContainers,
+        matched_via: MatchedVia::IdWithPrefix(prefix),
+        kind: Kind::Shared,
+        size_bytes,
+        file_count,
+        size_is_floor: floor,
+        offerable: false,
+        bulk_grantable: false,
+        withheld: Some(GROUP_CONTAINER_REASON.to_string()),
+    });
+}
+
+/// `group.<rest>` or `<TEAMID>.<rest>`, with the prefix that came off.
+///
+/// The one place a *prefix* comes off a name, and it is allowed only because
+/// the result can never be a claim: a group container is withheld whatever
+/// this returns, so the worst a wrong strip can do is show a withheld row.
+fn strip_group_prefix(name: &str) -> Option<(&str, String)> {
+    if let Some(rest) = name.strip_prefix("group.") {
+        return Some((rest, "group.".to_string()));
+    }
+    let (head, rest) = name.split_once('.')?;
+    is_team_id(head).then(|| (rest, format!("{head}.")))
+}
+
+/// Ten characters of `[A-Z0-9]`: the shape of an Apple team identifier.
+fn is_team_id(s: &str) -> bool {
+    s.len() == 10
+        && s.bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+}
+
+/// The human-name tier. `Application Support` only, and reached only for a
+/// directory the id matcher has already said is not ours.
+///
+/// Three gates, each of which can only narrow:
+/// 1. the directory name is byte-equal to the name the caller supplied;
+/// 2. no installed app answers to that name — else withheld, and shown;
+/// 3. an immediate child is keyed on the target's id — else counted, unshown.
+fn name_tier_row(
+    path: PathBuf,
+    dir_name: &str,
+    display_name: &DisplayName,
+    target: &BundleId,
+    index: &OwnerIndex,
+    cfg: &UninstallConfig,
+    report: &mut LeftoverReport,
+) {
+    if dir_name != display_name.as_str() {
+        return;
+    }
+
+    // Gate 2. An installed app that answers to the name — by `CFBundleName`,
+    // `CFBundleDisplayName` or its `.app` stem — or that *is* the name, if the
+    // directory happens to be spelled as somebody's id.
+    let mut owners: Vec<String> = index
+        .owners_of_name(dir_name)
+        .map(|s| s.iter().map(ToString::to_string).collect())
+        .unwrap_or_default();
+    if let Some(as_id) = BundleId::parse(dir_name).filter(|i| index.contains(i)) {
+        owners.push(as_id.to_string());
+    }
+    if !owners.is_empty() {
+        report.withheld_count += 1;
+        let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
+        report.rows.push(Candidate {
+            path,
+            location: Location::ApplicationSupport,
+            matched_via: MatchedVia::DisplayName(dir_name.to_string()),
+            kind: Kind::Leftover,
+            size_bytes,
+            file_count,
+            size_is_floor: floor,
+            offerable: false,
+            bulk_grantable: false,
+            withheld: Some(format!(
+                "{} is still installed and answers to this name",
+                owners.join(", ")
+            )),
+        });
+        return;
+    }
+
+    // Gate 3.
+    if !corroborated(&path, target, index) {
+        report.skipped_uncorroborated_name += 1;
+        return;
+    }
+
+    // The same spelling rule as every other offerable row — see `build_row`.
+    if std::fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) {
+        report.skipped_symlink += 1;
+        return;
+    }
+    let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
+    report.rows.push(Candidate {
+        path,
+        location: Location::ApplicationSupport,
+        matched_via: MatchedVia::DisplayName(dir_name.to_string()),
+        kind: Kind::Leftover,
+        size_bytes,
+        file_count,
+        size_is_floor: floor,
+        offerable: true,
+        bulk_grantable: false,
+        withheld: None,
+    });
+}
+
+/// At least one immediate child is keyed on the target's id and on nobody
+/// installed. The same [`claim`] as everywhere else, on the raw child name —
+/// so `com.acme.Notes.plist` corroborates, `com.acme.Notes2` does not, and a
+/// child owned by an installed helper says the directory is *someone's*
+/// without saying it is the target's.
+fn corroborated(dir: &Path, target: &BundleId, index: &OwnerIndex) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.file_name().to_str().is_some_and(|n| {
+            matches!(
+                claim(n, target, index),
+                Claim::Exact | Claim::OrphanSibling(_)
+            )
+        })
     })
 }
 

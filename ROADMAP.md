@@ -500,15 +500,24 @@ instead.**
       string the user clicked, and the preview magnitude must come from
       `Plan::count()`/`total_bytes()`, never from `ExecReport`'s action
       counts.
-    - [ ] **Discovery honesty flags.** `uninstall::measure` treats a protected
-      entry inside a leftover (a vendored `.git`) as "floor and skip", so the
-      row stays `offerable` while `guard_dir` is certain to refuse it. It
-      must become `offerable: false` with a reason — as must a tree past
-      `DirLimits` — enforced end to end rather than left as a UI hint. Plus
-      the `cfprefsd` caveat on preference rows, and `UninstallConfig
-      .dir_limits` pinned equal to what the executor applies. Also a
-      names-only `license_suspected` flag (`*.lic`, `*.license`, `Receipts/`)
-      that keeps a row out of any bulk gesture.
+    - [x] **Discovery honesty flags.** A row `guard_dir` is *certain* to
+      refuse — a protected path inside the tree (a vendored `.git`), or a
+      tree outside `DirLimits` — is now `offerable: false` with the reason in
+      `Candidate::undisposable`, enforced end to end rather than left as a UI
+      hint: `measure` used to treat a protected entry as "floor and skip",
+      which left the row offerable. The bounds are `UninstallConfig
+      .dir_limits`, injectable only so a fixture can reach them and pinned
+      equal to `DirLimits::default()`, because if they diverged the flag
+      would lie in the dangerous direction. Depth over-refuses by at most one
+      level (a *file* at depth 33 would have been allowed; a directory would
+      not), in the safe direction, and says so. Withholding for this reason
+      does not make a report partial. `CFPREFSD_CAVEAT` rides on any report
+      with a preferences row — including a container's own preferences part —
+      so the UI can say it before the user acts; nothing is quit to prevent
+      it. And a names-only `license_suspected` (`*.lic`, `*.license`,
+      `*.activation`, `license*.plist`, `Receipts/` among the immediate
+      children) keeps a row out of any bulk gesture without withholding it —
+      nothing is opened to decide.
     - [ ] **The command layer.** `gui-core::uninstall_leftovers` (read-only
       DTO) and `dispose_leftovers`: re-run discovery *inside the call*, accept
       a path only if it is **byte-equal** (`OsStr`, not `Path` — `Path`

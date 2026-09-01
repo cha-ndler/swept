@@ -92,6 +92,7 @@ use std::path::{Path, PathBuf};
 
 use crate::largeold::resolve_roots;
 use safety::denylist::is_protected;
+use safety::DirLimits;
 
 /// Entry budget for a whole run, shared across every location and every
 /// per-row size walk.
@@ -176,6 +177,16 @@ const CONTAINER_USER_DATA_REASON: &str = "a sandboxed app keeps the user's own d
 const GROUP_CONTAINER_REASON: &str = "a group container is shared between apps by \
      construction, and the entitlement that would settle who owns it was in the bundle that \
      is gone";
+
+/// Prefix for the withheld reason of a row `guard_dir` is certain to refuse.
+const UNDISPOSABLE_REASON: &str = "this tool cannot remove it: ";
+
+/// The one caveat this half can know in advance, surfaced on any report that
+/// holds a preferences row. Nothing is quit or stopped to prevent it — that
+/// would be an action, and this half performs none.
+pub const CFPREFSD_CAVEAT: &str = "a preferences file can be written back by cfprefsd moments \
+     after it is removed, if the app is running or is launched again; nothing is quit or \
+     stopped to prevent that";
 
 // ---------------------------------------------------------------------------
 // Identity
@@ -464,6 +475,16 @@ pub struct Candidate {
     pub bulk_grantable: bool,
     /// Why this row may not be acted on, when `offerable` is false.
     pub withheld: Option<String>,
+    /// Why [`safety::guard_dir`] is *certain* to refuse this row, if it is: a
+    /// protected path inside the tree, or a tree outside the same
+    /// [`DirLimits`] disposal applies. Set implies `offerable == false` — a
+    /// checkbox that is certain to fail is a lie of a different shape, and
+    /// this half is the only place that knows in advance.
+    pub undisposable: Option<&'static str>,
+    /// A licence, activation or receipt shape among the immediate children,
+    /// by **name only** — nothing is opened. Keeps the row out of any bulk
+    /// gesture; it is not a reason to withhold it.
+    pub license_suspected: bool,
 }
 
 /// What a leftover search found.
@@ -502,6 +523,9 @@ pub struct LeftoverReport {
     pub skipped_uncorroborated_name: usize,
     /// Surfaces not searched at all. See [`DEFERRED_LOCATIONS`].
     pub deferred: &'static [(&'static str, &'static str)],
+    /// What a human should know before acting on these rows, that this half
+    /// can know in advance. See [`CFPREFSD_CAVEAT`].
+    pub caveats: Vec<&'static str>,
 }
 
 impl LeftoverReport {
@@ -511,13 +535,19 @@ impl LeftoverReport {
     /// Withheld rows do **not** make a report partial: withholding is the
     /// module working correctly, and a caveat that fires on correct behaviour
     /// teaches people to ignore it.
+    ///
+    /// A floor counts only on an *offerable* row. A withheld row's figure is
+    /// informational — it is in no total a user can act on — and a tree
+    /// withheld *because* it holds a protected path is always a floor, since
+    /// the protected part is not measured. Counting that would make every
+    /// correctly-withheld `.git` tree a "partial" report.
     pub fn is_partial(&self) -> bool {
         self.truncated
             || self.skipped_unreadable > 0
             || self.skipped_symlink > 0
             || self.skipped_case_variant > 0
             || self.skipped_unrepresentable > 0
-            || self.rows.iter().any(|r| r.size_is_floor)
+            || self.rows.iter().any(|r| r.offerable && r.size_is_floor)
     }
 
     pub fn total_bytes(&self) -> u64 {
@@ -573,6 +603,12 @@ pub struct UninstallConfig {
     pub locations: Vec<Location>,
     pub max_examined: usize,
     pub app_scan_depth: usize,
+    /// The bounds disposal will apply through `guard_dir`, so a row that
+    /// already exceeds them is shown and not offered. Injectable **only** so a
+    /// fixture can reach them — 50,000 files is not a tempdir test — and pinned
+    /// equal to `DirLimits::default()` by a test, because if the two diverge
+    /// the flag lies in the dangerous direction.
+    pub dir_limits: DirLimits,
 }
 
 impl UninstallConfig {
@@ -584,6 +620,7 @@ impl UninstallConfig {
             locations: SEARCHED_LOCATIONS.to_vec(),
             max_examined: DEFAULT_MAX_EXAMINED,
             app_scan_depth: APP_SCAN_DEPTH,
+            dir_limits: DirLimits::default(),
         }
     }
 }
@@ -914,6 +951,7 @@ pub fn leftovers_for_named(
         withheld_count: 0,
         skipped_uncorroborated_name: 0,
         deferred: DEFERRED_LOCATIONS,
+        caveats: Vec::new(),
     };
 
     // An installed app has no leftovers; it has files. Returning rows here
@@ -1029,18 +1067,20 @@ pub fn leftovers_for_named(
                     // For a container this is a live app's whole redirected
                     // home: one withheld row, never decomposed.
                     report.withheld_count += 1;
-                    let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
+                    let m = measure(&path, cfg, &mut report.examined);
                     report.rows.push(Candidate {
                         path,
                         location,
                         matched_via: MatchedVia::SiblingSegment(stem_str.clone()),
                         kind: Kind::Leftover,
-                        size_bytes,
-                        file_count,
-                        size_is_floor: floor,
+                        size_bytes: m.size_bytes,
+                        file_count: m.file_count,
+                        size_is_floor: m.size_is_floor,
                         offerable: false,
                         bulk_grantable: false,
                         withheld: Some(format!("{owner} is still installed and this is its data")),
+                        undisposable: m.undisposable,
+                        license_suspected: m.license_suspected,
                     });
                 }
                 found if location == Location::Containers => {
@@ -1065,6 +1105,18 @@ pub fn leftovers_for_named(
             .cmp(&b.location)
             .then_with(|| a.path.cmp(&b.path))
     });
+
+    // Surfaced whenever any row is a preferences file or a container's
+    // preferences part, so the UI can say it before the user acts.
+    let touches_preferences = report.rows.iter().any(|r| {
+        matches!(
+            r.location,
+            Location::Preferences | Location::PreferencesByHost
+        ) || (r.location == Location::Containers && r.path.ends_with("Library/Preferences"))
+    });
+    if touches_preferences {
+        report.caveats.push(CFPREFSD_CAVEAT);
+    }
     Ok(report)
 }
 
@@ -1095,7 +1147,7 @@ fn build_row(
         return None;
     }
 
-    let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
+    let m = measure(&path, cfg, &mut report.examined);
 
     let (matched_via, bulk_grantable) = match found {
         Claim::Exact => (
@@ -1112,11 +1164,11 @@ fn build_row(
         _ => return None,
     };
 
-    // A launch agent whose program is still on disk is not leftover: something
+    // A tree `guard_dir` is certain to refuse is shown, not offered. And a
+    // launch agent whose program is still on disk is not leftover: something
     // installed still runs from it.
-    let mut offerable = true;
-    let mut withheld = None;
-    if location == Location::LaunchAgents {
+    let (mut offerable, mut withheld) = offer(&m);
+    if offerable && location == Location::LaunchAgents {
         if let Some(program) = launch_agent_program(&path) {
             if program.exists() {
                 offerable = false;
@@ -1133,12 +1185,14 @@ fn build_row(
         location,
         matched_via,
         kind: Kind::Leftover,
-        size_bytes,
-        file_count,
-        size_is_floor: floor,
+        size_bytes: m.size_bytes,
+        file_count: m.file_count,
+        size_is_floor: m.size_is_floor,
         offerable,
-        bulk_grantable: bulk_grantable && offerable,
+        bulk_grantable: bulk_grantable && offerable && !m.license_suspected,
         withheld,
+        undisposable: m.undisposable,
+        license_suspected: m.license_suspected,
     })
 }
 
@@ -1198,8 +1252,11 @@ fn container_rows(
                 continue;
             }
         }
-        let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
-        let offerable = kind == Kind::Leftover;
+        let m = measure(&path, cfg, &mut report.examined);
+        let (offerable, withheld) = match kind {
+            Kind::Leftover => offer(&m),
+            _ => (false, Some(CONTAINER_USER_DATA_REASON.to_string())),
+        };
         if !offerable {
             report.withheld_count += 1;
         }
@@ -1208,12 +1265,14 @@ fn container_rows(
             location: Location::Containers,
             matched_via: matched_via.clone(),
             kind,
-            size_bytes,
-            file_count,
-            size_is_floor: floor,
+            size_bytes: m.size_bytes,
+            file_count: m.file_count,
+            size_is_floor: m.size_is_floor,
             offerable,
-            bulk_grantable: bulk_grantable && offerable,
-            withheld: (!offerable).then(|| CONTAINER_USER_DATA_REASON.to_string()),
+            bulk_grantable: bulk_grantable && offerable && !m.license_suspected,
+            withheld,
+            undisposable: m.undisposable,
+            license_suspected: m.license_suspected,
         });
     }
 }
@@ -1245,19 +1304,21 @@ fn group_container_row(
     if !segment_prefix(rest, target) {
         return;
     }
-    let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
+    let m = measure(&path, cfg, &mut report.examined);
     report.withheld_count += 1;
     report.rows.push(Candidate {
         path,
         location: Location::GroupContainers,
         matched_via: MatchedVia::IdWithPrefix(prefix),
         kind: Kind::Shared,
-        size_bytes,
-        file_count,
-        size_is_floor: floor,
+        size_bytes: m.size_bytes,
+        file_count: m.file_count,
+        size_is_floor: m.size_is_floor,
         offerable: false,
         bulk_grantable: false,
         withheld: Some(GROUP_CONTAINER_REASON.to_string()),
+        undisposable: m.undisposable,
+        license_suspected: m.license_suspected,
     });
 }
 
@@ -1313,21 +1374,23 @@ fn name_tier_row(
     }
     if !owners.is_empty() {
         report.withheld_count += 1;
-        let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
+        let m = measure(&path, cfg, &mut report.examined);
         report.rows.push(Candidate {
             path,
             location: Location::ApplicationSupport,
             matched_via: MatchedVia::DisplayName(dir_name.to_string()),
             kind: Kind::Leftover,
-            size_bytes,
-            file_count,
-            size_is_floor: floor,
+            size_bytes: m.size_bytes,
+            file_count: m.file_count,
+            size_is_floor: m.size_is_floor,
             offerable: false,
             bulk_grantable: false,
             withheld: Some(format!(
                 "{} is still installed and answers to this name",
                 owners.join(", ")
             )),
+            undisposable: m.undisposable,
+            license_suspected: m.license_suspected,
         });
         return;
     }
@@ -1343,18 +1406,24 @@ fn name_tier_row(
         report.skipped_symlink += 1;
         return;
     }
-    let (size_bytes, file_count, floor) = measure(&path, cfg, &mut report.examined);
+    let m = measure(&path, cfg, &mut report.examined);
+    let (offerable, withheld) = offer(&m);
+    if !offerable {
+        report.withheld_count += 1;
+    }
     report.rows.push(Candidate {
         path,
         location: Location::ApplicationSupport,
         matched_via: MatchedVia::DisplayName(dir_name.to_string()),
         kind: Kind::Leftover,
-        size_bytes,
-        file_count,
-        size_is_floor: floor,
-        offerable: true,
+        size_bytes: m.size_bytes,
+        file_count: m.file_count,
+        size_is_floor: m.size_is_floor,
+        offerable,
         bulk_grantable: false,
-        withheld: None,
+        withheld,
+        undisposable: m.undisposable,
+        license_suspected: m.license_suspected,
     });
 }
 
@@ -1402,20 +1471,52 @@ fn launch_agent_program(path: &Path) -> Option<PathBuf> {
 /// module docs on why this is the opposite of `spacelens`. Never follows a
 /// symlink, never descends into a protected subtree, and returns a `floor`
 /// flag when it could not see everything.
-fn measure(path: &Path, cfg: &UninstallConfig, examined: &mut usize) -> (u64, u64, bool) {
+/// What a per-row size walk found, beyond the figures.
+struct Measured {
+    size_bytes: u64,
+    file_count: u64,
+    size_is_floor: bool,
+    /// See [`Candidate::undisposable`].
+    undisposable: Option<&'static str>,
+    /// See [`Candidate::license_suspected`].
+    license_suspected: bool,
+}
+
+/// What the walk saw on the way, separate from what it summed.
+#[derive(Default)]
+struct Seen {
+    floor: bool,
+    /// Every name beneath the root — files, directories, symlinks — which is
+    /// what `guard_dir` counts against `max_entries`. Distinct from
+    /// `file_count`, which excludes directories because a directory is not a
+    /// file the user will lose.
+    names: u64,
+    protected: bool,
+    too_deep: bool,
+}
+
+fn measure(path: &Path, cfg: &UninstallConfig, examined: &mut usize) -> Measured {
     fn walk(
         path: &Path,
         depth: usize,
         cfg: &UninstallConfig,
         examined: &mut usize,
-        floor: &mut bool,
+        seen: &mut Seen,
     ) -> (u64, u64) {
-        if depth > MAX_ROW_DEPTH || *examined >= cfg.max_examined {
-            *floor = true;
+        if depth > MAX_ROW_DEPTH {
+            // `guard_dir` refuses a directory this deep. A *file* this deep
+            // would have been allowed — its parent is one level up — so this
+            // over-refuses by at most one level, in the safe direction.
+            seen.floor = true;
+            seen.too_deep = true;
+            return (0, 0);
+        }
+        if *examined >= cfg.max_examined {
+            seen.floor = true;
             return (0, 0);
         }
         let Ok(meta) = std::fs::symlink_metadata(path) else {
-            *floor = true;
+            seen.floor = true;
             return (0, 0);
         };
         if meta.file_type().is_symlink() {
@@ -1429,7 +1530,7 @@ fn measure(path: &Path, cfg: &UninstallConfig, examined: &mut usize) -> (u64, u6
             return (0, 0);
         }
         let Ok(entries) = std::fs::read_dir(path) else {
-            *floor = true;
+            seen.floor = true;
             return (0, 0);
         };
         let mut bytes = 0u64;
@@ -1437,26 +1538,79 @@ fn measure(path: &Path, cfg: &UninstallConfig, examined: &mut usize) -> (u64, u6
         for entry in entries {
             *examined += 1;
             let Ok(entry) = entry else {
-                *floor = true;
+                seen.floor = true;
                 continue;
             };
+            seen.names = seen.names.saturating_add(1);
             let child = entry.path();
             // A protected subtree inside a leftover tree — a vendored `.git`,
             // most plausibly — is not measured, because it is not disposable.
+            // And it makes the whole row undisposable: `guard_dir` refuses the
+            // entire tree, so the row must not be offered.
             if is_protected(&child, &cfg.home) {
-                *floor = true;
+                seen.floor = true;
+                seen.protected = true;
                 continue;
             }
-            let (b, c) = walk(&child, depth + 1, cfg, examined, floor);
+            let (b, c) = walk(&child, depth + 1, cfg, examined, seen);
             bytes = bytes.saturating_add(b);
             count = count.saturating_add(c);
         }
         (bytes, count)
     }
 
-    let mut floor = false;
-    let (bytes, count) = walk(path, 0, cfg, examined, &mut floor);
-    (bytes, count, floor)
+    let mut seen = Seen::default();
+    let (size_bytes, file_count) = walk(path, 0, cfg, examined, &mut seen);
+    let limits = cfg.dir_limits;
+    let undisposable = if seen.protected {
+        Some("the tree contains a protected path (a .git checkout, most likely)")
+    } else if seen.too_deep {
+        Some("the tree is deeper than a disposal may reach")
+    } else if seen.names > limits.max_entries as u64 {
+        Some("the tree holds more entries than a disposal may remove at once")
+    } else if size_bytes > limits.max_bytes {
+        Some("the tree is larger than a disposal may remove at once")
+    } else {
+        None
+    };
+    Measured {
+        size_bytes,
+        file_count,
+        size_is_floor: seen.floor,
+        undisposable,
+        license_suspected: license_shaped(path),
+    }
+}
+
+/// A licence, activation or receipt shape among `dir`'s immediate children,
+/// by name only. Nothing is opened: a key read for classification would land
+/// in a UI row and then in an append-only log that is never rotated. Folding
+/// case here can only keep *more* rows out of a bulk gesture, so it is safe.
+fn license_shaped(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        let name = e.file_name();
+        let Some(name) = name.to_str() else {
+            return false;
+        };
+        let lower = name.to_ascii_lowercase();
+        lower == "receipts"
+            || lower.ends_with(".lic")
+            || lower.ends_with(".license")
+            || lower.ends_with(".activation")
+            || (lower.starts_with("license") && lower.ends_with(".plist"))
+    })
+}
+
+/// Whether a measured row may be offered at all. A tree `guard_dir` is
+/// certain to refuse is shown and withheld, never offered.
+fn offer(m: &Measured) -> (bool, Option<String>) {
+    match m.undisposable {
+        Some(why) => (false, Some(format!("{UNDISPOSABLE_REASON}{why}"))),
+        None => (true, None),
+    }
 }
 
 /// Convenience for callers that only have a `&Path` and a raw id string.

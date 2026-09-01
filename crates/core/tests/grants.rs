@@ -53,6 +53,7 @@ fn plan_for(path: &Path, home: &Path, size_bytes: u64) -> Plan {
             category: "large-and-old".to_string(),
         }],
         skipped_protected: 0,
+        dirs: Vec::new(),
     }
 }
 
@@ -273,6 +274,7 @@ fn an_allowlisted_directory_under_allow_permanent_is_refused() {
             category: "user-caches".to_string(),
         }],
         skipped_protected: 0,
+        dirs: Vec::new(),
     };
 
     let (audit_path, mut audit) = audit_at(&home);
@@ -563,6 +565,7 @@ fn a_grant_does_not_confer_permanent_deletion_even_with_allow_permanent() {
             category: "large-and-old".to_string(),
         }],
         skipped_protected: 0,
+        dirs: Vec::new(),
     };
 
     let (audit_path, mut audit) = audit_at(&home);
@@ -602,6 +605,7 @@ fn allow_permanent_still_works_inside_the_allowlist() {
             category: "user-caches".to_string(),
         }],
         skipped_protected: 0,
+        dirs: Vec::new(),
     };
 
     let (audit_path, mut audit) = audit_at(&home);
@@ -758,6 +762,7 @@ fn a_grant_does_not_confer_permanent_deletion() {
             category: "large-and-old".to_string(),
         }],
         skipped_protected: 0,
+        dirs: Vec::new(),
     };
 
     let (_p, mut audit) = audit_at(&home);

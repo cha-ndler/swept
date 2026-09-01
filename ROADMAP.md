@@ -466,14 +466,59 @@ instead.**
     roots is no longer enough — `<container>/Data/Documents` is *inside* a
     location root. Disposal must intersect the selection with the `offerable`
     rows of a fresh scan, the way Large & Old re-walks before it acts.
-  - [ ] **Directory-aware disposal.** The part that actually needs `guard_dir`:
-    `PlannedAction` is files-only and `executor::authorize` refuses every
-    directory target. One reviewed change, `deletion-safety-reviewer` required.
-    Two display facts the discovery half does not yet compute and disposal
-    will want: `exceeds_dir_limits` (a row `guard_dir` is certain to refuse
-    should not be offered as though it could be honoured) and a names-only
-    `license_suspected` flag (`*.lic`, `*.license`, `Receipts/`) that keeps a
-    row out of any bulk gesture.
+  - [ ] **Directory-aware disposal** — *the executor half is done; the
+    discovery flags and the command layer are open.*
+    - [x] **The executor learns a second action shape.** `PlannedDirAction`
+      carries a `SafeDir` — the tree walked in full by `guard_dir` — and
+      deliberately **no `Disposal`**: a recursive irreversible removal is not
+      expressible in the type, which is a stronger guarantee than a branch
+      that declines to take it. `Plan::count` sees the recursive figures (one
+      directory is `entries + 1` items, never 1), so a real cache directory
+      crosses `MASS_DELETE_COUNT` and asks for confirmation — the intended
+      reading of item 5. Authorization is **by grant only**: there is no
+      allowlist route for a tree, because the allowlist was never a statement
+      about trees. `Consent.granted_dirs` shares one cap with `granted`, so a
+      selection cannot double its bound by splitting itself. At execute time
+      the tree is **re-walked** (a `.git` that appeared, a component swapped
+      for a symlink, a tree past `DirLimits` — all refused), must resolve to
+      the planned path, and must **not have grown** since it was confirmed —
+      in entries *or* in bytes, each half pinned on its own. The audit record
+      carries the recursive `entries` count as data. **Any directory action
+      requires the mass-delete confirmation**, before the numbers are
+      consulted: the reviewer noticed `DirLimits::max_bytes` equals
+      `MASS_DELETE_BYTES` and `guard_dir` refuses on `>`, so no single tree
+      could ever trip the byte threshold, and one under `MASS_DELETE_COUNT`
+      entries would slip under both — item 5 says *recursive* removals need
+      confirmation, not large ones. Found and fixed on the way: since #27
+      every *preview* refusal was logged with `"phase":"executed"` — nothing
+      pinned the phase; a dry run now never writes that word, and a test says
+      so. **For the command layer:** `guard_dir` canonicalizes a symlinked
+      root, and `authorize_dir` has no allowlist backstop to notice the
+      redirection, so a grant built from a symlink names and trashes the
+      *target*. Discovery already drops symlinked rows, so nothing reaches
+      this today — but the UI must display `SafeDir::as_path()`, never the
+      string the user clicked, and the preview magnitude must come from
+      `Plan::count()`/`total_bytes()`, never from `ExecReport`'s action
+      counts.
+    - [ ] **Discovery honesty flags.** `uninstall::measure` treats a protected
+      entry inside a leftover (a vendored `.git`) as "floor and skip", so the
+      row stays `offerable` while `guard_dir` is certain to refuse it. It
+      must become `offerable: false` with a reason — as must a tree past
+      `DirLimits` — enforced end to end rather than left as a UI hint. Plus
+      the `cfprefsd` caveat on preference rows, and `UninstallConfig
+      .dir_limits` pinned equal to what the executor applies. Also a
+      names-only `license_suspected` flag (`*.lic`, `*.license`, `Receipts/`)
+      that keeps a row out of any bulk gesture.
+    - [ ] **The command layer.** `gui-core::uninstall_leftovers` (read-only
+      DTO) and `dispose_leftovers`: re-run discovery *inside the call*, accept
+      a path only if it is **byte-equal** (`OsStr`, not `Path` — `Path`
+      equality is component-wise, so `/x/./y` would pass) to an `offerable`
+      row of that fresh scan, `guard` files and `guard_dir` directories, refuse
+      the whole request on any mismatch, compare against `Expected`, Trash
+      only. `bulk_grantable == false` rows are still individually disposable —
+      the flag governs select-all in the UI, and enforcing it in the backend
+      would break the individual selection it exists to require. Two thin
+      Tauri commands. `deletion-safety-reviewer` required.
   - [ ] **The module UI.** *Visual → taste gate.*
   - [ ] **Team-id-prefixed containers are an under-match.** Two of 822
     containers on the reference machine are named `<TEAMID>.<id>`; the

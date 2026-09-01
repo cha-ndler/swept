@@ -10,6 +10,13 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **Directory actions in the executor** — a plan can now carry a
+  `PlannedDirAction`: a tree walked in full by `guard_dir`, moved to the Trash
+  as one recoverable unit, by explicit per-path grant only (no allowlist route
+  for a tree), re-walked immediately before disposal, refused if it grew since
+  it was confirmed, and counted against the mass-delete threshold by every
+  name beneath it. The action type carries no permanent variant. Nothing the
+  scanner produces uses it. (#38)
 - **Uninstaller discovery** — a read-only search for what an application left
   behind, across eleven per-user locations, built around one predicate: never
   claim a still-installed app's data. Matching is by dot-separated segment,

@@ -1,10 +1,58 @@
 name: ci
 
+# ---------------------------------------------------------------------------
+# Actions minutes are a hard constraint on this repo, and the reason is worth
+# writing down rather than rediscovering.
+#
+# This is a macOS-targeted tool, so the jobs that carry real signal have to run
+# on macOS runners — and GitHub bills macOS at **10x** the minute multiplier on
+# a private repository. Four macOS jobs at ~3-4 minutes each is ~14 macOS
+# minutes, which is ~140 billed minutes: about fourteen runs against a 2,000
+# minute monthly allowance. That allowance was exhausted, at which point jobs
+# stop starting at all (they fail in ~2 seconds having run zero steps, which
+# looks exactly like a broken build and is not one).
+#
+# So the rules here are:
+#   1. Never spend a macOS minute on a change that cannot affect the result —
+#      hence `paths-ignore` for prose and design assets.
+#   2. Never let a superseded run finish — hence `concurrency`.
+#   3. Only `check` and `gui` carry signal a pull request needs. `release-build`
+#      and `package` produce artifacts, so they run on main and tags only.
+#   4. Every job has a timeout, so a hung runner cannot eat the month.
+#
+# `scripts/verify.sh` runs the same gates locally and is the primary oracle;
+# CI is the second opinion, not the only one.
+# ---------------------------------------------------------------------------
+
+# The two `paths-ignore` lists below are duplicated on purpose: GitHub Actions
+# does not support YAML anchors, so an alias here parses as an error rather than
+# as sharing. Keep them in step.
 on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "design/**"
+      - "LICENSE"
+      - ".claude/**"
+      - ".gitignore"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "design/**"
+      - "LICENSE"
+      - ".claude/**"
+      - ".gitignore"
+
+# A force-push or a quick follow-up commit used to leave the previous run going
+# to completion. On PRs that is pure waste; on main and tags a run is finishing
+# something (an artifact, a release) and must not be interrupted.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,8 +60,14 @@ env:
 
 jobs:
   check:
-    # macOS: this is a macOS-targeted tool and the `trash` crate links system frameworks.
+    # macOS, and deliberately not moved to a cheaper Linux runner. This job is
+    # the safety kernel's oracle, and the kernel exists to reason about *macOS*
+    # path semantics: case-insensitive volumes, `/var/folders` and `/Users`
+    # being symlinks, what `realpath` does and does not normalise. A green run
+    # on Linux would be testing different semantics and would be a false
+    # negative on precisely the rules that matter most.
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -45,13 +99,89 @@ jobs:
           fi
           echo "OK: no test resolves the real home directory."
 
-  release-build:
-    # Build a release binary and publish it as an artifact (and a Release on tags).
+  gui:
+    # The Tauri shell is excluded from the core workspace; build it on its own:
+    # frontend (Vite) first so the dist exists, then the Rust webview crate.
+    #
+    # Also macOS-only by necessity: the visual-regression baselines are
+    # `*-darwin.png`. Chromium renders text differently on Linux, so every
+    # snapshot would fail — the gate would be measuring the runner, not the app.
     needs: check
-    # Least-privilege: only this job gets write, and only to create the Release.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: crates/gui
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust (stable + clippy + rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo (Tauri crate)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/gui/src-tauri
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/gui/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend (tsc + vite)
+        run: npm run build
+
+      # ~150 MB downloaded on every run otherwise, at macOS billing rates.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('crates/gui/package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      - name: UX harness (screenshots + axe a11y + visual-regression)
+        run: npm run ux
+
+      - name: Upload UX screenshots + report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-screenshots
+          path: |
+            crates/gui/ux/screenshots
+            crates/gui/playwright-report
+          if-no-files-found: warn
+
+      - name: Rust fmt + clippy (Tauri shell)
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Build Tauri shell
+        run: cargo build --manifest-path src-tauri/Cargo.toml
+
+  release-build:
+    # Produces the `macclean` binary artifact. Its only output is that artifact,
+    # and `check` has already compiled and tested the same code — so on a pull
+    # request this is a second macOS release build for nothing. Runs on main and
+    # tags only.
+    needs: check
+    if: github.event_name != 'pull_request'
     permissions:
       contents: write
     runs-on: macos-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
 
@@ -77,69 +207,15 @@ jobs:
         with:
           files: target/release/macclean
 
-  gui:
-    # The Tauri shell is excluded from the core workspace; build it on its own:
-    # frontend (Vite) first so the dist exists, then the Rust webview crate.
-    needs: check
-    runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: crates/gui
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Rust (stable + clippy + rustfmt)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Cache cargo (Tauri crate)
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/gui/src-tauri
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install frontend deps
-        run: npm ci
-
-      - name: Build frontend (tsc + vite)
-        run: npm run build
-
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium
-
-      - name: UX harness (screenshots + axe a11y + visual-regression)
-        run: npm run ux
-
-      - name: Upload UX screenshots + report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ux-screenshots
-          path: |
-            crates/gui/ux/screenshots
-            crates/gui/playwright-report
-          if-no-files-found: warn
-
-      - name: Rust fmt + clippy (Tauri shell)
-        run: |
-          cargo fmt --manifest-path src-tauri/Cargo.toml --check
-          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-
-      - name: Build Tauri shell
-        run: cargo build --manifest-path src-tauri/Cargo.toml
-
   package:
-    # Bundle the desktop app (.app + .dmg). Heavy (release build + bundling), so
-    # it runs on pushes to main and on tags — not every PR. Validated locally for
-    # PRs. On a v* tag it also attaches the .dmg to the GitHub Release.
+    # Bundle the desktop app (.app + .dmg). The heaviest job by far (release
+    # build + `cargo install tauri-cli` + bundling), so it runs on pushes to
+    # main and on tags — never on a pull request. Validated locally for PRs.
+    # On a v* tag it also attaches the .dmg to the GitHub Release.
     needs: gui
     if: github.event_name != 'pull_request'
     runs-on: macos-latest
+    timeout-minutes: 45
     permissions:
       contents: write
     defaults:
@@ -160,11 +236,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: crates/gui/package-lock.json
 
       - name: Install frontend deps
         run: npm ci
 
+      # `cargo install` rebuilds the CLI from source on every run otherwise.
+      - name: Cache Tauri CLI
+        id: tauri-cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-v2-${{ runner.os }}
+
       - name: Install Tauri CLI
+        if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version "^2" --locked
 
       - name: Build app bundle (.app + .dmg)

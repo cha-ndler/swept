@@ -23,6 +23,8 @@ export interface CleanSummary {
   executed: number;
   refused: number;
   bytes_freed: number;
+  /** Names removed by directory actions — how many files one action stood for. */
+  entries_freed: number;
 }
 
 // Mirrors macclean_core::loginitems::LoginItem.

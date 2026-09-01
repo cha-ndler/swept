@@ -518,16 +518,28 @@ instead.**
       `*.activation`, `license*.plist`, `Receipts/` among the immediate
       children) keeps a row out of any bulk gesture without withholding it —
       nothing is opened to decide.
-    - [ ] **The command layer.** `gui-core::uninstall_leftovers` (read-only
-      DTO) and `dispose_leftovers`: re-run discovery *inside the call*, accept
-      a path only if it is **byte-equal** (`OsStr`, not `Path` — `Path`
-      equality is component-wise, so `/x/./y` would pass) to an `offerable`
-      row of that fresh scan, `guard` files and `guard_dir` directories, refuse
-      the whole request on any mismatch, compare against `Expected`, Trash
-      only. `bulk_grantable == false` rows are still individually disposable —
-      the flag governs select-all in the UI, and enforcing it in the backend
-      would break the individual selection it exists to require. Two thin
-      Tauri commands. `deletion-safety-reviewer` required.
+    - [x] **The command layer.** `gui-core::uninstall_leftovers_in` (the
+      read-only DTO; offerable totals computed from the *emitted* rows so the
+      header and the list cannot disagree) and `dispose_leftovers_with_sink`,
+      whose ceiling is not a set of roots but **the `offerable` rows of a scan
+      run inside the call**: a path is accepted only if it is byte-equal
+      (`OsStr`, not `Path` — `Path` equality is component-wise, so `/x/./y`
+      would pass) to one of them. That single intersection is what refuses a
+      container root, a `Data/Documents` row, a group container, a withheld
+      sibling, a tree `guard_dir` would refuse, a child of an offered row, and
+      an app installed since the sheet was shown (no rows, so nothing is
+      offerable). A scan that cannot complete — an unreadable application
+      root — refuses the whole request; "I could not tell whether it is still
+      installed" must never become a disposal. Then `guard` per file and
+      `guard_dir` per directory, each required to be its own canonical
+      spelling; any rejection refuses wholesale; drift is measured against
+      what the sheet showed (rows and their sizes), not `SafeDir` figures.
+      The frontend can name an id and a display name and **nothing else** —
+      a command that could set the home or the inventory roots would let it
+      make an installed app look uninstalled. `bulk_grantable == false` rows
+      are individually disposable, on purpose and pinned. Two thin Tauri
+      commands; `CleanSummary.entries_freed` says how many names a directory
+      action stood for.
   - [ ] **The module UI.** *Visual → taste gate.*
   - [ ] **Team-id-prefixed containers are an under-match.** Two of 822
     containers on the reference machine are named `<TEAMID>.<id>`; the

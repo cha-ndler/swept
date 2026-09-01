@@ -9,7 +9,7 @@ use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
 use macclean_gui_core::{
     self as gui, CleanSummary, Expected, Filters, LargeOldReportDto, Permissions,
-    SpaceLensReportDto,
+    SpaceLensReportDto, UninstallReportDto, UninstallTarget,
 };
 
 /// Event channel the frontend listens on for scan progress.
@@ -154,6 +154,38 @@ async fn dispose_paths(
     .map_err(|e| format!("dispose task failed: {e}"))?
 }
 
+/// Read-only: what an application left behind. The frontend names an id and,
+/// optionally, a display name — nothing else. It cannot set the home or the
+/// inventory roots, because a frontend that could would be able to make an
+/// installed app look uninstalled.
+#[tauri::command]
+async fn uninstall_leftovers(target: UninstallTarget) -> Result<UninstallReportDto, String> {
+    tauri::async_runtime::spawn_blocking(move || gui::uninstall_leftovers(&target))
+        .await
+        .map_err(|e| format!("uninstall-leftovers task failed: {e}"))?
+}
+
+/// Move individually-chosen leftover rows to the Trash.
+///
+/// The strictest command in the app: `gui-core` re-runs discovery inside the
+/// call and accepts a path only if it is byte-equal to an `offerable` row of
+/// that fresh scan, re-guards each one (`guard_dir` for a tree), and refuses
+/// the whole request if any item is not. Trash-only; a directory action cannot
+/// express anything else.
+#[tauri::command]
+async fn dispose_leftovers(
+    target: UninstallTarget,
+    paths: Vec<String>,
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+) -> Result<CleanSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        gui::dispose_leftovers(&target, paths, expected, confirm_mass_delete)
+    })
+    .await
+    .map_err(|e| format!("dispose-leftovers task failed: {e}"))?
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -184,6 +216,8 @@ fn main() {
             clean,
             large_and_old,
             dispose_paths,
+            uninstall_leftovers,
+            dispose_leftovers,
             space_lens
         ])
         .run(tauri::generate_context!())

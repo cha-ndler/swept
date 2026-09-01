@@ -17,8 +17,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use macclean_core::uninstall::{
-    inventory, inventory_roots, leftovers_for, owner_index, BundleId, Location, MatchedVia,
-    Residence, UninstallConfig, UninstallError, DEFERRED_LOCATIONS, SEARCHED_LOCATIONS,
+    inventory, inventory_roots, leftovers_for, leftovers_for_named, owner_index, BundleId,
+    DisplayName, Kind, Location, MatchedVia, Residence, UninstallConfig, UninstallError,
+    CONTAINER_STATE_PARTS, CONTAINER_USER_DATA_PARTS, DEFERRED_LOCATIONS, SEARCHED_LOCATIONS,
 };
 
 // --- fixtures --------------------------------------------------------------
@@ -81,6 +82,61 @@ fn leftover_file(home: &Path, loc: Location, name: &str, bytes: u64) -> PathBuf 
 
 fn id(s: &str) -> BundleId {
     BundleId::parse(s).unwrap_or_else(|| panic!("{s} should be a valid bundle id"))
+}
+
+fn name(s: &str) -> DisplayName {
+    DisplayName::parse(s).unwrap_or_else(|| panic!("{s:?} should be a valid display name"))
+}
+
+/// An installed `.app` whose file stem and `CFBundleName` differ, for the
+/// name-tier tests that need to tell the two routes apart.
+fn install_named(root: &Path, stem: &str, id: &str, bundle_name: &str) -> PathBuf {
+    let bundle = root.join(format!("{stem}.app"));
+    fs::create_dir_all(bundle.join("Contents")).unwrap();
+    fs::write(
+        bundle.join("Contents/Info.plist"),
+        info_plist(id, bundle_name),
+    )
+    .unwrap();
+    bundle
+}
+
+/// A sandbox container at `~/Library/Containers/<id>`, scaffolded the way
+/// `containermanagerd` lays one out: a redirected home under `Data`, with
+/// every state and user-data part present and empty, and the user's folders
+/// as real directories.
+fn container(home: &Path, id: &str) -> PathBuf {
+    let root = home.join(Location::Containers.as_str()).join(id);
+    for part in CONTAINER_STATE_PARTS
+        .iter()
+        .chain(CONTAINER_USER_DATA_PARTS)
+    {
+        fs::create_dir_all(root.join("Data").join(part)).unwrap();
+    }
+    for dir in ["Desktop", "Downloads", "Movies", "Music", "Pictures"] {
+        fs::create_dir_all(root.join("Data").join(dir)).unwrap();
+    }
+    root
+}
+
+/// Put one file into a container part; returns the part's path.
+fn fill(container: &Path, part: &str, bytes: u64) -> PathBuf {
+    let part = container.join("Data").join(part);
+    write_file(&part.join("blob.bin"), bytes);
+    part
+}
+
+fn app_support(home: &Path) -> PathBuf {
+    home.join(Location::ApplicationSupport.as_str())
+}
+
+fn offerable(report: &macclean_core::uninstall::LeftoverReport) -> Vec<PathBuf> {
+    report
+        .rows
+        .iter()
+        .filter(|r| r.offerable)
+        .map(|r| r.path.clone())
+        .collect()
 }
 
 fn paths(report: &macclean_core::uninstall::LeftoverReport) -> Vec<String> {
@@ -207,6 +263,7 @@ fn the_leftover_location_list_is_pinned() {
         names,
         vec![
             "Library/Caches",
+            "Library/Containers",
             "Library/HTTPStorages",
             "Library/WebKit",
             "Library/Preferences",
@@ -215,7 +272,26 @@ fn the_leftover_location_list_is_pinned() {
             "Library/LaunchAgents",
             "Library/Logs",
             "Library/Application Support",
+            "Library/Group Containers",
         ]
+    );
+    // The container inclusion lists are part of the same canary: adding a part
+    // widens what a container row can stand for.
+    assert_eq!(
+        CONTAINER_STATE_PARTS,
+        [
+            "Library/Caches",
+            "Library/HTTPStorages",
+            "Library/Logs",
+            "Library/Preferences",
+            "Library/Saved Application State",
+            "Library/WebKit",
+            "tmp",
+        ]
+    );
+    assert_eq!(
+        CONTAINER_USER_DATA_PARTS,
+        ["Documents", "Library/Application Support"]
     );
 }
 
@@ -242,17 +318,25 @@ fn every_report_names_what_it_did_not_search() {
     let (_g, home, apps) = fixture();
     let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
 
-    // Containers, Group Containers and the human-name tier are not searched by
-    // this half. A report that did not say so would read as "this is
-    // everything", which is the one thing it is not.
+    // Some surfaces are deliberately not searched. A report that did not say
+    // so would read as "this is everything", which is the one thing it is not.
     assert_eq!(report.deferred.len(), DEFERRED_LOCATIONS.len());
+    assert!(!report.deferred.is_empty());
+    for (surface, reason) in report.deferred {
+        assert!(!reason.is_empty(), "a deferral must say why");
+        // Containers and Group Containers are searched now; a deferral naming
+        // either would be stale.
+        assert!(
+            !surface.ends_with("/Containers"),
+            "{surface} is searched, not deferred"
+        );
+    }
+    // The cookie jar is handed to the Privacy module on purpose, and the
+    // report has to keep saying so until that module exists.
     assert!(report
         .deferred
         .iter()
-        .any(|(p, _)| p.contains("Containers")));
-    for (_, reason) in report.deferred {
-        assert!(!reason.is_empty(), "a deferral must say why");
-    }
+        .any(|(p, _)| *p == "~/Library/Cookies"));
 }
 
 #[test]
@@ -842,4 +926,520 @@ fn a_protected_subtree_inside_a_leftover_is_not_counted() {
         report.rows[0].size_is_floor,
         "something inside was not measured, so the figure is a floor"
     );
+}
+
+// --- containers ------------------------------------------------------------
+//
+// A container is the app's redirected home. `Data/Documents` is where a
+// sandboxed app puts the user's only copy of a file, and Finder does not show
+// it. So a container is never one row: it is decomposed into the parts that
+// are the app's own state, by an inclusion list, and the parts that are the
+// user's are shown but never offered.
+
+#[test]
+fn a_container_root_is_never_offered() {
+    let (_g, home, apps) = fixture();
+    let root = container(&home, "com.acme.App");
+    fill(&root, "Library/Caches", 4_000);
+    fill(&root, "Library/Preferences", 200);
+    fill(&root, "Documents", 9_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    assert!(
+        !offerable(&report).is_empty(),
+        "the state parts are offered"
+    );
+    for row in &report.rows {
+        assert_ne!(row.path, root, "the container root is not a row");
+        if row.offerable {
+            let rel = row
+                .path
+                .strip_prefix(root.join("Data"))
+                .expect("an offerable container row is strictly inside Data");
+            assert!(
+                CONTAINER_STATE_PARTS.iter().any(|p| Path::new(p) == rel),
+                "{} is not on the inclusion list",
+                rel.display()
+            );
+            assert_eq!(row.location, Location::Containers);
+            assert_eq!(row.kind, Kind::Leftover);
+        }
+    }
+}
+
+#[test]
+fn an_unknown_directory_under_a_containers_data_library_is_not_offered() {
+    let (_g, home, apps) = fixture();
+    let root = container(&home, "com.acme.App");
+    // Inclusion, not exclusion: a directory Apple adds next year is not a row
+    // until someone decides it is. Nor is the cookie jar, which is regenerable
+    // but belongs to the Privacy module and its consequence label.
+    write_file(
+        &root.join("Data/Library/Something Apple Added/blob.bin"),
+        4_000,
+    );
+    write_file(
+        &root.join("Data/Library/Cookies/Cookies.binarycookies"),
+        4_000,
+    );
+    write_file(&root.join("Data/Pictures/photo.heic"), 4_000);
+    let caches = fill(&root, "Library/Caches", 1_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    assert_eq!(
+        report
+            .rows
+            .iter()
+            .map(|r| r.path.clone())
+            .collect::<Vec<_>>(),
+        vec![caches]
+    );
+}
+
+#[test]
+fn container_user_data_is_shown_and_never_offerable() {
+    let (_g, home, apps) = fixture();
+    let root = container(&home, "com.acme.App");
+    let documents = fill(&root, "Documents", 9_000);
+    let support = fill(&root, "Library/Application Support", 9_000);
+    let caches = fill(&root, "Library/Caches", 1_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    assert_eq!(report.rows.len(), 3);
+    for row in &report.rows {
+        if row.path == caches {
+            assert_eq!(row.kind, Kind::Leftover);
+            assert!(row.offerable && row.bulk_grantable);
+            continue;
+        }
+        assert!(
+            row.path == documents || row.path == support,
+            "{:?}",
+            row.path
+        );
+        assert_eq!(row.kind, Kind::UserData);
+        assert!(!row.offerable, "user data is shown, not offered");
+        assert!(!row.bulk_grantable);
+        assert!(row.withheld.as_deref().is_some_and(|w| !w.is_empty()));
+        assert_eq!(row.size_bytes, 9_000, "shown with its real size");
+    }
+    assert_eq!(report.withheld_count, 2);
+    assert_eq!(
+        report.total_bytes(),
+        1_000,
+        "the reclaimable figure counts only what may be offered"
+    );
+    assert!(!report.is_partial());
+}
+
+#[test]
+fn an_empty_documents_directory_still_yields_the_container_state_rows() {
+    let (_g, home, apps) = fixture();
+    let root = container(&home, "com.acme.App");
+    let caches = fill(&root, "Library/Caches", 1_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    // Scaffolding that is empty — which is most of every container — is not
+    // a row of either kind.
+    assert_eq!(
+        report
+            .rows
+            .iter()
+            .map(|r| r.path.clone())
+            .collect::<Vec<_>>(),
+        vec![caches]
+    );
+    assert!(report.rows.iter().all(|r| r.kind == Kind::Leftover));
+}
+
+#[test]
+fn a_container_part_that_resolves_outside_the_container_is_never_offered() {
+    let (_g, home, apps) = fixture();
+    // The measured shape: in 82 of 822 real containers, entries under `Data`
+    // are symlinks back into the real home. Two are placed on parts this
+    // module *would* offer, and one container symlinks its whole `Library`
+    // to the real `~/Library` — so its `Caches` part canonicalizes to a
+    // location root.
+    write_file(&home.join("Downloads/tax-return.pdf"), 9_000);
+    write_file(&home.join("Documents/thesis.pages"), 9_000);
+    let root = container(&home, "com.acme.App");
+    fs::remove_dir(root.join("Data/tmp")).unwrap();
+    std::os::unix::fs::symlink("../../../../Downloads", root.join("Data/tmp")).unwrap();
+    fs::remove_dir(root.join("Data/Documents")).unwrap();
+    std::os::unix::fs::symlink("../../../../Documents", root.join("Data/Documents")).unwrap();
+    let caches = fill(&root, "Library/Caches", 1_000);
+
+    let helper = home
+        .join(Location::Containers.as_str())
+        .join("com.acme.App.Helper");
+    fs::create_dir_all(helper.join("Data")).unwrap();
+    std::os::unix::fs::symlink(home.join("Library"), helper.join("Data/Library")).unwrap();
+    leftover_dir(&home, Location::Caches, "unrelated", 100);
+
+    let before = snapshot(&home);
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+    assert_eq!(before, snapshot(&home));
+
+    assert_eq!(offerable(&report), vec![caches]);
+    for row in &report.rows {
+        assert!(!row.path.starts_with(home.join("Downloads")));
+        assert!(!row.path.starts_with(home.join("Documents")));
+        assert_ne!(row.path, home.join(Location::Caches.as_str()));
+        assert!(
+            !fs::symlink_metadata(&row.path)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "no row is a symlink"
+        );
+    }
+    assert!(
+        report.skipped_symlink >= 2,
+        "the escapes are counted, not resolved"
+    );
+}
+
+#[test]
+fn a_container_of_a_still_installed_sibling_is_withheld_whole() {
+    let (_g, home, apps) = fixture();
+    install(&apps, "Reader", "com.acme.Suite.Reader");
+    let reader = container(&home, "com.acme.Suite.Reader");
+    fill(&reader, "Library/Caches", 4_000);
+    fill(&reader, "Documents", 4_000);
+    let suite = container(&home, "com.acme.Suite");
+    let suite_caches = fill(&suite, "Library/Caches", 1_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.Suite")).unwrap();
+
+    assert_eq!(offerable(&report), vec![suite_caches]);
+    let withheld: Vec<&macclean_core::uninstall::Candidate> =
+        report.rows.iter().filter(|r| !r.offerable).collect();
+    assert_eq!(withheld.len(), 1);
+    assert_eq!(withheld[0].path, reader, "one row for the whole container");
+    assert!(!withheld[0].bulk_grantable);
+    assert!(withheld[0]
+        .withheld
+        .as_deref()
+        .is_some_and(|w| w.contains("com.acme.Suite.Reader")));
+    assert!(
+        !report
+            .rows
+            .iter()
+            .any(|r| r.path.starts_with(reader.join("Data"))),
+        "a live app's container is not decomposed"
+    );
+}
+
+#[test]
+fn an_orphan_sibling_container_is_decomposed_and_never_bulk_grantable() {
+    let (_g, home, apps) = fixture();
+    let helper = container(&home, "com.acme.App.Helper");
+    let caches = fill(&helper, "Library/Caches", 4_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    assert_eq!(report.rows.len(), 1);
+    let row = &report.rows[0];
+    assert_eq!(row.path, caches);
+    assert!(row.offerable);
+    assert!(
+        !row.bulk_grantable,
+        "a different id from the one the user named"
+    );
+    assert_eq!(row.matched_via, MatchedVia::SiblingSegment("Helper".into()));
+}
+
+// --- the human-name tier ---------------------------------------------------
+//
+// Most apps name their `Application Support` directory after themselves, not
+// after their id — 89 of 129 entries on the reference machine. The tier that
+// matches those is weaker than id matching and is gated three times: byte-exact
+// equality with a name the caller supplied, no installed app answering to that
+// name, and an id-keyed child inside to corroborate it.
+
+#[test]
+fn a_name_keyed_directory_is_offered_only_with_corroboration_and_never_in_bulk() {
+    let (_g, home, apps) = fixture();
+    let dir = app_support(&home).join("Acme Notes");
+    write_file(&dir.join("com.acme.Notes.plist"), 100);
+    write_file(&dir.join("store/notes.sqlite"), 9_000);
+
+    let report = leftovers_for_named(
+        &cfg(&home, &apps),
+        &id("com.acme.Notes"),
+        Some(&name("Acme Notes")),
+    )
+    .unwrap();
+
+    assert_eq!(report.rows.len(), 1);
+    let row = &report.rows[0];
+    assert_eq!(row.path, dir);
+    assert_eq!(row.location, Location::ApplicationSupport);
+    assert_eq!(
+        row.matched_via,
+        MatchedVia::DisplayName("Acme Notes".into())
+    );
+    assert_eq!(row.kind, Kind::Leftover);
+    assert!(row.offerable);
+    assert!(
+        !row.bulk_grantable,
+        "a name match is a judgement call the user makes per row"
+    );
+    assert_eq!(row.size_bytes, 9_100);
+
+    // Without a name there is no name tier: the same directory is invisible.
+    let plain = leftovers_for(&cfg(&home, &apps), &id("com.acme.Notes")).unwrap();
+    assert!(plain.rows.is_empty());
+}
+
+#[test]
+fn an_uncorroborated_name_match_is_counted_and_not_offered() {
+    let (_g, home, apps) = fixture();
+    // Right name, nothing inside keyed on the id. The caller's word is the only
+    // link between this directory and the target, and that is not enough.
+    write_file(&app_support(&home).join("Acme Notes/cache/blob.bin"), 4_000);
+
+    let report = leftovers_for_named(
+        &cfg(&home, &apps),
+        &id("com.acme.Notes"),
+        Some(&name("Acme Notes")),
+    )
+    .unwrap();
+
+    assert!(report.rows.is_empty());
+    assert_eq!(report.skipped_uncorroborated_name, 1);
+    assert!(
+        !report.is_partial(),
+        "declining a name match is the tier working, not a gap in what was seen"
+    );
+}
+
+#[test]
+fn corroboration_uses_the_segment_predicate_not_a_byte_prefix() {
+    let (_g, home, apps) = fixture();
+    // `com.acme.Notes2` is a byte-prefix match and a segment mismatch. If it
+    // corroborated, the whole tier would inherit the collision the id matcher
+    // was built to avoid.
+    write_file(
+        &app_support(&home).join("Acme Notes/com.acme.Notes2.plist"),
+        100,
+    );
+
+    let report = leftovers_for_named(
+        &cfg(&home, &apps),
+        &id("com.acme.Notes"),
+        Some(&name("Acme Notes")),
+    )
+    .unwrap();
+
+    assert!(report.rows.is_empty());
+    assert_eq!(report.skipped_uncorroborated_name, 1);
+}
+
+#[test]
+fn a_child_owned_by_a_still_installed_app_does_not_corroborate() {
+    let (_g, home, apps) = fixture();
+    install(&apps, "Helper", "com.acme.Notes.Helper");
+    // The only id-keyed child belongs to an installed app. That is evidence the
+    // directory is *someone's*, and not evidence it is the target's.
+    write_file(
+        &app_support(&home).join("Acme Notes/com.acme.Notes.Helper/state.db"),
+        100,
+    );
+
+    let report = leftovers_for_named(
+        &cfg(&home, &apps),
+        &id("com.acme.Notes"),
+        Some(&name("Acme Notes")),
+    )
+    .unwrap();
+
+    assert!(report.rows.is_empty());
+    assert_eq!(report.skipped_uncorroborated_name, 1);
+}
+
+#[test]
+fn a_name_answered_to_by_an_installed_app_is_withheld_even_when_corroborated() {
+    let (_g, home, apps) = fixture();
+    // Two routes to a name, tested separately so dropping either is caught:
+    // `CFBundleName`, and the `.app` file stem.
+    install_named(&apps, "Whatever", "com.other.Notes", "Acme Notes");
+    install_named(&apps, "Notes Deluxe", "com.third.Notes", "Something Else");
+    for dir in ["Acme Notes", "Notes Deluxe"] {
+        write_file(
+            &app_support(&home).join(dir).join("com.acme.Notes.plist"),
+            100,
+        );
+    }
+
+    for (dir, owner) in [
+        ("Acme Notes", "com.other.Notes"),
+        ("Notes Deluxe", "com.third.Notes"),
+    ] {
+        let report =
+            leftovers_for_named(&cfg(&home, &apps), &id("com.acme.Notes"), Some(&name(dir)))
+                .unwrap();
+
+        assert_eq!(
+            report.rows.len(),
+            1,
+            "{dir}: shown so the user knows it exists"
+        );
+        let row = &report.rows[0];
+        assert_eq!(row.path, app_support(&home).join(dir));
+        assert!(
+            !row.offerable,
+            "{dir}: an installed app answers to this name"
+        );
+        assert!(!row.bulk_grantable);
+        assert!(row.withheld.as_deref().is_some_and(|w| w.contains(owner)));
+        assert_eq!(report.withheld_count, 1);
+    }
+}
+
+#[test]
+fn a_name_match_is_byte_exact() {
+    let (_g, home, apps) = fixture();
+    for dir in ["acme notes", "Acme Notes ", "Acme  Notes"] {
+        write_file(
+            &app_support(&home).join(dir).join("com.acme.Notes.plist"),
+            100,
+        );
+    }
+
+    let report = leftovers_for_named(
+        &cfg(&home, &apps),
+        &id("com.acme.Notes"),
+        Some(&name("Acme Notes")),
+    )
+    .unwrap();
+
+    assert!(report.rows.is_empty(), "no folding, no trimming, no fuzz");
+}
+
+#[test]
+fn a_display_name_that_cannot_be_a_match_key_is_refused() {
+    for raw in ["", ".", "..", "Acme/Notes", "Acme\0Notes", &"x".repeat(256)] {
+        assert!(DisplayName::parse(raw).is_none(), "{raw:?} was accepted");
+    }
+    for raw in ["Acme Notes", "Notes.app", "Ünïcödé", "x", &"x".repeat(255)] {
+        assert!(DisplayName::parse(raw).is_some(), "{raw:?} was refused");
+    }
+}
+
+#[test]
+fn the_name_tier_never_fires_outside_application_support() {
+    let (_g, home, apps) = fixture();
+    // Each of these is a name match with a corroborating child — in the wrong
+    // location. `Logs` has no id-named child to corroborate against in
+    // practice, and a container named after an app is not a shape that exists.
+    write_file(
+        &home
+            .join(Location::Logs.as_str())
+            .join("Acme Notes/com.acme.Notes.log"),
+        100,
+    );
+    write_file(
+        &home
+            .join(Location::Caches.as_str())
+            .join("Acme Notes/com.acme.Notes/blob.bin"),
+        100,
+    );
+    let named_container = container(&home, "Acme Notes");
+    fill(&named_container, "Library/Caches", 100);
+    write_file(
+        &named_container.join("Data/Library/Caches/com.acme.Notes.db"),
+        100,
+    );
+
+    let report = leftovers_for_named(
+        &cfg(&home, &apps),
+        &id("com.acme.Notes"),
+        Some(&name("Acme Notes")),
+    )
+    .unwrap();
+
+    assert!(report.rows.is_empty(), "{:?}", paths(&report));
+    assert_eq!(report.skipped_uncorroborated_name, 0, "not even considered");
+}
+
+// --- group containers ------------------------------------------------------
+
+#[test]
+fn a_group_container_is_shown_as_shared_and_never_offered() {
+    let (_g, home, apps) = fixture();
+    let groups = home.join(Location::GroupContainers.as_str());
+    write_file(&groups.join("group.com.acme.App/shared.db"), 4_000);
+    write_file(&groups.join("ABCDE12345.com.acme.App/shared.db"), 4_000);
+    write_file(&groups.join("group.com.other.App/shared.db"), 4_000);
+    // An arbitrary prefix is not a group-container prefix: the strip is fenced
+    // to `group.` and a ten-character team id.
+    write_file(&groups.join("vendor.com.acme.App/shared.db"), 4_000);
+    // An id-keyed row alongside, so the assertion cannot pass vacuously.
+    let caches = leftover_dir(&home, Location::Caches, "com.acme.App", 1_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    assert_eq!(offerable(&report), vec![caches]);
+    let shared: Vec<&macclean_core::uninstall::Candidate> = report
+        .rows
+        .iter()
+        .filter(|r| r.location == Location::GroupContainers)
+        .collect();
+    assert_eq!(shared.len(), 2, "shown, so the user knows they exist");
+    for row in &shared {
+        assert_eq!(row.kind, Kind::Shared);
+        assert!(!row.offerable, "shared by construction; never claimable");
+        assert!(!row.bulk_grantable);
+        assert!(row.withheld.is_some());
+        assert_eq!(row.size_bytes, 4_000);
+    }
+    assert!(shared
+        .iter()
+        .any(|r| r.matched_via == MatchedVia::IdWithPrefix("group.".into())));
+    assert!(shared
+        .iter()
+        .any(|r| r.matched_via == MatchedVia::IdWithPrefix("ABCDE12345.".into())));
+    assert!(!report
+        .rows
+        .iter()
+        .any(|r| r.path.ends_with("group.com.other.App")));
+    assert_eq!(report.total_bytes(), 1_000);
+    assert!(!report.is_partial());
+}
+
+// --- honesty, again --------------------------------------------------------
+
+#[test]
+fn an_unrelated_symlink_in_a_location_does_not_make_the_report_partial() {
+    let (_g, home, apps) = fixture();
+    // A stock machine has a few of these in Saved Application State, none of
+    // them the target's. Found by running the scan against a real home: every
+    // one of 41 reports came back partial because of the same four entries —
+    // a caveat that fires on every scan teaches people to ignore it. A
+    // symlink is dropped either way; it is *counted* only when it is ours.
+    let elsewhere = home.join("SomeoneElse/data");
+    write_file(&elsewhere.join("theirs.bin"), 90);
+    std::os::unix::fs::symlink(
+        &elsewhere,
+        home.join(Location::SavedApplicationState.as_str())
+            .join("com.other.App.savedState"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        &elsewhere,
+        home.join(Location::Caches.as_str()).join("com.other.App"),
+    )
+    .unwrap();
+    let caches = leftover_dir(&home, Location::Caches, "com.acme.App", 1_000);
+
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+
+    assert_eq!(offerable(&report), vec![caches]);
+    assert_eq!(report.skipped_symlink, 0, "not ours, not a gap");
+    assert!(!report.is_partial());
 }

@@ -10,6 +10,16 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **Uninstaller discovery** — a read-only search for what an application left
+  behind, across eleven per-user locations, built around one predicate: never
+  claim a still-installed app's data. Matching is by dot-separated segment,
+  byte-exact in case, with the longest installed owner winning. Sandbox
+  containers are decomposed by an inclusion list — the user's `Documents` and
+  `Application Support` inside a container are shown and never offered; group
+  containers are shown and never claimed; a human-name match in
+  `~/Library/Application Support` is gated three times and never
+  bulk-grantable. No engine command exists yet, and nothing here can authorize
+  anything. (#36, #37)
 - **Large & Old Files** — a read-only walk of `~/Documents`, `~/Downloads`,
   `~/Desktop`, `~/Movies`, `~/Music` and `~/Pictures`, with size and age
   filters. Nothing is ever pre-selected, there is no select-all, and acting on a

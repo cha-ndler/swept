@@ -410,8 +410,8 @@ instead.**
     `resolve_roots`. Worth writing down because the two are easy to conflate:
     the roots list says what may be *read*, and `resolve_roots` is a stricter
     filter that two specific walkers apply on top of it.
-- [ ] **M4 — Uninstaller (leftovers-only)** — *discovery over the id-keyed
-  locations is done; containers, the human-name tier and disposal are open.*
+- [ ] **M4 — Uninstaller (leftovers-only)** — *discovery is done — id-keyed
+  locations, containers and the human-name tier; disposal and the UI are open.*
   **Removing the `.app` bundle itself stays out of scope** — `/Applications` is
   on `PROTECTED_ABS_ROOTS` and carving it out is a denylist amendment needing
   explicit sign-off. *Riskiest task in the plan.*
@@ -436,23 +436,66 @@ instead.**
     check, since a shrunken inventory makes installed apps look uninstalled.
     Sizes count every *name*, the opposite of Space Lens, because a disposal
     unlinks names.
-  - [ ] **Containers and the human-name tier.** `~/Library/Containers` holds the
-    app's redirected home — `Data/Documents` is where a sandboxed app puts the
-    user's only copy of a file — so it must be decomposed into its cache-like
-    parts via an **inclusion** list, never offered as one row. Group Containers
-    are shared by construction and stay unclaimable. `~/Library/Application
-    Support` is matched by exact id today; most apps name that directory after
-    themselves, so the name tier needs sole-ownership and corroboration gates.
+  - [x] **Containers, group containers and the human-name tier.** Three
+    surfaces that are not id-keyed directories, each with its own posture.
+    **A container is decomposed, never offered whole**: `~/Library/Containers/
+    <id>` is the app's redirected home, and `Data/Documents` is where a
+    sandboxed app puts the user's only copy of a file (Finder does not show
+    it). Rows come from `CONTAINER_STATE_PARTS`, an **inclusion** list under
+    `Data` — an exclusion list fails open the next time Apple adds a directory
+    — and `Data/Documents` plus `Data/Library/Application Support` are shown
+    as `Kind::UserData` and never offered. Every part is checked for being its
+    own canonical spelling, because 82 of 822 real containers carry symlinks
+    under `Data` that point back into the real home, and one whose `Library`
+    is such a link would resolve `Data/Library/Caches` to `~/Library/Caches` —
+    a location root. **A group container is shown and never claimed** — the
+    entitlement that settles ownership is in the bundle that is gone — so the
+    one *prefix* strip in the module (`group.` or a ten-character team id)
+    exists only to show a withheld row. **A human name is a weaker key, gated
+    three times** in `Application Support` only: byte-equal to a
+    caller-supplied `DisplayName`, no installed app answering to that name (by
+    `CFBundleName`, `CFBundleDisplayName` or `.app` stem), and an immediate
+    child keyed on the target's id — via the same `claim`, so a child owned by
+    an installed helper does not corroborate. Never bulk-grantable. Measured
+    honestly: the corroboration gate admits **4 of 89** human-named
+    directories on the reference machine. It is safe and nearly useless, on
+    purpose, until a human loosens it (see the open questions). The cookie jar
+    inside a container is deliberately not a state part: it is M5's surface
+    and arrives with M5's consequence label.
+    **For the disposal half:** confining a selection to the resolved location
+    roots is no longer enough — `<container>/Data/Documents` is *inside* a
+    location root. Disposal must intersect the selection with the `offerable`
+    rows of a fresh scan, the way Large & Old re-walks before it acts.
   - [ ] **Directory-aware disposal.** The part that actually needs `guard_dir`:
     `PlannedAction` is files-only and `executor::authorize` refuses every
     directory target. One reviewed change, `deletion-safety-reviewer` required.
+    Two display facts the discovery half does not yet compute and disposal
+    will want: `exceeds_dir_limits` (a row `guard_dir` is certain to refuse
+    should not be offered as though it could be honoured) and a names-only
+    `license_suspected` flag (`*.lic`, `*.license`, `Receipts/`) that keeps a
+    row out of any bulk gesture.
   - [ ] **The module UI.** *Visual → taste gate.*
+  - [ ] **Team-id-prefixed containers are an under-match.** Two of 822
+    containers on the reference machine are named `<TEAMID>.<id>`; the
+    id-keyed matcher does not claim them (a prefix strip in `Containers` would
+    be a claim, unlike the one in Group Containers). Under-reporting is the
+    safe direction; recorded so it is not mistaken for a bug.
 
   Open questions the design surfaced, for the human:
   - **Where does the bundle id come from once the app is gone?** Either the UI
     records identity *before* the user removes the app, or an "orphan sweep"
     enumerates leftovers first and infers candidates. This decides whether
-    `uninstall.rs` needs an `orphans()` entry point.
+    `uninstall.rs` needs an `orphans()` entry point. **A measurement that
+    constrains the answer:** on the reference machine 747 of 822 containers
+    are `com.apple.*`, and 626 have no owner in the inventory at all — Apple
+    system components living under `/System/Library`, outside
+    `inventory_roots`. An orphan sweep over today's inventory would offer
+    every one of them. So a sweep needs the inventory to cover system
+    components first (and excluding `com.apple.` instead would also hide
+    Xcode, GarageBand and Keynote, all legitimately removable). It also means
+    the per-id path must not take a free-typed id from the UI: identity should
+    come from a bundle the UI saw, so a user cannot name a system daemon by
+    accident.
   - **Is a subprocess ever acceptable here?** Reading
     `com.apple.security.application-groups` via `codesign` is the only
     mechanical route to Group Containers, and there is no subprocess anywhere in
@@ -461,6 +504,17 @@ instead.**
   - **Should disposal require the app be quit?** `cfprefsd` can resurrect
     `~/Library/Preferences/<id>.plist` after removal, so "removed" would be true
     at the moment of the action and false a second later.
+  - **Should the name tier's corroboration be loosened?** As shipped it needs
+    an id-keyed child *inside* the directory, which admits 4 of 89 on the
+    reference machine. The alternative is report-level corroboration — the
+    same scan found an exact-id row somewhere else — which would admit most of
+    the 89 but rests on the caller's word that this name and this id are the
+    same app. Safe-and-useless was chosen over useful-and-trusting; the choice
+    is the human's.
+  - **Should `Data/Library/Application Support` inside a container ever be
+    offerable?** It is where a sandboxed notes app keeps the notes, and also
+    the largest thing an uninstalled sandboxed app leaves behind. Shown and
+    never offered today; "offerable, never bulk" is the plausible loosening.
 - [ ] **M5 — Privacy** — browser caches/cookies/history. **Cookies sign the user
   out everywhere** — separately opt-in, never pre-selected, never in Smart Scan
   defaults, labelled with that consequence.

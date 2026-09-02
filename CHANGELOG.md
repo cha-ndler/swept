@@ -10,6 +10,16 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **A login item can be set aside, and put back** — the first mutation here
+  that is neither a disposal nor a move to the recoverable bin. It is a hard
+  link, an inode check, then the removal of the original name, so the only name
+  ever removed is one that provably shares an inode with a second name created
+  moments before: every failure lands on "nothing happened" or "two names for
+  one file", never on "no names". The store is a folder inside
+  `~/Library/LaunchAgents`, which is what lets putting an item back need no
+  recorded state — the destination is simply the folder above — and what means
+  removing this app strands nothing. Separate plan, consent and sink types from
+  the disposal path, with no conversion either way. (#47)
 - **Startup, read-only and honest** — the login-items inspector now reports the
   moved-aside store, `/Library/LaunchAgents` and `/Library/LaunchDaemons` as
   inventory it can never change, and the *existence* of the modern

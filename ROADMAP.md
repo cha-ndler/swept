@@ -745,14 +745,31 @@ instead.**
     on `NotFound` only (never `PermissionDenied`) and on absolute paths only,
     because calling a working item broken is the wrong direction to be wrong
     in.
-  - [ ] **The mutating half.** Move aside and put back, as a **hard link, an
-    inode check, then the removal of the original name** — never `rename`,
-    which clobbers silently, and never copy-then-remove. The property that
-    buys: *this module can never lose a file's bytes*, because the only name
-    ever removed is one that provably shares an inode with a second name
-    created moments earlier. A sibling entry point in `executor.rs` with its
-    own plan, consent and sink types, so a grant to move a plist aside cannot
-    authorize disposing of it and no disposal caller inherits the capability.
+  - [x] **The mutating half.** `executor::stash` / `executor::restore`: a
+    **hard link, an inode check, then the removal of the original name** —
+    never `rename`, which replaces a destination silently, and never
+    copy-then-remove. `hard_link` *is* the destination check, failing with
+    `EEXIST` and creating nothing, so there is deliberately no
+    `if dest.exists()` above it. Sibling types (`StashPlan`, `StashConsent`,
+    `StashSink`) with no conversion to the disposal ones, so "a grant to set a
+    plist aside cannot dispose of it" is a property of the types.
+    Three review rounds, and the first two blocked. **The rollback removed a
+    name it had never verified:** comparing the two paths to each other *after*
+    linking conflates a swapped source with a swapped destination, and in the
+    second case the file now at that name belongs to someone else and may have
+    only that one name. The identity is taken before the link now, so each side
+    is judged on its own. **The documented symlink refusal refused nothing:**
+    both layers run after `guard`, which canonicalizes, so a plist that was
+    already a link arrived as its target — a decoy would have set aside an item
+    the user never ticked — and the test that claimed otherwise passed
+    vacuously because the denylist refused its keychain target first. The plan
+    now carries the listed spelling, sealed behind a constructor so a caller
+    cannot back-fill it from the guarded path and make the check a tautology.
+    **And a test named for the chokepoint never called the function it named.**
+    One gap left open on purpose: the denylist half of that guard call is
+    unreachable by construction, since `SafePath` cannot hold a protected path
+    — stated in a comment rather than performed by a test built on a
+    `#[cfg(test)]` bypass of the type system.
   - [ ] **The screen.** *Visual → taste gate.*
 
   The store is `~/Library/LaunchAgents/Moved aside by mac-cleaner/` — inside

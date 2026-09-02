@@ -8,8 +8,8 @@ use tauri::{AppHandle, Emitter};
 use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
 use macclean_gui_core::{
-    self as gui, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto,
-    Permissions, SpaceLensReportDto, UninstallReportDto, UninstallTarget,
+    self as gui, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto, Permissions,
+    SpaceLensReportDto, UninstallReportDto, UninstallTarget,
 };
 
 /// Event channel the frontend listens on for scan progress.

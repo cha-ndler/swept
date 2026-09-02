@@ -10,6 +10,14 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **Startup, read-only and honest** — the login-items inspector now reports the
+  moved-aside store, `/Library/LaunchAgents` and `/Library/LaunchDaemons` as
+  inventory it can never change, and the *existence* of the modern
+  `SMAppService` store whose contents it never reads. What starts at login is a
+  class derived from `RunAtLoad`, `KeepAlive` and the on-demand keys together,
+  and an item whose absolute program is missing is reported as broken — the
+  safest thing on the screen, since it fails at every login anyway. A file this
+  app cannot parse is shown with its reason rather than skipped. (#45)
 - **Privacy module** — the screen for what browsers remember, under Protect.
   The size is not the headline: the chart is by consequence, every row says
   what it costs you, the sidebar badge is a count, and the confirmation sheet
@@ -128,6 +136,13 @@ first two modules that look outside the cleanup allowlist.
   different pictures. (#30)
 
 ### Safety
+- **The app stopped saying "disabled" about something it cannot know.** A
+  plist's `Disabled` key is only the initial value for a job that launchd's own
+  override database has never seen; that database is root-owned and unreadable
+  here, so the two can disagree. The field is `plist_says_disabled` now, named
+  for what it is, and nothing reports a job as disabled. On the reference
+  machine no user agent carries the key at all, so the old badge was reporting
+  a state it had never observed. (#45)
 - Established the spine the modules rest on: **widen what we can see, never
   widen what we can act on.** `allowlist::discovery_roots` is read-only and
   wider; `allowlist::default_roots` — the disposal scope — is unchanged, and

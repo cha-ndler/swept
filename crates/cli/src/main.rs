@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 
 use macclean_core::audit::AuditLog;
 use macclean_core::executor::{execute, Consent, SystemSink};
-use macclean_core::loginitems::{self, LoginItem};
+use macclean_core::loginitems::{self, LoginItem, StartClass};
 use macclean_core::plan::{Plan, MASS_DELETE_BYTES, MASS_DELETE_COUNT};
 use macclean_core::privacy;
 use macclean_core::report::ScanReport;
@@ -159,7 +159,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             Ok(ExitCode::SUCCESS)
         }
         Cmd::LoginItems { json } => {
-            let items = loginitems::scan_dir(&loginitems::default_dir(&home));
+            let report = loginitems::scan(&loginitems::StartupConfig::new(home.clone()));
+            let items = report.items;
             if json {
                 println!("{}", loginitems::to_json_pretty(&items));
             } else {
@@ -181,25 +182,29 @@ fn print_login_items(items: &[LoginItem]) {
     }
     println!("Login items (~/Library/LaunchAgents):");
     for it in items {
-        let status = if it.disabled {
-            "disabled"
-        } else if it.run_at_load {
-            "runs at login"
-        } else {
-            "on demand"
-        };
+        // The class, never the plist's `Disabled` key: that key is only the
+        // initial value for a job launchd has not seen, and this app cannot
+        // read the database that overrides it. Saying "disabled" here would be
+        // a claim, not a reading.
         println!(
-            "  {:<40} {:<14} {}",
+            "  {:<40} {:<32} {}",
             it.label,
-            status,
+            it.class.describe(),
             it.program.as_deref().unwrap_or("-")
         );
+        if let Some(why) = &it.withheld {
+            println!("  {:<40} {why}", "");
+        }
     }
     let active = items
         .iter()
-        .filter(|i| i.run_at_load && !i.disabled)
+        .filter(|i| i.class == StartClass::StartsAtLogin)
         .count();
-    println!("\n{active} item(s) run at login. Disable any you don't need to speed up startup.");
+    println!("\n{active} item(s) start when you log in.");
+    println!(
+        "Most apps now register their login items with macOS directly; that list is in \
+         System Settings › General › Login Items & Extensions."
+    );
 }
 
 /// Build a scan config for `home`, applying the optional age and size filters.

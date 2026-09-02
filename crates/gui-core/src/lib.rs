@@ -126,8 +126,12 @@ pub fn scan_report_with_progress(
 }
 
 /// Read-only: list login items for the UI.
+///
+/// Still the flat list the current Startup screen renders. The richer report
+/// — the system inventory, the moved-aside store, the modern-store caveat —
+/// arrives with the screen that can show it.
 pub fn list_login_items(home: &Path) -> Vec<LoginItem> {
-    loginitems::scan_dir(&loginitems::default_dir(home))
+    loginitems::scan(&loginitems::StartupConfig::new(home.to_path_buf())).items
 }
 
 /// Consent for the GUI: always move to the Trash (recoverable), never permanent.

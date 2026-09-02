@@ -191,3 +191,84 @@ export interface Permissions {
   safari_readable: boolean;
   all_readable: boolean;
 }
+
+// Mirrors macclean_gui_core::PrivacyRowDto.
+//
+// Two absences are the design. There is no `selected` field, because nothing
+// here is ever pre-chosen. And there are no **member paths**: a database and
+// its `-journal`/`-shm`/`-wal` are one row, and the frontend names a row by its
+// own `path` and nothing finer, so it cannot take a row apart. The backend
+// expands the members from a fresh scan at the moment it acts.
+export interface PrivacyRow {
+  browser: string;
+  browser_name: string;
+  profile: string | null;
+  class: "cookies" | "history" | "session" | "site_storage" | "cache";
+  consequence:
+    | "signs_you_out"
+    | "erases_history"
+    | "loses_open_tabs"
+    | "loses_site_data"
+    | "regenerable";
+  label: string;
+  path: string;
+  /** How many names this row stands for. Display only. */
+  member_count: number;
+  /** Disposing of this row is a directory action, which always asks. */
+  is_dir: boolean;
+  size_bytes: number;
+  file_count: number;
+  size_is_floor: boolean;
+  offerable: boolean;
+  bulk_grantable: boolean;
+  smart_scan_eligible: boolean;
+  withheld: string | null;
+  undisposable: string | null;
+}
+
+// Mirrors macclean_gui_core::PrivacyBrowserDto.
+export interface PrivacyBrowser {
+  id: string;
+  name: string;
+  access:
+    | "readable"
+    | "not_installed"
+    | "needs_full_disk_access"
+    | "unreadable";
+  access_detail: string | null;
+  profiles: number;
+  /** A lock marker is present. Presence, never proof that a process is up. */
+  may_be_live: boolean;
+  notes: string[];
+}
+
+// Something another category already cleans. Deliberately carries no size: a
+// number that does not exist cannot be added to a total twice.
+export interface CoveredElsewhere {
+  path: string;
+  category: string;
+  browser: string;
+}
+
+// Mirrors macclean_gui_core::PrivacyReportDto.
+export interface PrivacyReport {
+  rows: PrivacyRow[];
+  browsers: PrivacyBrowser[];
+  covered_elsewhere: CoveredElsewhere[];
+  offerable_bytes: number;
+  skipped_symlink: number;
+  skipped_unrepresentable: number;
+  partial: boolean;
+  caveats: string[];
+}
+
+// Mirrors macclean_gui_core::Acknowledged.
+//
+// The second consent axis, and the mirror of the backend's own gate: every
+// field defaults to false there, so a request that omits one is refused rather
+// than assumed. Nothing here may be pre-ticked.
+export interface Acknowledged {
+  signs_you_out: boolean;
+  erases_history: boolean;
+  loses_open_tabs: boolean;
+}

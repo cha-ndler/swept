@@ -118,6 +118,18 @@ export function LockIcon({ size }: { size?: number }) {
   );
 }
 
+/**
+ * Privacy. A domino mask rather than an eye: an eye reads as "watch" or
+ * "preview", and this module is about what is *not* seen.
+ */
+export function MaskIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M1.6 5.6c1.9-.7 3.9-1 6.4-1s4.5.3 6.4 1c.3 2.2-.2 3.9-1.2 4.8-1.1 1-2.7.9-3.6.1-.6-.5-.9-1.1-1.6-1.1s-1 .6-1.6 1.1c-.9.8-2.5.9-3.6-.1-1-.9-1.5-2.6-1.2-4.8Z" />
+    </Icon>
+  );
+}
+
 export function InfoIcon({ size }: { size?: number }) {
   return (
     <Icon size={size}>

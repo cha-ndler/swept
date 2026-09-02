@@ -7,6 +7,10 @@ import {
   SAMPLE_INSTALLED_APPS,
   SAMPLE_LARGE_OLD,
   SAMPLE_LOGIN_ITEMS,
+  SAMPLE_PRIVACY,
+  SAMPLE_PRIVACY_COMPLETE,
+  SAMPLE_PRIVACY_EMPTY,
+  SAMPLE_PRIVACY_SUMMARY,
   SAMPLE_REPORT,
   SAMPLE_SPACE_LENS,
   SAMPLE_SPACE_LENS_COMPLETE,
@@ -53,6 +57,12 @@ async function installBackend(
     uninstallReject?: string;
     /** Hang only the leftover search, so the picker still answers. */
     hangLeftovers?: boolean;
+    privacy?: unknown;
+    privacySummary?: unknown;
+    /** When set, `dispose_privacy` rejects with this message. */
+    privacyReject?: string;
+    /** Hang only the privacy scan, for the loading state. */
+    hangPrivacy?: boolean;
   } = {},
 ) {
   const payload = {
@@ -61,6 +71,10 @@ async function installBackend(
     uninstallSummary: opts.uninstallSummary ?? SAMPLE_UNINSTALL_SUMMARY,
     uninstallReject: opts.uninstallReject ?? null,
     hangLeftovers: opts.hangLeftovers ?? false,
+    privacy: opts.privacy ?? SAMPLE_PRIVACY,
+    privacySummary: opts.privacySummary ?? SAMPLE_PRIVACY_SUMMARY,
+    privacyReject: opts.privacyReject ?? null,
+    hangPrivacy: opts.hangPrivacy ?? false,
     report: opts.report ?? SAMPLE_REPORT,
     items: opts.items ?? SAMPLE_LOGIN_ITEMS,
     summary: opts.summary ?? SAMPLE_SUMMARY,
@@ -70,6 +84,7 @@ async function installBackend(
     perms: opts.perms ?? {
       trash_readable: true,
       containers_readable: true,
+      safari_readable: true,
       all_readable: true,
     },
     largeOld: opts.largeOld ?? SAMPLE_LARGE_OLD,
@@ -107,6 +122,17 @@ async function installBackend(
           return p.uninstallReject
             ? Promise.reject(p.uninstallReject)
             : Promise.resolve(p.uninstallSummary);
+        if (cmd === "privacy_report")
+          return p.hangPrivacy
+            ? new Promise(() => {})
+            : Promise.resolve(p.privacy);
+        if (cmd === "dispose_privacy")
+          return p.privacyReject
+            ? Promise.reject(p.privacyReject)
+            : Promise.resolve(p.privacySummary);
+        // The one URL the app will ever open; the screen only needs it not to
+        // throw.
+        if (cmd === "open_privacy_settings") return Promise.resolve(null);
         return Promise.reject(new Error(`unstubbed command: ${cmd}`));
       },
       transformCallback: (cb: unknown) => cb,
@@ -771,4 +797,139 @@ test("applications error", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Look for leftovers" }).click();
   await expect(page.getByRole("alert")).toContainText("look for leftovers");
   await capture(page, "applications-error", testInfo.project.name);
+});
+
+// --- Privacy ---------------------------------------------------------------
+
+/** Open Privacy and wait for the list rather than a spinner. */
+async function openPrivacy(page: Page) {
+  await page.goto("/?tab=privacy");
+  await expect(page.getByText(/items to review/)).toBeVisible();
+}
+
+test("privacy results", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openPrivacy(page);
+  await capture(page, "privacy-results", testInfo.project.name);
+});
+
+/**
+ * The rule this screen shares with every other: nothing is pre-chosen, and only
+ * the rows the backend offers are controls at all. A withheld row — website
+ * storage, or anything a running browser is holding open — is information.
+ */
+test("only the offerable rows are controls, and none is ticked", async ({
+  page,
+}) => {
+  await installBackend(page);
+  await openPrivacy(page);
+  const boxes = page.getByRole("checkbox");
+  await expect(boxes).toHaveCount(5);
+  for (const b of await boxes.all()) await expect(b).not.toBeChecked();
+});
+
+/**
+ * The distinctive part, and the reason this screen exists in this shape: the
+ * primary action stays disabled until every consequence in the selection has
+ * been acknowledged separately. `dispose_privacy` refuses an unacknowledged
+ * one outright, so a sheet that did not ask would produce a refusal the user
+ * could not act on.
+ */
+test("the sheet will not act until each consequence is acknowledged", async ({
+  page,
+}, testInfo) => {
+  await installBackend(page);
+  await openPrivacy(page);
+  await page.getByRole("checkbox", { name: /Select Cookies/ }).first().check();
+  await page
+    .getByRole("checkbox", { name: /Select Session backups/ })
+    .first()
+    .check();
+  await page.getByRole("button", { name: /Move .* to Trash…/ }).click();
+
+  const act = page.getByRole("button", { name: "Move to Trash" });
+  await expect(act).toBeDisabled();
+  await capture(page, "privacy-confirm", testInfo.project.name);
+
+  // One of the two is not enough: each axis is its own promise.
+  await page.getByRole("checkbox", { name: "Signs you out" }).check();
+  await expect(act).toBeDisabled();
+  await page.getByRole("checkbox", { name: "Loses open tabs" }).check();
+  await expect(act).toBeEnabled();
+});
+
+test("privacy done", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openPrivacy(page);
+  await page.getByRole("checkbox", { name: /Select GPU cache/ }).first().check();
+  await page.getByRole("button", { name: /Move .* to Trash…/ }).click();
+  await page.getByRole("button", { name: "Move to Trash" }).click();
+  // The done state headlines what changed for the user, not a byte figure —
+  // which on the screen that argues size is not the point is the whole thesis
+  // surviving to the last step.
+  await expect(
+    page.getByRole("heading", { name: "Caches cleared" }),
+  ).toBeVisible();
+  await capture(page, "privacy-done", testInfo.project.name);
+});
+
+/** A refusal is surfaced with the backend's own sentence, never swallowed. */
+test("a refused privacy disposal says so and offers to look again", async ({
+  page,
+}, testInfo) => {
+  await installBackend(page, {
+    privacyReject:
+      "refused: 1 of 1 selected items could not be acted on, so nothing was touched. Scan again and review.",
+  });
+  await openPrivacy(page);
+  await page.getByRole("checkbox", { name: /Select GPU cache/ }).first().check();
+  await page.getByRole("button", { name: /Move .* to Trash…/ }).click();
+  await page.getByRole("button", { name: "Move to Trash" }).click();
+  await expect(page.getByText("Nothing was removed")).toBeVisible();
+  // Scoped to the sheet: the toolbar carries a "Look again" of its own, and
+  // the one that matters here is the sheet's, because after a refusal the list
+  // is stale against the backend's own re-scan.
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "Look again" }),
+  ).toBeVisible();
+  await capture(page, "privacy-refused", testInfo.project.name);
+});
+
+/** Denied is not absent, and the screen says which one it is. */
+test("a browser behind Full Disk Access is named, with a way to fix it", async ({
+  page,
+}) => {
+  await installBackend(page);
+  await openPrivacy(page);
+  // Said once, in the section a reader looks in for Safari, with the button
+  // that fixes it — and the reason the headline figure is a floor stated beside
+  // the figure rather than in a second banner saying the same thing.
+  await expect(
+    page.getByText(/will not let this app read Safari's data/),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open Settings" })).toBeVisible();
+  await expect(
+    page.getByText("Safari not searched — needs Full Disk Access"),
+  ).toBeVisible();
+});
+
+test("privacy with nothing denied shows no caveat", async ({ page }) => {
+  await installBackend(page, { privacy: SAMPLE_PRIVACY_COMPLETE });
+  await openPrivacy(page);
+  await expect(page.getByText(/Full Disk Access/)).toHaveCount(0);
+  await expect(page.getByText(/floor rather than a total/)).toHaveCount(0);
+});
+
+test("privacy empty", async ({ page }, testInfo) => {
+  await installBackend(page, { privacy: SAMPLE_PRIVACY_EMPTY });
+  await page.goto("/?tab=privacy");
+  await expect(page.getByText("Nothing to clear")).toBeVisible();
+  await capture(page, "privacy-empty", testInfo.project.name);
+});
+
+test("privacy loading", async ({ page }, testInfo) => {
+  await installBackend(page, { hangPrivacy: true });
+  await page.goto("/?tab=privacy");
+  await expect(page.getByText(/Looking through your browsers/)).toBeVisible();
+  await capture(page, "privacy-loading", testInfo.project.name);
 });

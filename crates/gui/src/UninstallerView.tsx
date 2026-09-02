@@ -1079,7 +1079,7 @@ function Row({
           {labels.map((t) => (
             <span
               key={t}
-              className="text-subtle flex-none rounded-full bg-white/[.05] px-2 text-micro font-semibold uppercase leading-4"
+              className="text-muted flex-none rounded-full bg-white/[.05] px-2 text-micro font-semibold uppercase leading-4"
             >
               {t}
             </span>

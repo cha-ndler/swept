@@ -152,6 +152,13 @@ input[type="number"]::-webkit-outer-spin-button {
   margin: 0;
 }
 
+/* WebKit paints its own round clear button inside a search field on the first
+   keystroke — a stock control appearing exactly when the field is used. */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration {
+  -webkit-appearance: none;
+}
+
 /* Keyboard focus stays visible everywhere; the webview default is easy to lose
    against these surfaces. */
 :focus-visible {

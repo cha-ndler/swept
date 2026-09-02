@@ -10,6 +10,11 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **Applications module** — the Uninstaller's screen. Pick an installed app
+  (its identity is recorded before you remove it) or name one already gone;
+  review what it left behind, with rows the tool will not offer shown as
+  information rather than choices; nothing pre-selected, no select-all, and a
+  sheet that says a folder is a recursive removal. (#41)
 - **Uninstaller commands** — `uninstall_leftovers` (read-only) and
   `dispose_leftovers`, whose ceiling is not a set of roots but the offerable
   rows of a scan run inside the call: a path is accepted only if it is

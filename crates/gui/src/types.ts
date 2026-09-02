@@ -115,6 +115,69 @@ export interface SpaceLensReport {
   partial: boolean;
 }
 
+// --- Uninstaller ------------------------------------------------------------
+
+// Mirrors macclean_gui_core::UninstallTarget — the only two things the
+// frontend may name. It cannot set the home or the inventory roots, because a
+// frontend that could would be able to make an installed app look uninstalled.
+export interface UninstallTarget {
+  id: string;
+  display_name?: string | null;
+}
+
+// Mirrors macclean_gui_core::InstalledAppDto. Top-level bundles only.
+export interface InstalledApp {
+  id: string;
+  name: string;
+  bundle_path: string;
+}
+
+// Mirrors macclean_gui_core::LeftoverRowDto.
+//
+// As with Large & Old there is no `selected` field: every grant is a human's
+// individual choice. `offerable` is the backend's word on whether a row may be
+// chosen at all; `bulk_grantable` only says whether a select-all gesture may
+// sweep it up, and this screen has no such gesture.
+export interface LeftoverRow {
+  path: string;
+  location: string;
+  matched_via: string;
+  kind: "leftover" | "user_data" | "shared";
+  /** Disposing of this row is a directory action, which always asks. */
+  is_dir: boolean;
+  size_bytes: number;
+  file_count: number;
+  size_is_floor: boolean;
+  offerable: boolean;
+  bulk_grantable: boolean;
+  withheld: string | null;
+  undisposable: string | null;
+  license_suspected: boolean;
+}
+
+// Mirrors macclean_gui_core::UninstallReportDto.
+export interface UninstallReport {
+  target: string;
+  /** Still installed — in which case `rows` is empty. */
+  installed: boolean;
+  installed_at: string[];
+  rows: LeftoverRow[];
+  offerable_count: number;
+  offerable_bytes: number;
+  withheld_count: number;
+  examined: number;
+  truncated: boolean;
+  skipped_unreadable: number;
+  skipped_symlink: number;
+  skipped_case_variant: number;
+  skipped_unrepresentable: number;
+  skipped_uncorroborated_name: number;
+  dropped_unrepresentable_rows: number;
+  deferred: [string, string][];
+  caveats: string[];
+  partial: boolean;
+}
+
 // Mirrors macclean_gui_core::Permissions. Advisory only: it says what the app
 // could read just now, not what the user has toggled in System Settings.
 export interface Permissions {

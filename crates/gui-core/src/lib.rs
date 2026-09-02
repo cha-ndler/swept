@@ -934,6 +934,54 @@ pub fn uninstall_leftovers(target: &UninstallTarget) -> Result<UninstallReportDt
     uninstall_leftovers_in(&UninstallConfig::new(home), target)
 }
 
+/// One installed application, for the picker. Read-only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InstalledAppDto {
+    pub id: String,
+    pub name: String,
+    pub bundle_path: String,
+}
+
+/// The applications a user may pick from: top-level `.app` bundles only.
+///
+/// This is how identity reaches the Uninstaller from a bundle the UI saw
+/// rather than from a free-typed string — the answer to "where does the id
+/// come from once the app is gone" is that the UI records it *before*. The
+/// inventory also holds the helpers and XPC services nested inside each app
+/// (it must, to withhold their data); those are not things a person removes,
+/// so they are not offered as choices.
+pub fn installed_apps_in(cfg: &UninstallConfig) -> Result<Vec<InstalledAppDto>, String> {
+    let apps = uninstall::inventory(cfg).map_err(|e| e.to_string())?;
+    let mut out: Vec<InstalledAppDto> = apps
+        .into_iter()
+        .filter(|a| {
+            a.bundle_path
+                .components()
+                .filter(|c| c.as_os_str().to_str().is_some_and(|s| s.ends_with(".app")))
+                .count()
+                == 1
+        })
+        .map(|a| InstalledAppDto {
+            name: a.display_name.clone().unwrap_or_else(|| a.id.to_string()),
+            id: a.id.to_string(),
+            bundle_path: a.bundle_path.display().to_string(),
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Ok(out)
+}
+
+/// Read-only, against the real home.
+pub fn installed_apps() -> Result<Vec<InstalledAppDto>, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    installed_apps_in(&UninstallConfig::new(home))
+}
+
 /// Move individually-chosen leftover rows to the Trash.
 ///
 /// Stricter than [`dispose_selected_with_sink`], because its ceiling has to be:

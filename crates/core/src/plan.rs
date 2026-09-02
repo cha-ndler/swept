@@ -3,7 +3,7 @@
 //! A `Plan` is produced by the scanner and never mutates the filesystem.
 //! Constructing one is always safe; only [`crate::executor`] can act on it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use safety::{SafeDir, SafePath};
 
@@ -105,7 +105,7 @@ impl Plan {
 #[derive(Debug, Clone)]
 pub struct PlannedMove {
     /// The path as `guard` resolved it — what will actually be acted on.
-    pub path: SafePath,
+    path: SafePath,
     /// The path **as it was listed to the user**, before `guard` canonicalized
     /// it.
     ///
@@ -115,10 +115,51 @@ pub struct PlannedMove {
     /// check downstream can tell. Keeping the original spelling and requiring
     /// the two to be equal is what refuses it, and it is the same rule the
     /// Uninstaller and Privacy state as "byte-equal to the row that was shown".
-    pub as_listed: PathBuf,
-    pub size_bytes: u64,
+    as_listed: PathBuf,
+    size_bytes: u64,
     /// Which module authorized this, carried into the audit note.
-    pub category: String,
+    category: String,
+}
+
+impl PlannedMove {
+    /// The only way to build one, and the reason the fields above are private.
+    ///
+    /// `as_listed` carries the same safety weight as `path` — it is what
+    /// refuses a plist that was already a symlink — but unlike [`SafePath`] it
+    /// is an ordinary `PathBuf` and cannot be unforgeable by construction. With
+    /// public fields, a caller could back-fill it *from* the guarded path and
+    /// turn the equality check into a tautology, reinstating the exact defect
+    /// it exists to prevent, with every test still green.
+    ///
+    /// So the constructor does the guard itself, from the listed path. There is
+    /// no way to supply the two independently.
+    pub fn new(
+        as_listed: PathBuf,
+        home: &Path,
+        size_bytes: u64,
+        category: String,
+    ) -> Result<Self, safety::GuardError> {
+        let path = safety::guard(&as_listed, home)?;
+        Ok(Self {
+            path,
+            as_listed,
+            size_bytes,
+            category,
+        })
+    }
+
+    pub fn path(&self) -> &SafePath {
+        &self.path
+    }
+    pub fn as_listed(&self) -> &Path {
+        &self.as_listed
+    }
+    pub fn size_bytes(&self) -> u64 {
+        self.size_bytes
+    }
+    pub fn category(&self) -> &str {
+        &self.category
+    }
 }
 
 /// A set of files to move aside, or to put back.

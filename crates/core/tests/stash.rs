@@ -72,14 +72,12 @@ fn plan_for(home: &Path, paths: &[PathBuf]) -> (StashPlan, StashConsent) {
     let mut moves = Vec::new();
     let mut granted = Vec::new();
     for p in paths {
-        let safe = safety::guard(p, home).unwrap();
-        granted.push(safe.clone());
-        moves.push(PlannedMove {
-            path: safe,
-            as_listed: p.clone(),
-            size_bytes: fs::metadata(p).map(|m| m.len()).unwrap_or(0),
-            category: "startup".to_string(),
-        });
+        let size = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+        let Ok(m) = PlannedMove::new(p.clone(), home, size, "startup".to_string()) else {
+            continue;
+        };
+        granted.push(m.path().clone());
+        moves.push(m);
     }
     (
         StashPlan { moves },
@@ -266,14 +264,9 @@ fn a_symlink_named_like_a_plist_pointing_at_the_keychain_is_refused() {
 
     let mut moves = Vec::new();
     let mut granted = Vec::new();
-    if let Ok(safe) = safety::guard(&link, &home) {
-        granted.push(safe.clone());
-        moves.push(PlannedMove {
-            path: safe,
-            as_listed: link.clone(),
-            size_bytes: 0,
-            category: "startup".to_string(),
-        });
+    if let Ok(m) = PlannedMove::new(link.clone(), &home, 0, "startup".to_string()) {
+        granted.push(m.path().clone());
+        moves.push(m);
     }
     let report = stash(
         &StashPlan { moves },
@@ -418,14 +411,9 @@ fn a_symlink_dropped_into_the_store_is_never_put_back() {
 
     let mut moves = Vec::new();
     let mut granted = Vec::new();
-    if let Ok(safe) = safety::guard(&link, &home) {
-        granted.push(safe.clone());
-        moves.push(PlannedMove {
-            path: safe,
-            as_listed: link.clone(),
-            size_bytes: 0,
-            category: "startup".to_string(),
-        });
+    if let Ok(m) = PlannedMove::new(link.clone(), &home, 0, "startup".to_string()) {
+        granted.push(m.path().clone());
+        moves.push(m);
     }
     let report = restore(
         &StashPlan { moves },
@@ -896,45 +884,6 @@ fn a_plist_that_is_itself_a_symlink_moves_nothing() {
     assert!(!store_dir(&home).join("com.important.backup.plist").exists());
 }
 
-/// "We could not tell" must never mean "assume it is the same file". The check
-/// exists for exactly the conditions in which a stat fails.
-#[test]
-fn an_identity_that_cannot_be_read_refuses_rather_than_assuming() {
-    use macclean_core::executor::StashSink;
-    use std::io;
-
-    /// Both names are gone by the time identity is checked.
-    struct Vanisher;
-    impl StashSink for Vanisher {
-        fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
-            std::fs::hard_link(from, to)?;
-            fs::remove_file(from)?;
-            fs::remove_file(to)?;
-            Ok(())
-        }
-        fn unlink(&self, path: &Path) -> io::Result<()> {
-            fs::remove_file(path)
-        }
-    }
-
-    let (_d, home) = fixture();
-    let p = agent(&home, "com.acme.helper");
-    let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
-
-    let report = stash(
-        &plan,
-        consent,
-        &store_dir(&home),
-        &home,
-        &Vanisher,
-        &mut audit(&home),
-    )
-    .unwrap();
-
-    assert_eq!(report.moved, 0, "an unreadable identity is not a match");
-    assert_eq!(report.refused, 1);
-}
-
 #[test]
 fn a_file_that_is_not_a_plist_is_refused() {
     let (_d, home) = fixture();
@@ -1127,4 +1076,227 @@ fn the_partial_state_names_the_source_on_both_of_its_lines() {
         .filter(|l| l.contains(&format!("\"path\":\"{source}\"")))
         .count();
     assert_eq!(naming_source, 2, "one stashed line and one refusal");
+}
+
+// --- the two properties on the removal path that mutation could still break --
+//
+// Both of these are byte-loss properties, and both survived the first round of
+// tests: the earlier fixtures reached the same counters by a different route,
+// so their assertions could not tell a working check from a broken one. Each
+// sink below is written so that it passes against the real code and fails
+// against the single-line mutation of the check it names.
+
+/// "We could not tell" must never mean "assume it is the same file".
+///
+/// The earlier version of this test removed *both* names, so the run ended in
+/// the both-names-remain branch and reported the same counters either way.
+/// Removing only the **destination** separates them: with the identity check
+/// failing open, the source is the last name the file has, and it is removed.
+#[test]
+fn an_identity_that_cannot_be_read_never_removes_the_last_name() {
+    use macclean_core::executor::StashSink;
+    use std::io;
+
+    struct DestVanishes;
+    impl StashSink for DestVanishes {
+        fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
+            std::fs::hard_link(from, to)?;
+            // Our link is gone; `from` is now the only name this file has.
+            fs::remove_file(to)?;
+            Ok(())
+        }
+        fn unlink(&self, path: &Path) -> io::Result<()> {
+            fs::remove_file(path)
+        }
+    }
+
+    let (_d, home) = fixture();
+    let p = agent(&home, "com.acme.helper");
+    let before = fs::read(&p).unwrap();
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
+
+    let report = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &DestVanishes,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(report.moved, 0);
+    assert!(
+        p.exists(),
+        "the only remaining name must not be removed when identity cannot be read"
+    );
+    assert_eq!(fs::read(&p).unwrap(), before);
+}
+
+/// `symlink_metadata`, never `metadata`.
+///
+/// If the destination is swapped for a symlink pointing back at the source,
+/// a call that follows links reports the *source's* inode on both sides. The
+/// code would then "prove" a match and remove the source, leaving a dangling
+/// link and no copy at all.
+#[test]
+fn a_destination_swapped_for_a_link_back_to_the_source_is_not_mistaken_for_it() {
+    use macclean_core::executor::StashSink;
+    use std::io;
+
+    struct SymlinkSwap {
+        from: PathBuf,
+        to: PathBuf,
+    }
+    impl StashSink for SymlinkSwap {
+        fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
+            std::fs::hard_link(from, to)?;
+            fs::remove_file(&self.to)?;
+            std::os::unix::fs::symlink(&self.from, &self.to)?;
+            Ok(())
+        }
+        fn unlink(&self, path: &Path) -> io::Result<()> {
+            fs::remove_file(path)
+        }
+    }
+
+    let (_d, home) = fixture();
+    let p = agent(&home, "com.acme.helper");
+    let before = fs::read(&p).unwrap();
+    let dest = store_dir(&home).join("com.acme.helper.plist");
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
+
+    let report = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SymlinkSwap {
+            from: p.clone(),
+            to: dest,
+        },
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(report.moved, 0);
+    assert!(p.is_file(), "the bytes are still here, not a dangling link");
+    assert_eq!(fs::read(&p).unwrap(), before);
+}
+
+/// `is_file`, not `!is_dir`. A FIFO, socket or device node is neither, and both
+/// `hard_link` and a name-removal work on one — so without this check a socket
+/// named like a plist is moved. The directory case passes for a different
+/// reason (`hard_link` refuses a directory outright), which is why it cannot
+/// stand in for this one.
+#[test]
+fn a_socket_named_like_a_plist_is_refused() {
+    use std::os::unix::net::UnixListener;
+
+    let (_d, home) = fixture();
+    // Bound in a short path and moved into place: a Unix socket path has a hard
+    // length limit that a nested tempdir path exceeds.
+    let short = home.join("s");
+    fs::create_dir_all(&short).unwrap();
+    let _listener = UnixListener::bind(short.join("x")).unwrap();
+    let socket = agents(&home).join("com.acme.helper.plist");
+    fs::rename(short.join("x"), &socket).unwrap();
+
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&socket));
+    let report = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(report.moved, 0);
+    assert!(
+        fs::symlink_metadata(&socket).is_ok(),
+        "and it is still there"
+    );
+}
+
+/// The plan cannot be built with the two spellings supplied independently, so
+/// the equality that refuses an already-symlinked plist cannot be made into a
+/// tautology by a caller back-filling one from the other.
+#[test]
+fn the_listed_spelling_cannot_be_derived_from_the_guarded_one() {
+    let (_d, home) = fixture();
+    let real = agent(&home, "com.important.backup");
+    let decoy = agents(&home).join("com.acme.decoy.plist");
+    std::os::unix::fs::symlink(&real, &decoy).unwrap();
+
+    // The only constructor guards the *listed* path itself, so `as_listed` is
+    // the decoy and `path` is its target — and they differ, which is what `vet`
+    // refuses. There is no way to hand it two agreeing values.
+    let m = PlannedMove::new(decoy.clone(), &home, 0, "startup".to_string()).unwrap();
+    assert_eq!(m.as_listed(), decoy.as_path());
+    assert_eq!(m.path().as_path(), real.as_path());
+    assert_ne!(m.as_listed(), m.path().as_path());
+}
+
+/// A refusal that records nothing is indistinguishable from a run that never
+/// considered the item.
+#[test]
+fn a_per_item_refusal_leaves_a_record() {
+    let (_d, home) = fixture();
+    let notes = agents(&home).join("notes.txt");
+    fs::write(&notes, b"hello").unwrap();
+
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&notes));
+    stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    let text = log(&home);
+    assert!(text.contains("refused"), "in:\n{text}");
+    assert!(text.contains(&notes.display().to_string()));
+    assert!(text.contains("not a .plist"));
+}
+
+/// The chokepoint's reachable half.
+///
+/// `vet` calls `guard` before anything else, and the denylist half of that call
+/// is unreachable by construction — a `SafePath` cannot hold a protected path,
+/// so one can never be in a plan to be re-checked. What is reachable is the
+/// re-resolution: a file that vanished between planning and acting.
+///
+/// The assertion is on the *reason*, not just the refusal. Without the guard
+/// call the item is still refused — `symlink_metadata` fails a line later — but
+/// it says "it could not be looked at" instead, so only the reason can tell the
+/// two apart.
+#[test]
+fn a_plist_that_vanished_between_planning_and_acting_is_refused_by_the_guard() {
+    let (_d, home) = fixture();
+    let p = agent(&home, "com.acme.helper");
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
+
+    fs::remove_file(&p).unwrap();
+
+    let report = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(report.moved, 0);
+    assert_eq!(report.refused, 1);
+    assert!(
+        log(&home).contains("no longer resolves to itself"),
+        "the guard must be the one refusing it, and must speak first"
+    );
 }

@@ -966,6 +966,10 @@ log in. Nothing was changed inside them and nothing was removed.
 To put one back, drag it up one level into LaunchAgents, then log out and log
 in again. That is all mac-cleaner does when you press Put back.
 
+If you ever see the same file both here and one level up, mac-cleaner made
+the copy but could not remove the original — it is still running at login.
+Deleting whichever copy you do not want is safe; they are the same file.
+
 You can delete this note. You do not need mac-cleaner to undo any of this.
 ";
 
@@ -1065,9 +1069,9 @@ fn move_files(
     };
 
     for m in &plan.moves {
-        let path = m.path.as_path();
+        let path = m.path().as_path();
         if let Err(why) = vet(m, &from_dir, home, &consent) {
-            refuse_item(&mut report, audit, phase, path, m.size_bytes, why)?;
+            refuse_item(&mut report, audit, phase, path, m.size_bytes(), why)?;
             continue;
         }
 
@@ -1079,7 +1083,7 @@ fn move_files(
                 audit,
                 phase,
                 path,
-                m.size_bytes,
+                m.size_bytes(),
                 "it has no file name",
             )?;
             continue;
@@ -1093,9 +1097,9 @@ fn move_files(
                 Phase::Planned,
                 disposition_of(direction),
                 path,
-                m.size_bytes,
+                m.size_bytes(),
                 None,
-                Some(move_note(direction, &dest, &m.category)),
+                Some(move_note(direction, &dest, m.category())),
             )
             .map_err(audit_error)?;
             continue;
@@ -1108,22 +1112,12 @@ fn move_files(
                     audit,
                     phase,
                     path,
-                    m.size_bytes,
+                    m.size_bytes(),
                     "the moved-aside folder could not be created",
                 )?;
                 continue;
             }
-            // A courtesy, not a safety property: `create_new`, so a note the
-            // user has edited is never overwritten, and a failure to write it
-            // is not fatal because the folder works without it.
-            let _ = std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(store.join(crate::loginitems::STORE_NOTE_NAME))
-                .and_then(|mut f| {
-                    use std::io::Write;
-                    f.write_all(STORE_NOTE_TEXT.as_bytes())
-                });
+            write_store_note(&store);
         }
 
         match link_verify_unlink(path, &dest, sink) {
@@ -1134,9 +1128,9 @@ fn move_files(
                     Phase::Executed,
                     disposition_of(direction),
                     path,
-                    m.size_bytes,
+                    m.size_bytes(),
                     None,
-                    Some(move_note(direction, &dest, &m.category)),
+                    Some(move_note(direction, &dest, m.category())),
                 )
                 .map_err(audit_error)?;
             }
@@ -1147,7 +1141,7 @@ fn move_files(
                     Phase::Executed,
                     Disposition::Refused,
                     path,
-                    m.size_bytes,
+                    m.size_bytes(),
                     None,
                     Some(why),
                 )
@@ -1166,9 +1160,9 @@ fn move_files(
                     Phase::Executed,
                     disposition_of(direction),
                     path,
-                    m.size_bytes,
+                    m.size_bytes(),
                     None,
-                    Some(move_note(direction, &dest, &m.category)),
+                    Some(move_note(direction, &dest, m.category())),
                 )
                 .map_err(audit_error)?;
                 record(
@@ -1176,7 +1170,7 @@ fn move_files(
                     Phase::Executed,
                     Disposition::Refused,
                     path,
-                    m.size_bytes,
+                    m.size_bytes(),
                     None,
                     Some(why),
                 )
@@ -1245,7 +1239,7 @@ fn link_verify_unlink(from: &Path, to: &Path, sink: &dyn StashSink) -> Outcome {
             "it was replaced while being moved, so it was left exactly as it is".to_string()
         } else {
             "something else took the destination name while this was moving, so nothing was \
-             moved and nothing was removed"
+             moved; a spare name may remain in the folder"
                 .to_string()
         });
     }
@@ -1267,19 +1261,20 @@ fn vet(
     home: &Path,
     consent: &StashConsent,
 ) -> Result<(), &'static str> {
-    let path = m.path.as_path();
+    let path = m.path().as_path();
 
-    if !consent.granted.iter().any(|g| g.as_path() == path) {
-        return Err("nobody granted this path");
-    }
-
-    // The chokepoint, at the mutation site rather than only where the grant was
-    // minted. `execute` re-guards immediately before it acts and so does this:
-    // a path that became protected since the plan was built must be refused,
-    // and the denylist — not a hand-rolled parent check — is what says so.
+    // The chokepoint FIRST, then authorization — the order this file states for
+    // disposal and which this function had inverted: "a grant widens where we
+    // may act, it never bypasses the denylist." Both were ANDed, so nothing was
+    // bypassable, but a protected path was refused with "nobody granted this",
+    // which is the less useful line to find in the log.
     match guard(path, home) {
         Ok(fresh) if fresh.as_path() == path => {}
         _ => return Err("it is protected, or no longer resolves to itself"),
+    }
+
+    if !consent.granted.iter().any(|g| g.as_path() == path) {
+        return Err("nobody granted this path");
     }
 
     // The listed spelling must be the one we are about to act on.
@@ -1289,7 +1284,7 @@ fn vet(
     // its own canonical spelling, a real `.plist` in the right folder — and it
     // is a different file from the one the user ticked. The `is_symlink` check
     // below cannot see it, because there is nothing left to see.
-    if m.as_listed != path {
+    if m.as_listed() != path {
         return Err("it is a link to somewhere else, and this app acts on what it showed you");
     }
 
@@ -1311,6 +1306,25 @@ fn vet(
         return Err("it is not in the folder this run acts on");
     }
     Ok(())
+}
+
+/// Put the explanation into the store, once.
+///
+/// A courtesy rather than a safety property, so a failure is not fatal — the
+/// folder works without it. `create_new` is the load-bearing part: the note
+/// says the user may edit or delete it, so a later run must never overwrite
+/// what they wrote. Its own function so that rule can be tested directly,
+/// rather than only through a caller that skips the whole block once the store
+/// exists.
+fn write_store_note(store: &Path) {
+    let _ = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(store.join(crate::loginitems::STORE_NOTE_NAME))
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(STORE_NOTE_TEXT.as_bytes())
+        });
 }
 
 /// Refuse one item, and leave a record of having refused it.
@@ -1394,40 +1408,33 @@ fn audit_error(e: ExecError) -> StashError {
 mod stash_tests {
     use super::*;
 
-    /// The chokepoint, pinned where it can be.
-    ///
-    /// `vet` calls `guard` at the mutation site, as `execute` does. From
-    /// outside the crate that call cannot be distinguished from the
-    /// parent-directory confinement, because `~/Library/LaunchAgents` has no
-    /// denylisted children for the two rules to disagree about — so the test
-    /// goes directly to the function and points `from_dir` at a directory the
-    /// denylist *does* refuse. The parent check then passes and only the guard
-    /// can say no.
-    ///
-    /// SAFETY CONTRACT item 7: throwaway tempdir, canonicalized.
-    #[test]
-    fn vet_refuses_what_the_denylist_refuses_even_when_the_parent_matches() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = std::fs::canonicalize(dir.path()).unwrap();
-        let keychains = home.join("Library/Keychains");
-        std::fs::create_dir_all(&keychains).unwrap();
-        let path = keychains.join("com.acme.helper.plist");
-        std::fs::write(&path, b"x").unwrap();
-
-        // Everything except the denylist is satisfied: it is a real, regular,
-        // canonically-spelled `.plist`, it is what was listed, its parent is
-        // exactly `from_dir`, and it is granted.
-        let granted = match guard(&path, &home) {
-            Ok(g) => vec![g],
-            // The guard already refuses it — which is the point — so build the
-            // grant list some other way and let `vet` reach its own verdict.
-            Err(_) => Vec::new(),
-        };
-        assert!(
-            granted.is_empty(),
-            "the denylist must refuse a path under Keychains"
-        );
-    }
+    // Why the guard call in `vet` has no test, stated rather than faked.
+    //
+    // An earlier version of this module carried a test named for it that
+    // never called `vet` at all — it built a Keychains path, called `guard`,
+    // and asserted the denylist refused it, which is a test `denylist` already
+    // has. A test named for a safety property that does not exercise it is
+    // worse than no test, because it reads as coverage.
+    //
+    // The honest position: **the denylist half of that call is unreachable by
+    // construction.** `PlannedMove` holds a `SafePath`, whose only constructor
+    // is `guard`, so a protected path cannot get into a plan to be re-checked.
+    // And nothing inside `~/Library/LaunchAgents` can *become* protected after
+    // the fact — the protected home subpaths are siblings of that directory,
+    // not children, and a `.git` there would be a sibling too. So no fixture,
+    // in-crate or out, separates the guard from the parent confinement on the
+    // denylist question.
+    //
+    // What *is* reachable is the guard's other job: re-resolving the path. A
+    // file that vanished between planning and acting is refused by the guard,
+    // with the guard's own reason — and that is pinned by
+    // `a_plist_that_vanished_between_planning_and_acting_is_refused_by_the_guard`
+    // in `tests/stash.rs`, which asserts the *reason*, since a version without
+    // the guard call would refuse it too but say something else.
+    //
+    // The call stays because the chokepoint rule is what a reviewer looks for,
+    // and because a future caller building plans differently would make the
+    // denylist half reachable again.
 
     /// The store's identity is checked once, for the whole run, and an absent
     /// store is allowed because it is created on the first move.

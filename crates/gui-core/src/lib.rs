@@ -1432,6 +1432,14 @@ pub fn privacy_report_in(cfg: &privacy::PrivacyConfig) -> PrivacyReportDto {
     let report = privacy::scan(cfg);
     let rows: Vec<PrivacyRowDto> = report.rows.iter().filter_map(privacy_row_dto).collect();
     let skipped_unrepresentable = report.rows.len() - rows.len();
+    // Summed from the rows actually emitted, not from the scan: a row this
+    // layer could not name is one the user can neither see nor select, and
+    // counting its bytes in "you can free X" would overstate the offer.
+    let offerable_bytes = rows
+        .iter()
+        .filter(|r| r.offerable)
+        .map(|r| r.size_bytes)
+        .sum();
     PrivacyReportDto {
         rows,
         browsers: report
@@ -1465,7 +1473,7 @@ pub fn privacy_report_in(cfg: &privacy::PrivacyConfig) -> PrivacyReportDto {
                 browser: c.browser.to_string(),
             })
             .collect(),
-        offerable_bytes: report.offerable_bytes(),
+        offerable_bytes,
         skipped_symlink: report.skipped_symlink,
         skipped_unrepresentable,
         // A row this layer could not name exactly was seen and is not
@@ -1479,6 +1487,18 @@ pub fn privacy_report_in(cfg: &privacy::PrivacyConfig) -> PrivacyReportDto {
 pub fn privacy_report() -> Result<PrivacyReportDto, String> {
     let home = default_home().map_err(|e| e.to_string())?;
     Ok(privacy_report_in(&privacy::PrivacyConfig::new(home)))
+}
+
+/// What a row's members are confined to: the row's **own profile root**, never
+/// a location root and never the home.
+///
+/// Its own function because the extraction that made [`vet_member`] testable
+/// moved the risk rather than removing it — the checks inside are pinned, but
+/// nothing could observe a *wrong* confinement being handed to them, since the
+/// tests pass one explicitly. Widening this to the home directory survived
+/// every test until it had a name.
+fn confinement_for(row: &privacy::Row) -> [PathBuf; 1] {
+    [row.profile_root.clone()]
 }
 
 /// One member of a row, vetted and ready to be planned.
@@ -1523,6 +1543,12 @@ fn vet_member(
     }
     if meta.is_dir() != row_is_dir {
         return Err("is not the shape it was when it was listed".to_string());
+    }
+    // `is_dir` is a two-valued test against a filesystem that has more than two
+    // shapes. A FIFO, socket or device node is neither, so it would otherwise
+    // take the file branch and pass every check below it.
+    if !row_is_dir && !meta.is_file() {
+        return Err("is not a regular file".to_string());
     }
     if meta.is_dir() {
         // `DirLimits::default()` rather than anything configurable: a config
@@ -1643,9 +1669,7 @@ pub fn dispose_privacy_with_sink(
             continue;
         }
 
-        // The row's own root, not a location root. This is what stops one
-        // profile's row from authorizing a path in the next.
-        let confine = [row.profile_root.clone()];
+        let confine = confinement_for(row);
 
         for member in &row.members {
             let member_shown = clip(&member.display().to_string());
@@ -1847,6 +1871,90 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert!(!err.is_empty());
+        assert!(
+            err.contains(".git") || err.to_lowercase().contains("protected"),
+            "the refusal should name what protected it: {err}"
+        );
+    }
+
+    // The directory branch is the half that moves a whole tree to the Trash,
+    // and every test above passes `row_is_dir: false`. These are the same two
+    // rules again, on the branch where they cost more.
+
+    #[test]
+    fn a_directory_member_outside_the_rows_own_profile_is_refused() {
+        let (_d, home) = fixture();
+        let mine = home.join("Library/Application Support/Google/Chrome/Profile 1");
+        let theirs = home.join("Library/Application Support/Google/Chrome/Profile 2");
+        write(&mine.join("GPUCache/blob"));
+        write(&theirs.join("GPUCache/blob"));
+
+        let confine = [mine.clone()];
+        assert!(vet_member(&mine.join("GPUCache"), &home, &confine, true).is_ok());
+        let err = vet_member(&theirs.join("GPUCache"), &home, &confine, true).unwrap_err();
+        assert!(err.contains("outside its own profile"), "{err}");
+    }
+
+    #[test]
+    fn a_directory_member_that_is_not_its_own_canonical_spelling_is_refused() {
+        let (_d, home) = fixture();
+        let profile = home.join("Library/Application Support/Google/Chrome/Profile 1");
+        write(&profile.join("Network/GPUCache/blob"));
+        std::os::unix::fs::symlink(profile.join("Network"), profile.join("Net")).unwrap();
+
+        let err = vet_member(&profile.join("Net/GPUCache"), &home, &[profile], true).unwrap_err();
+        assert!(err.contains("not the directory that was listed"), "{err}");
+    }
+
+    /// A socket is neither a directory nor a regular file, so a two-valued
+    /// shape check waves it through onto the file branch — where `guard`,
+    /// byte-equality and confinement all pass it happily.
+    ///
+    /// The socket sits at the root of the fixture rather than at a realistic
+    /// profile depth because a Unix socket path has a hard length limit
+    /// (`SUN_LEN`) that a nested path under macOS's temp directory exceeds.
+    /// The shape check runs before confinement, so the depth is irrelevant to
+    /// what is being tested.
+    #[test]
+    fn a_member_that_is_neither_a_file_nor_a_directory_is_refused() {
+        use std::os::unix::net::UnixListener;
+        let (_d, home) = fixture();
+        let socket = home.join("Cookies");
+        let _listener = UnixListener::bind(&socket).unwrap();
+
+        let err = vet_member(&socket, &home, std::slice::from_ref(&home), false).unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
+    }
+
+    /// The wiring, not the function. The extraction moved this risk rather
+    /// than removing it: `vet_member`'s tests pass a confinement explicitly, so
+    /// none of them can notice the caller handing over the wrong one.
+    #[test]
+    fn a_row_is_confined_to_its_own_profile_and_never_to_the_home() {
+        let home = PathBuf::from("/Users/tester");
+        let profile_root = home.join("Library/Application Support/Google/Chrome/Profile 1");
+        let row = privacy::Row {
+            browser: "google-chrome",
+            browser_name: "Google Chrome",
+            profile: Some("Profile 1".to_string()),
+            profile_root: profile_root.clone(),
+            class: Class::Cookies,
+            consequence: Consequence::SignsYouOut,
+            label: "Cookies",
+            path: profile_root.join("Cookies"),
+            members: vec![profile_root.join("Cookies")],
+            is_dir: false,
+            size_bytes: 1,
+            file_count: 1,
+            size_is_floor: false,
+            offerable: true,
+            bulk_grantable: false,
+            smart_scan_eligible: false,
+            withheld: None,
+            undisposable: None,
+        };
+
+        assert_eq!(confinement_for(&row), [profile_root]);
+        assert_ne!(confinement_for(&row), [home]);
     }
 }

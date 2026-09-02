@@ -540,3 +540,30 @@ fn the_same_directory_row_goes_through_once_the_mass_delete_is_confirmed() {
     assert_eq!(summary.executed, 1);
     assert!(!p.join("GPUCache").exists());
 }
+
+/// Safari is TCC-denied by default, so folding it into `all_readable` would put
+/// a permanent "this scan may be under-reporting" notice on the Cleanup screen,
+/// which has nothing to do with Safari. It is reported on its own instead.
+#[test]
+fn a_denied_safari_does_not_make_the_cleanup_screen_claim_limited_access() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_d, cfg) = fixture();
+    let safari = cfg.home.join("Library/Safari");
+    fs::create_dir_all(&safari).unwrap();
+    fs::create_dir_all(cfg.home.join(".Trash")).unwrap();
+    fs::create_dir_all(cfg.home.join("Library/Containers")).unwrap();
+
+    let mut perms = fs::metadata(&safari).unwrap().permissions();
+    perms.set_mode(0o000);
+    fs::set_permissions(&safari, perms).unwrap();
+    let p = probe_permissions(&cfg.home);
+    let mut perms = fs::metadata(&safari).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&safari, perms).unwrap();
+
+    assert!(!p.safari_readable, "Safari's own state is reported");
+    assert!(
+        p.all_readable,
+        "the Cleanup roots are readable, and that is what this flag is about"
+    );
+}

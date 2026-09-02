@@ -1317,3 +1317,27 @@ fn a_root_that_is_readable_but_not_searchable_is_a_denial_not_an_emptiness() {
         "an empty report from a denied root must never read as complete"
     );
 }
+
+/// A recognized name that is neither a directory nor a regular file — a
+/// socket, a FIFO, a device node — is not the thing this module means. Without
+/// the shape check it takes the file path and becomes an offerable row.
+#[test]
+fn a_recognised_name_that_is_a_socket_is_not_a_row() {
+    use std::os::unix::net::UnixListener;
+    let (_d, home) = fixture();
+    // At the fixture root: a Unix socket path has a hard length limit
+    // (`SUN_LEN`) that a realistic profile path under macOS's temp directory
+    // exceeds. Safari's roots are shallow, so this is also a real shape.
+    let safari = home.join("Library/Safari");
+    mkdir(&safari);
+    let short = home.join("s");
+    fs::create_dir_all(&short).unwrap();
+    let _listener = UnixListener::bind(short.join("History.db")).unwrap();
+    fs::rename(short.join("History.db"), safari.join("History.db")).unwrap();
+
+    let report = scan(&cfg(&home));
+    assert!(
+        !has_row_named(&report, "History.db"),
+        "a socket is not a history database"
+    );
+}

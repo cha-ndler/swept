@@ -1116,6 +1116,14 @@ fn collect(
         if meta.is_dir() != entry.is_dir {
             continue;
         }
+        // `is_dir` is a two-valued test against a filesystem that has more than
+        // two shapes. A socket, FIFO or device node is neither a directory nor
+        // a regular file, so without this it takes the file path and becomes an
+        // offerable row. The sidecar loop below already requires `is_file`;
+        // this is the same rule for the row's own name.
+        if !entry.is_dir && !meta.is_file() {
+            continue;
+        }
         // Everything emitted must already be its own canonical spelling — the
         // rule the disposal half re-checks byte for byte.
         if std::fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) {

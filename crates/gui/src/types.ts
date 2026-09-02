@@ -183,5 +183,11 @@ export interface UninstallReport {
 export interface Permissions {
   trash_readable: boolean;
   containers_readable: boolean;
+  // Safari's data is gated separately, and is denied by default on a stock
+  // Mac. Deliberately NOT part of `all_readable`, which drives the Cleanup
+  // screen's under-reporting notice: folding it in would put a permanent
+  // warning on a screen that has nothing to do with Safari. The Privacy
+  // report carries Safari's access state itself.
+  safari_readable: boolean;
   all_readable: boolean;
 }

@@ -1273,6 +1273,24 @@ mod tests {
         }
     }
 
+    /// A sidecar suffix is appended to a file *name*, so one containing a
+    /// separator would place a member in another directory — and every member
+    /// becomes a disposal target. The invariant that makes member expansion
+    /// safe is pinned here, beside the one it depends on.
+    #[test]
+    fn no_sidecar_suffix_can_move_a_member_to_another_directory() {
+        for suffix in SIDECARS {
+            assert!(!suffix.is_empty());
+            assert!(
+                !suffix.contains(std::path::MAIN_SEPARATOR),
+                "{suffix} would leave the database's own directory"
+            );
+            assert!(!suffix.contains(".."), "{suffix} can climb");
+            let built = sidecar_of(Path::new("/x/y/db.sqlite"), suffix);
+            assert_eq!(built.parent(), Some(Path::new("/x/y")));
+        }
+    }
+
     /// The one place a separator may appear in a name is a literal in this
     /// file. Nothing read from disk is ever joined, so nothing can carry `..`.
     #[test]

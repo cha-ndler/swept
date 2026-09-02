@@ -493,3 +493,50 @@ fn a_selection_touches_only_the_profile_whose_row_was_named() {
     assert!(!one.join("Cookies").exists());
     assert!(two.join("Cookies").exists());
 }
+
+/// SAFETY CONTRACT item 5, on a brand-new entry point. Every browser cache row
+/// is a *directory* action, so a recursive move to the Trash is the ordinary
+/// case here rather than the exceptional one — and the only thing between a
+/// user and an unconfirmed one is a single argument.
+#[test]
+fn a_directory_row_is_refused_without_the_mass_delete_confirmation() {
+    let (_d, cfg) = fixture();
+    let p = chromium_profile(&cfg, "Profile 1");
+    write_sized(&p.join("GPUCache/blob"), 100);
+
+    let mut a = audit(&cfg);
+    let err = dispose_privacy_with_sink(
+        &cfg,
+        &[s(&p.join("GPUCache"))],
+        Acknowledged::default(),
+        None,
+        false,
+        &sink(&cfg),
+        &mut a,
+    )
+    .unwrap_err();
+
+    assert!(err.contains("confirmation"), "{err}");
+    assert!(p.join("GPUCache/blob").exists());
+    assert!(audit_text(&cfg).contains("refused"));
+}
+
+/// The same row with the confirmation given goes through, so the test above is
+/// pinning the gate rather than a broken path.
+#[test]
+fn the_same_directory_row_goes_through_once_the_mass_delete_is_confirmed() {
+    let (_d, cfg) = fixture();
+    let p = chromium_profile(&cfg, "Profile 1");
+    write_sized(&p.join("GPUCache/blob"), 100);
+
+    let mut a = audit(&cfg);
+    let summary = dispose(
+        &cfg,
+        &[s(&p.join("GPUCache"))],
+        Acknowledged::default(),
+        &mut a,
+    )
+    .unwrap();
+    assert_eq!(summary.executed, 1);
+    assert!(!p.join("GPUCache").exists());
+}

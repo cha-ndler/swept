@@ -655,13 +655,28 @@ instead.**
     *or denied* — its resting state — the other three roots were never looked
     at. Also found: `~/Library/Cookies` is not Safari's jar but the one every
     non-sandboxed app shares, so it is now shown and never offered.
-  - [ ] **The disposal half.** Per-path `Consent.granted` / `granted_dirs`
-    grants, ceiling = the `offerable` rows of a scan run inside the call
-    (M4's rule), confined to each row's own `profile_root` rather than to a
-    location root. Cookies/history/session each need a **separate
-    acknowledgement** that defaults to refusing — the analogue of
-    `confirm_mass_delete`, so a UI that loses its checkbox state cannot
-    smuggle a cookie jar through.
+  - [x] **The disposal half.** `gui_core::dispose_privacy_with_sink`. Trash
+    only, per-path grants only, ceiling = the `offerable` rows of a scan run
+    inside the call (M4's rule), and confinement to each row's own
+    `profile_root` — strictly stronger than M4's location roots, because one
+    profile's row must never authorize a path in the next.
+    **A row is a set of files and the frontend cannot take it apart:** the DTO
+    carries the row's `path` and a `member_count`, never the member paths, so
+    a sidecar cannot be named; the members are expanded here from the fresh
+    scan, database last.
+    **A second consent axis.** `confirm_mass_delete` answers "is this a lot?"
+    and has nothing to say about "this signs you out of every site you use".
+    `Acknowledged` carries one boolean per consequence, `Default` grants none,
+    `#[serde(default)]` means a frontend that loses its checkbox state refuses
+    rather than proceeds, each axis is separate, and an unacknowledged row
+    refuses the *whole* request. Website storage is structurally
+    unacknowledgeable as well as unofferable.
+    One executor change, and it had to happen: `GRANT_DIR_NOTE` hardcoded
+    "(uninstaller leftover)", which became a falsehood the moment a second
+    module planned a directory action — a browser cache would have been logged
+    as an uninstaller leftover. The note now carries the action's own
+    category, so the log says which module, and which acknowledgement,
+    authorized each line.
   - [ ] **The module UI.** *Visual → taste gate.*
 
   Decisions taken conservatively, each one the human's to loosen:

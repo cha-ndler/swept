@@ -10,6 +10,14 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **Privacy disposal** — `dispose_privacy`, whose ceiling is the offerable rows
+  of a scan run inside the call, confined to each row's own profile rather than
+  to a location root. A database and its `-journal`/`-shm`/`-wal` are one row,
+  and the frontend is never given the member paths, so it can name a row and
+  nothing finer. Consent gains a second axis: cookies, history and sessions
+  each need their own explicit acknowledgement, none is granted by default, and
+  an unacknowledged row refuses the whole request rather than being skipped.
+  Trash only. (#43)
 - **Privacy discovery** — a read-only search of what twelve browsers remember
   (Safari, Firefox, and ten of the Chromium family), across cookies, history,
   session, website storage and in-profile caches. The trust kernel protects
@@ -123,6 +131,12 @@ first two modules that look outside the cleanup allowlist.
   what was confirmed. (#29)
 - Permanent removal is confined to the allowlist even when consented to, and the
   desktop app cannot request it at all. (#27)
+- **The audit log names the module that authorized each granted line.** The
+  note for a granted directory hardcoded "uninstaller leftover", which was true
+  while the Uninstaller was the only module planning a directory action and
+  became a falsehood the moment a second one did. It now carries the action's
+  own category, so a browser cache is not logged as an uninstaller leftover and
+  a privacy row records which acknowledgement allowed it. (#43)
 - **A tree whose measurement was cut short is no longer offered.** Both modules
   that can offer a directory share one walk, and it judged a row only by
   whether `guard_dir` would refuse it — never by whether the walk had finished.

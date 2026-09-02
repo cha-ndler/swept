@@ -714,12 +714,53 @@ instead.**
     proof of a running process. Verifying the pid would put the first
     `unsafe` FFI into `macclean-core`; M4 answered "no subprocess" for
     `codesign` and this holds the line.
-- [ ] **M6 — Maintenance (honest scope)** — reversible login-item management
-  (move the plist to a managed disabled folder, not disposal). **Explicitly out
-  of scope:** flush DNS, purge RAM, rebuild Spotlight, repair permissions — all
-  need `sudo`, which under a hardened notarized app means a privileged helper
-  (`SMAppService`), a project of its own. Say so rather than ship a button that
-  silently fails.
+- [ ] **M6 — Startup grows a verb** *(was "Maintenance")* — reversible
+  login-item management. **The milestone changed shape, and that is a decision
+  for the human to confirm.** A Maintenance *screen* would have been four
+  disabled buttons beside one working list: the manageable surface is 5 items
+  on the reference machine, and the honest answer to most of the maintenance
+  checklist is "this needs a privileged helper we do not install". Putting the
+  "say so" on its own screen is the same mistake wearing a label. So the
+  existing **Startup** screen learns to act instead, and the out-of-scope half
+  becomes one short card at the foot of it — naming the one-line Terminal
+  command for each, because telling someone the line is more useful than a
+  button, and retiring "repair disk permissions", which has not existed since
+  OS X El Capitan.
+  - [x] **What runs at login, read-only.** `loginitems::scan` reports the
+    user's LaunchAgents as rows, the moved-aside store, `/Library/Launch*` as
+    controlless inventory, and the modern `SMAppService` store's *existence* —
+    never its contents, because it is opaque, versioned and Apple-owned and a
+    misparse would fabricate rows the user cannot cross-check.
+    Three honesty fixes to shipped behaviour. **"Disabled" is not this app's
+    word to use:** a plist's `Disabled` key is only the initial value for a job
+    launchd's override database has not seen, that database is root-owned and
+    unreadable here, and the two can disagree — so the field is
+    `plist_says_disabled` and nothing reports a job as disabled. **`RunAtLoad`
+    is not the whole story:** `KeepAlive` starts a job at load without it and
+    `StartInterval` does not start one at login at all, so the count was wrong
+    in both directions. **A file that is there and unexplained reads as a file
+    the scan missed**, so a non-plist or an unparseable plist is now shown with
+    its reason rather than skipped. `Broken` — an absolute program that is not
+    there — is a class of its own and the *safest* thing to move aside, gated
+    on `NotFound` only (never `PermissionDenied`) and on absolute paths only,
+    because calling a working item broken is the wrong direction to be wrong
+    in.
+  - [ ] **The mutating half.** Move aside and put back, as a **hard link, an
+    inode check, then the removal of the original name** — never `rename`,
+    which clobbers silently, and never copy-then-remove. The property that
+    buys: *this module can never lose a file's bytes*, because the only name
+    ever removed is one that provably shares an inode with a second name
+    created moments earlier. A sibling entry point in `executor.rs` with its
+    own plan, consent and sink types, so a grant to move a plist aside cannot
+    authorize disposing of it and no disposal caller inherits the capability.
+  - [ ] **The screen.** *Visual → taste gate.*
+
+  The store is `~/Library/LaunchAgents/Moved aside by mac-cleaner/` — inside
+  the folder the user already opens, because launchd does not recurse so the
+  job is genuinely not loaded, and because uninstalling this app then strands
+  nothing: putting an item back is dragging a file up one level. It is also
+  what lets restore need **no recorded state at all** — the destination is the
+  store's own parent — so no manifest ever names a path.
 - [ ] **M7 — Smart Scan** — orchestration over M2–M6 plus the existing cleaners:
   one button, one combined result, one total. Defaults include only the
   conservatively-safe categories; Large & Old, Privacy cookies and Uninstaller

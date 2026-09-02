@@ -18,10 +18,14 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use macclean_core::audit::AuditLog;
-use macclean_core::executor::{execute, Consent, Sink, SystemSink};
+use macclean_core::executor::{
+    execute, restore, stash, Consent, Sink, StashConsent, StashSink, SystemSink, SystemStashSink,
+};
 use macclean_core::largeold;
 use macclean_core::loginitems::{self, LoginItem};
-use macclean_core::plan::{Disposal, Plan, PlannedAction, PlannedDirAction};
+use macclean_core::plan::{
+    Disposal, Plan, PlannedAction, PlannedDirAction, PlannedMove, StashPlan,
+};
 use macclean_core::privacy::{self, Class, Consequence};
 use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, scan_with_progress, Progress, ScanConfig};
@@ -1961,4 +1965,377 @@ mod tests {
         assert_eq!(confinement_for(&row), [profile_root]);
         assert_ne!(confinement_for(&row), [home]);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Startup
+//
+// The third module whose ceiling is a scan run inside the call, and the first
+// whose verbs move rather than dispose. Nothing here is destroyed, so the
+// interesting refusals are not about losing data but about acting on something
+// the user did not choose — a system agent, a row the scan withheld, a name
+// that was never on the list.
+// ---------------------------------------------------------------------------
+
+/// One thing that runs — or used to run — when you log in.
+///
+/// Note what is absent: no `selected` field, and no `disabled`. The plist key
+/// is `plist_says_disabled`, because it is a key in a file and not launchd's
+/// answer, and a field named `disabled` would invite a UI to render a guess as
+/// a state.
+#[derive(Debug, Clone, Serialize)]
+pub struct StartupItemDto {
+    pub label: String,
+    pub program: Option<String>,
+    pub class: String,
+    pub describes: &'static str,
+    pub run_at_load: bool,
+    pub plist_says_disabled: bool,
+    pub moved_aside: bool,
+    pub duplicate_label: bool,
+    pub offerable: bool,
+    pub withheld: Option<String>,
+    pub path: String,
+}
+
+/// A launchd job in a directory this app can never write to.
+///
+/// No `offerable`, no `withheld`, no control: a thing it can never honour is
+/// not expressible here rather than expressible and false.
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemItemDto {
+    pub label: String,
+    pub program: Option<String>,
+    pub path: String,
+    pub directory: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceStateDto {
+    pub path: String,
+    pub access: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StartupReportDto {
+    pub items: Vec<StartupItemDto>,
+    pub moved_aside: Vec<StartupItemDto>,
+    pub system: Vec<SystemItemDto>,
+    pub sources: Vec<SourceStateDto>,
+    /// How many things will actually start at your next login.
+    pub starts_at_login: usize,
+    pub modern_store_present: bool,
+    /// Where moved-aside items live, shown so it is findable without this app.
+    pub store: String,
+    pub deferred: Vec<(String, String)>,
+    pub caveats: Vec<String>,
+    /// Rows whose path is not valid UTF-8, so this layer cannot name them
+    /// exactly. Never offered; counted so the total does not read as complete.
+    pub skipped_unrepresentable: usize,
+    pub partial: bool,
+}
+
+/// What a move reports back. Deliberately **no bytes-freed figure**: nothing is
+/// freed, and a field that cannot exist cannot be summed into a total later.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StartupSummary {
+    pub moved: usize,
+    pub refused: usize,
+}
+
+/// `to_str`, not `display()`: the path emitted here is the identity a selection
+/// is matched against, and a lossy conversion would break that identity in a
+/// way it could not detect.
+fn startup_item_dto(item: &loginitems::LoginItem) -> StartupItemDto {
+    StartupItemDto {
+        label: item.label.clone(),
+        program: item.program.clone(),
+        class: match item.class {
+            loginitems::StartClass::StartsAtLogin => "starts_at_login",
+            loginitems::StartClass::StartsOnDemand => "starts_on_demand",
+            loginitems::StartClass::Broken => "broken",
+            loginitems::StartClass::Unknown => "unknown",
+        }
+        .to_string(),
+        describes: item.class.describe(),
+        run_at_load: item.run_at_load,
+        plist_says_disabled: item.plist_says_disabled,
+        moved_aside: item.moved_aside,
+        duplicate_label: item.duplicate_label,
+        offerable: item.offerable,
+        withheld: item.withheld.clone(),
+        path: item.source.clone(),
+    }
+}
+
+/// Read-only. Nothing here can authorize anything.
+pub fn startup_report_in(cfg: &loginitems::StartupConfig) -> StartupReportDto {
+    let report = loginitems::scan(cfg);
+    // `LoginItem::source` is a `String`, so nothing is dropped *here* — the
+    // rows that cannot be named are dropped in the scan, which counts them.
+    // An earlier version computed this as a subtraction at this layer, which
+    // was always zero and made `partial` blind to the one thing it was added
+    // for.
+    let items: Vec<StartupItemDto> = report.items.iter().map(startup_item_dto).collect();
+    let moved_aside: Vec<StartupItemDto> =
+        report.moved_aside.iter().map(startup_item_dto).collect();
+
+    StartupReportDto {
+        // Counted from the rows actually emitted, for the reason privacy
+        // recomputes its own total: a headline taken from a different
+        // population than the list can disagree with the list.
+        starts_at_login: items
+            .iter()
+            .filter(|i| i.class == "starts_at_login")
+            .count(),
+        items,
+        moved_aside,
+        system: report
+            .system
+            .iter()
+            .map(|s| SystemItemDto {
+                label: s.label.clone(),
+                program: s.program.clone(),
+                path: s.source.clone(),
+                directory: s.directory.clone(),
+            })
+            .collect(),
+        sources: report
+            .sources
+            .iter()
+            .map(|s| SourceStateDto {
+                path: s.path.clone(),
+                access: match s.access {
+                    loginitems::Access::Readable => "readable",
+                    loginitems::Access::Absent => "absent",
+                    loginitems::Access::NeedsPermission => "needs_permission",
+                    loginitems::Access::Unreadable(_) => "unreadable",
+                }
+                .to_string(),
+                count: s.count,
+            })
+            .collect(),
+        modern_store_present: report.modern_store_present,
+        store: loginitems::store_dir(&cfg.home).display().to_string(),
+        deferred: report.deferred.clone(),
+        caveats: report.caveats.clone(),
+        skipped_unrepresentable: report.skipped_unrepresentable,
+        // The scan already folds `skipped_unrepresentable` into this.
+        partial: report.partial,
+    }
+}
+
+pub fn startup_report() -> Result<StartupReportDto, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    Ok(startup_report_in(&loginitems::StartupConfig::new(home)))
+}
+
+/// Which of the two verbs, and therefore which set of rows is the ceiling.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Verb {
+    Aside,
+    Back,
+}
+
+/// Take items out of what starts at login.
+pub fn move_aside_with_sink(
+    cfg: &loginitems::StartupConfig,
+    paths: &[String],
+    expected: Option<Expected>,
+    sink: &dyn StashSink,
+    audit: &mut AuditLog,
+) -> Result<StartupSummary, String> {
+    act(cfg, paths, expected, Verb::Aside, sink, audit)
+}
+
+/// Put them back.
+pub fn put_back_with_sink(
+    cfg: &loginitems::StartupConfig,
+    paths: &[String],
+    expected: Option<Expected>,
+    sink: &dyn StashSink,
+    audit: &mut AuditLog,
+) -> Result<StartupSummary, String> {
+    act(cfg, paths, expected, Verb::Back, sink, audit)
+}
+
+fn act(
+    cfg: &loginitems::StartupConfig,
+    paths: &[String],
+    expected: Option<Expected>,
+    verb: Verb,
+    sink: &dyn StashSink,
+    audit: &mut AuditLog,
+) -> Result<StartupSummary, String> {
+    if paths.is_empty() {
+        return refuse_startup(audit, "refused: nothing was selected.".to_string());
+    }
+    match safety::canonical_home(&cfg.home) {
+        Ok(canonical) if canonical == cfg.home => {}
+        _ => {
+            return refuse_startup(
+                audit,
+                "refused: the home directory is not its canonical spelling, so the denylist's \
+                 home-relative rules could not be trusted for this run."
+                    .to_string(),
+            )
+        }
+    }
+
+    // The ceiling: the rows of *this* scan, on the side the verb acts on.
+    //
+    // Each verb has its own set, and they do not overlap — something in
+    // LaunchAgents is not something to put back, and something in the store is
+    // not something to set aside. Asking for the wrong one is a refusal rather
+    // than a no-op, because it means the frontend and the disk disagree about
+    // where an item is.
+    let report = loginitems::scan(cfg);
+    let rows = match verb {
+        Verb::Aside => &report.items,
+        Verb::Back => &report.moved_aside,
+    };
+    let offerable: BTreeMap<&OsStr, &loginitems::LoginItem> = rows
+        .iter()
+        .filter(|i| i.offerable)
+        .map(|i| (OsStr::new(i.source.as_str()), i))
+        .collect();
+
+    let mut moves = Vec::new();
+    let mut granted = Vec::new();
+    let mut rejected: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<&OsStr> = BTreeSet::new();
+    let mut chosen = 0usize;
+
+    for raw in paths {
+        let key = OsStr::new(raw.as_str());
+        let shown = clip(raw);
+        let Some(item) = offerable.get(key) else {
+            rejected.push(format!("{shown}: not something this scan offers"));
+            continue;
+        };
+        if !seen.insert(key) {
+            continue;
+        }
+        chosen += 1;
+
+        let size = std::fs::symlink_metadata(Path::new(&item.source))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        // The constructor guards the *listed* path itself, so the spelling this
+        // scan emitted is the one that will be acted on — there is no way to
+        // hand it two values that agree while naming different files.
+        match PlannedMove::new(
+            PathBuf::from(&item.source),
+            &cfg.home,
+            size,
+            STARTUP_CATEGORY.to_string(),
+        ) {
+            Ok(m) => {
+                granted.push(m.path().clone());
+                moves.push(m);
+            }
+            Err(e) => rejected.push(format!("{shown}: {e}")),
+        }
+    }
+
+    if !rejected.is_empty() {
+        let shown: Vec<&str> = rejected.iter().take(3).map(|s| s.as_str()).collect();
+        let more = rejected.len().saturating_sub(shown.len());
+        let suffix = if more > 0 {
+            format!(" (and {more} more)")
+        } else {
+            String::new()
+        };
+        return refuse_startup(
+            audit,
+            format!(
+                "refused: {} of {} selected items could not be acted on, so nothing was \
+                 changed. Look again and review. First problems: {}{}",
+                rejected.len(),
+                paths.len(),
+                shown.join("; "),
+                suffix
+            ),
+        );
+    }
+
+    // Drift is measured in rows, not bytes: a login item's size says nothing
+    // about what it does, and the question is whether this is the list that was
+    // confirmed.
+    if let Some(exp) = expected {
+        if chosen != exp.count {
+            return refuse_startup(
+                audit,
+                format!(
+                    "refused: the selection is not the one you confirmed, so nothing was \
+                     changed. This would now act on {chosen} items, but you confirmed {}. \
+                     Look again and review.",
+                    exp.count
+                ),
+            );
+        }
+    }
+
+    let plan = StashPlan { moves };
+    let consent = StashConsent {
+        execute: true,
+        granted,
+    };
+    let store = loginitems::store_dir(&cfg.home);
+
+    let outcome = match verb {
+        Verb::Aside => stash(&plan, consent, &store, &cfg.home, sink, audit),
+        Verb::Back => restore(&plan, consent, &store, &cfg.home, sink, audit),
+    };
+    match outcome {
+        Ok(r) => Ok(StartupSummary {
+            moved: r.moved,
+            refused: r.refused,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// The category the audit note carries, so the log says which module acted.
+const STARTUP_CATEGORY: &str = "startup";
+
+/// Refuse, and leave a record of having refused.
+fn refuse_startup(audit: &mut AuditLog, reason: String) -> Result<StartupSummary, String> {
+    match macclean_core::executor::record_run_refusal(audit, &reason) {
+        Ok(()) => Err(reason),
+        Err(e) => Err(format!(
+            "{reason} (and the audit log could not be written: {e})"
+        )),
+    }
+}
+
+/// Real-app entry points.
+pub fn move_aside(
+    paths: Vec<String>,
+    expected: Option<Expected>,
+) -> Result<StartupSummary, String> {
+    startup_action(paths, expected, Verb::Aside)
+}
+
+pub fn put_back(paths: Vec<String>, expected: Option<Expected>) -> Result<StartupSummary, String> {
+    startup_action(paths, expected, Verb::Back)
+}
+
+fn startup_action(
+    paths: Vec<String>,
+    expected: Option<Expected>,
+    verb: Verb,
+) -> Result<StartupSummary, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    let audit_path = default_audit_path().map_err(|e| e.to_string())?;
+    let mut audit = AuditLog::open(&audit_path).map_err(|e| e.to_string())?;
+    act(
+        &loginitems::StartupConfig::new(home),
+        &paths,
+        expected,
+        verb,
+        &SystemStashSink,
+        &mut audit,
+    )
 }

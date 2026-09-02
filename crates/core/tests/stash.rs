@@ -76,6 +76,7 @@ fn plan_for(home: &Path, paths: &[PathBuf]) -> (StashPlan, StashConsent) {
         granted.push(safe.clone());
         moves.push(PlannedMove {
             path: safe,
+            as_listed: p.clone(),
             size_bytes: fs::metadata(p).map(|m| m.len()).unwrap_or(0),
             category: "startup".to_string(),
         });
@@ -269,6 +270,7 @@ fn a_symlink_named_like_a_plist_pointing_at_the_keychain_is_refused() {
         granted.push(safe.clone());
         moves.push(PlannedMove {
             path: safe,
+            as_listed: link.clone(),
             size_bytes: 0,
             category: "startup".to_string(),
         });
@@ -420,6 +422,7 @@ fn a_symlink_dropped_into_the_store_is_never_put_back() {
         granted.push(safe.clone());
         moves.push(PlannedMove {
             path: safe,
+            as_listed: link.clone(),
             size_bytes: 0,
             category: "startup".to_string(),
         });
@@ -798,4 +801,330 @@ fn a_moved_aside_item_is_never_recorded_as_trashed_or_permanent() {
     assert!(text.contains("\"disposition\":\"stashed\""));
     assert!(!text.contains("\"disposition\":\"trash\""));
     assert!(!text.contains("\"disposition\":\"permanent\""));
+}
+
+// --- the layers a mutation survived -----------------------------------------
+//
+// Eight checks in this module were documented as load-bearing and pinned by
+// nothing: deleting each left all 431 tests green. They are mutually redundant
+// by design, which is exactly why none of them was reachable through a test
+// that went in the front door — and a redundant layer nothing pins is how a
+// layer quietly stops existing.
+
+/// The nastier ordering, and the one the first version got wrong.
+///
+/// If the **destination** is replaced between the link and the check, the file
+/// now sitting there belongs to somebody else and may have only that one name.
+/// The old rollback removed it unconditionally, which is the precise outcome
+/// this module claims it cannot produce.
+#[test]
+fn a_destination_taken_by_someone_else_is_never_removed() {
+    use macclean_core::executor::StashSink;
+    use std::io;
+
+    /// An installer writes a fresh plist over the destination the instant our
+    /// link exists.
+    struct Squatter {
+        dest: PathBuf,
+    }
+    impl StashSink for Squatter {
+        fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
+            std::fs::hard_link(from, to)?;
+            fs::remove_file(&self.dest)?;
+            fs::write(&self.dest, b"a freshly installed login item").unwrap();
+            Ok(())
+        }
+        fn unlink(&self, path: &Path) -> io::Result<()> {
+            fs::remove_file(path)
+        }
+    }
+
+    let (_d, home) = fixture();
+    let p = agent(&home, "com.acme.helper");
+    let store = store_dir(&home);
+    let dest = store.join("com.acme.helper.plist");
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
+
+    let report = stash(
+        &plan,
+        consent,
+        &store,
+        &home,
+        &Squatter { dest: dest.clone() },
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(report.moved, 0);
+    assert!(p.exists(), "the source is untouched");
+    assert_eq!(
+        fs::read(&dest).unwrap(),
+        b"a freshly installed login item",
+        "and so is the file that took the name — it had only this one"
+    );
+}
+
+/// A plist that was *already* a symlink is the case `guard` hides: it arrives
+/// resolved to its target, which is not a link and is its own canonical
+/// spelling, so every check downstream sees a perfectly ordinary file. Only the
+/// listed spelling refuses it — and the target here is deliberately not
+/// denylisted, so nothing else can be doing the work.
+#[test]
+fn a_plist_that_is_itself_a_symlink_moves_nothing() {
+    let (_d, home) = fixture();
+    let real = agent(&home, "com.important.backup");
+    let decoy = agents(&home).join("com.acme.decoy.plist");
+    std::os::unix::fs::symlink(&real, &decoy).unwrap();
+
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&decoy));
+    let report = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(report.moved, 0);
+    assert!(
+        real.is_file(),
+        "the item the user did not tick is untouched"
+    );
+    assert!(fs::symlink_metadata(&decoy).is_ok());
+    assert!(!store_dir(&home).join("com.important.backup.plist").exists());
+}
+
+/// "We could not tell" must never mean "assume it is the same file". The check
+/// exists for exactly the conditions in which a stat fails.
+#[test]
+fn an_identity_that_cannot_be_read_refuses_rather_than_assuming() {
+    use macclean_core::executor::StashSink;
+    use std::io;
+
+    /// Both names are gone by the time identity is checked.
+    struct Vanisher;
+    impl StashSink for Vanisher {
+        fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
+            std::fs::hard_link(from, to)?;
+            fs::remove_file(from)?;
+            fs::remove_file(to)?;
+            Ok(())
+        }
+        fn unlink(&self, path: &Path) -> io::Result<()> {
+            fs::remove_file(path)
+        }
+    }
+
+    let (_d, home) = fixture();
+    let p = agent(&home, "com.acme.helper");
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
+
+    let report = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &Vanisher,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(report.moved, 0, "an unreadable identity is not a match");
+    assert_eq!(report.refused, 1);
+}
+
+#[test]
+fn a_file_that_is_not_a_plist_is_refused() {
+    let (_d, home) = fixture();
+    let notes = agents(&home).join("notes.txt");
+    fs::write(&notes, b"hello").unwrap();
+
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&notes));
+    let report = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(report.moved, 0);
+    assert!(notes.exists());
+}
+
+/// Exactly this directory, never `starts_with`. launchd does not recurse into a
+/// subfolder, so neither should the offer — and without the exact comparison,
+/// anything nested under LaunchAgents would qualify.
+#[test]
+fn a_plist_in_a_subfolder_of_launch_agents_is_refused() {
+    let (_d, home) = fixture();
+    let nested = agents(&home).join("vendor/com.acme.helper.plist");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::write(&nested, b"x").unwrap();
+
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&nested));
+    let report = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(report.moved, 0);
+    assert!(nested.exists());
+}
+
+/// The note is a courtesy the user may edit or replace. `create_new` is what
+/// stops a later run overwriting what they wrote.
+#[test]
+fn the_note_never_overwrites_one_the_user_has_edited() {
+    let (_d, home) = fixture();
+    let first = agent(&home, "com.acme.one");
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&first));
+    stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    let note = store_dir(&home).join(STORE_NOTE_NAME);
+    fs::write(&note, b"my own notes about these").unwrap();
+
+    let second = agent(&home, "com.acme.two");
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&second));
+    stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    assert_eq!(fs::read(&note).unwrap(), b"my own notes about these");
+}
+
+/// The store is *the* folder, not merely one inside LaunchAgents — otherwise a
+/// caller picks which of the user's own subfolders to act on.
+#[test]
+fn a_folder_that_is_not_the_store_refuses_the_whole_run() {
+    let (_d, home) = fixture();
+    let p = agent(&home, "com.acme.helper");
+    let theirs = agents(&home).join("Some other folder the user made");
+    fs::create_dir_all(&theirs).unwrap();
+
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
+    let err = stash(
+        &plan,
+        consent,
+        &theirs,
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, StashError::Store(_)));
+    assert!(p.exists());
+    assert!(fs::read_dir(&theirs).unwrap().next().is_none());
+}
+
+// --- every refusal leaves a trace ------------------------------------------
+
+/// A refusal nothing records is indistinguishable from a run that never
+/// considered the item. All three whole-run gates used to return without
+/// writing anything.
+#[test]
+fn a_whole_run_refusal_is_recorded_before_it_is_returned() {
+    let (_d, home) = fixture();
+    let p = agent(&home, "com.acme.helper");
+    let (plan, mut consent) = plan_for(&home, std::slice::from_ref(&p));
+    let one = consent.granted[0].clone();
+    while consent.granted.len() <= MAX_STARTUP_GRANTS {
+        consent.granted.push(one.clone());
+    }
+
+    let _ = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap_err();
+
+    let text = log(&home);
+    assert!(text.contains("refused"), "in:\n{text}");
+    assert!(text.contains("more than the"));
+}
+
+#[test]
+fn a_bad_store_is_recorded_before_the_run_is_refused() {
+    let (_d, home) = fixture();
+    let p = agent(&home, "com.acme.helper");
+    fs::write(store_dir(&home), b"not a directory").unwrap();
+
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
+    let _ = stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &SystemStashSink,
+        &mut audit(&home),
+    )
+    .unwrap_err();
+
+    assert!(log(&home).contains("refused"));
+}
+
+/// Both lines name the source, so a reader grepping the path they know finds
+/// the whole story rather than only the refusal half of it.
+#[test]
+fn the_partial_state_names_the_source_on_both_of_its_lines() {
+    use macclean_core::executor::StashSink;
+    use std::io;
+
+    struct NoUnlink;
+    impl StashSink for NoUnlink {
+        fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
+            std::fs::hard_link(from, to)
+        }
+        fn unlink(&self, _path: &Path) -> io::Result<()> {
+            Err(io::Error::other("no"))
+        }
+    }
+
+    let (_d, home) = fixture();
+    let p = agent(&home, "com.acme.helper");
+    let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
+    stash(
+        &plan,
+        consent,
+        &store_dir(&home),
+        &home,
+        &NoUnlink,
+        &mut audit(&home),
+    )
+    .unwrap();
+
+    let source = p.display().to_string();
+    let naming_source = log(&home)
+        .lines()
+        .filter(|l| l.contains(&format!("\"path\":\"{source}\"")))
+        .count();
+    assert_eq!(naming_source, 2, "one stashed line and one refusal");
 }

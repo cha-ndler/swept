@@ -3,6 +3,8 @@
 //! A `Plan` is produced by the scanner and never mutates the filesystem.
 //! Constructing one is always safe; only [`crate::executor`] can act on it.
 
+use std::path::PathBuf;
+
 use safety::{SafeDir, SafePath};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +104,18 @@ impl Plan {
 /// there is no variant to choose and no permanent branch to decline.
 #[derive(Debug, Clone)]
 pub struct PlannedMove {
+    /// The path as `guard` resolved it — what will actually be acted on.
     pub path: SafePath,
+    /// The path **as it was listed to the user**, before `guard` canonicalized
+    /// it.
+    ///
+    /// Load-bearing, and easy to mistake for redundancy. `guard` resolves
+    /// symlinks, so a plist that was *already* a link arrives as its target —
+    /// which is not itself a link and is its own canonical spelling, so no
+    /// check downstream can tell. Keeping the original spelling and requiring
+    /// the two to be equal is what refuses it, and it is the same rule the
+    /// Uninstaller and Privacy state as "byte-equal to the row that was shown".
+    pub as_listed: PathBuf,
     pub size_bytes: u64,
     /// Which module authorized this, carried into the audit note.
     pub category: String,

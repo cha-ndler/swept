@@ -8,7 +8,13 @@ import type { ReactNode } from "react";
  */
 
 /** SF-Symbols-flavoured line icons: 16px box, 1.5 stroke, round caps. */
-function Icon({ children, size = 16 }: { children: ReactNode; size?: number }) {
+export function Icon({
+  children,
+  size = 16,
+}: {
+  children: ReactNode;
+  size?: number;
+}) {
   return (
     <svg
       width={size}
@@ -44,6 +50,18 @@ export function FilesIcon({ size }: { size?: number }) {
       <path d="M4.2 1.9h4.4l3.2 3.2v7.1a.9.9 0 0 1-.9.9H4.2a.9.9 0 0 1-.9-.9V2.8a.9.9 0 0 1 .9-.9Z" />
       <path d="M8.6 1.9v3.2h3.2" />
       <path d="M13.6 4.6v8.5a1.9 1.9 0 0 1-1.9 1.9H5.4" />
+    </Icon>
+  );
+}
+
+/** A grid of app tiles — Applications. What is installed, and what one left. */
+export function AppsIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <rect x="2" y="2" width="4.8" height="4.8" rx="1.1" />
+      <rect x="9.2" y="2" width="4.8" height="4.8" rx="1.1" />
+      <rect x="2" y="9.2" width="4.8" height="4.8" rx="1.1" />
+      <rect x="9.2" y="9.2" width="4.8" height="4.8" rx="1.1" />
     </Icon>
   );
 }
@@ -137,12 +155,19 @@ export function Toolbar({
 export function Group({
   children,
   className = "",
+  role,
+  label,
 }: {
   children: ReactNode;
   className?: string;
+  /** `"list"` when the rows are items, so assistive tech gets a count. */
+  role?: "list";
+  label?: string;
 }) {
   return (
     <div
+      role={role}
+      aria-label={label}
       className={`overflow-hidden rounded-card border border-separator bg-surface ${className}`}
     >
       {children}

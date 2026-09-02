@@ -1,10 +1,13 @@
 import type {
   CleanSummary,
+  InstalledApp,
   LargeOldReport,
+  LeftoverRow,
   LoginItem,
   ScanReport,
   SpaceLensReport,
   SpaceNode,
+  UninstallReport,
 } from "../src/types";
 
 const GiB = 1024 * 1024 * 1024;
@@ -143,6 +146,217 @@ export const SAMPLE_DISPOSE_SUMMARY: CleanSummary = {
   refused: 0,
   bytes_freed: Math.round(26.3 * GiB),
   entries_freed: 0,
+};
+
+// --- Uninstaller -----------------------------------------------------------
+//
+// One report that exercises every row shape the backend can produce, because
+// each is a distinct claim the screenshot has to carry: an id-keyed leftover,
+// a container part, the user's own documents inside that container (shown,
+// never offered), a name-keyed directory with a licence-shaped file in it, an
+// orphan sibling, a group container (shared, never claimed), a sibling that is
+// still installed, and a tree disposal is certain to refuse. Deliberately
+// `partial`, with the cfprefsd caveat, for the same reason as the other
+// fixtures: the caveats are safety surfaces and belong in the screenshots.
+
+const L = "/Users/tester/Library";
+const KiB = 1024;
+
+export const SAMPLE_INSTALLED_APPS: InstalledApp[] = [
+  { id: "com.contoso.sync", name: "Contoso Sync", bundle_path: "/Applications/Contoso Sync.app" },
+  { id: "com.example.reader", name: "Example Reader", bundle_path: "/Applications/Example Reader.app" },
+  { id: "com.northwind.mail", name: "Northwind Mail", bundle_path: "/Applications/Northwind Mail.app" },
+  { id: "com.acme.notes.Sync", name: "Notes Sync", bundle_path: "/Applications/Notes Sync.app" },
+];
+
+function row(
+  path: string,
+  location: string,
+  overrides: Partial<LeftoverRow> = {},
+): LeftoverRow {
+  return {
+    path,
+    location,
+    matched_via: "id",
+    kind: "leftover",
+    is_dir: true,
+    size_bytes: 0,
+    file_count: 0,
+    size_is_floor: false,
+    offerable: true,
+    bulk_grantable: true,
+    withheld: null,
+    undisposable: null,
+    license_suspected: false,
+    ...overrides,
+  };
+}
+
+const USER_DATA_REASON =
+  "a sandboxed app keeps the user's own data here — possibly the only copy — so it is shown, not offered";
+const GROUP_REASON =
+  "a group container is shared between apps by construction, and the entitlement that would settle who owns it was in the bundle that is gone";
+const GIT_REASON =
+  "the tree contains a protected path (a .git checkout, most likely)";
+export const CFPREFSD_CAVEAT =
+  "a preferences file can be written back by cfprefsd moments after it is removed, if the app is running or is launched again; nothing is quit or stopped to prevent that";
+
+const LEFTOVER_ROWS: LeftoverRow[] = [
+  row(`${L}/Caches/com.acme.notes`, "Library/Caches", {
+    size_bytes: Math.round(412 * MiB),
+    file_count: 3_180,
+  }),
+  row(`${L}/Caches/com.acme.notes.Helper`, "Library/Caches", {
+    matched_via: "sibling:Helper",
+    size_bytes: Math.round(3.1 * MiB),
+    file_count: 42,
+    bulk_grantable: false,
+  }),
+  row(`${L}/Caches/com.acme.notes.Plugins`, "Library/Caches", {
+    matched_via: "sibling:Plugins",
+    size_bytes: Math.round(66 * MiB),
+    file_count: 2_204,
+    size_is_floor: true,
+    offerable: false,
+    bulk_grantable: false,
+    withheld: `this tool cannot remove it: ${GIT_REASON}`,
+    undisposable: GIT_REASON,
+  }),
+  row(`${L}/Caches/com.acme.notes.Sync`, "Library/Caches", {
+    matched_via: "sibling:Sync",
+    size_bytes: Math.round(18 * MiB),
+    file_count: 96,
+    offerable: false,
+    bulk_grantable: false,
+    withheld: "com.acme.notes.Sync is still installed and this is its data",
+  }),
+  row(`${L}/Containers/com.acme.notes/Data/Library/Caches`, "Library/Containers", {
+    size_bytes: Math.round(96 * MiB),
+    file_count: 1_208,
+  }),
+  row(`${L}/Containers/com.acme.notes/Data/Documents`, "Library/Containers", {
+    kind: "user_data",
+    size_bytes: Math.round(1.2 * GiB),
+    file_count: 318,
+    offerable: false,
+    bulk_grantable: false,
+    withheld: USER_DATA_REASON,
+  }),
+  row(`${L}/Preferences/com.acme.notes.plist`, "Library/Preferences", {
+    matched_via: "id.plist",
+    is_dir: false,
+    size_bytes: 12 * KiB,
+    file_count: 1,
+  }),
+  // Adjacent to Preferences in report order, on purpose: the track draws
+  // neighbouring locations side by side, so a hue repeated on neighbours would
+  // merge two real quantities into one band, and the visual gate should see
+  // the pair that is most likely on a real machine.
+  row(
+    `${L}/Preferences/ByHost/com.acme.notes.00000000-0000-0000-0000-000000000000.plist`,
+    "Library/Preferences/ByHost",
+    {
+      matched_via: "id.<uuid>.plist",
+      is_dir: false,
+      size_bytes: 4 * KiB,
+      file_count: 1,
+    },
+  ),
+  row(
+    `${L}/Saved Application State/com.acme.notes.savedState`,
+    "Library/Saved Application State",
+    {
+      matched_via: "id.savedState",
+      size_bytes: 210 * KiB,
+      file_count: 4,
+    },
+  ),
+  row(`${L}/Application Support/Acme Notes`, "Library/Application Support", {
+    matched_via: "name:Acme Notes",
+    size_bytes: Math.round(84 * MiB),
+    file_count: 612,
+    bulk_grantable: false,
+    license_suspected: true,
+  }),
+  row(`${L}/Group Containers/group.com.acme.notes`, "Library/Group Containers", {
+    kind: "shared",
+    matched_via: "prefix:group.",
+    size_bytes: Math.round(41 * MiB),
+    file_count: 77,
+    offerable: false,
+    bulk_grantable: false,
+    withheld: GROUP_REASON,
+  }),
+];
+
+const offerable = LEFTOVER_ROWS.filter((r) => r.offerable);
+
+export const SAMPLE_UNINSTALL: UninstallReport = {
+  target: "com.acme.notes",
+  installed: false,
+  installed_at: [],
+  rows: LEFTOVER_ROWS,
+  offerable_count: offerable.length,
+  offerable_bytes: offerable.reduce((n, r) => n + r.size_bytes, 0),
+  withheld_count: LEFTOVER_ROWS.length - offerable.length,
+  examined: 1_842,
+  truncated: false,
+  skipped_unreadable: 1,
+  skipped_symlink: 0,
+  skipped_case_variant: 0,
+  skipped_unrepresentable: 0,
+  skipped_uncorroborated_name: 1,
+  dropped_unrepresentable_rows: 0,
+  deferred: [
+    [
+      "~/Library/Cookies",
+      "a cookie jar signs the user out of things; it belongs to the Privacy module",
+    ],
+  ],
+  caveats: [CFPREFSD_CAVEAT],
+  partial: true,
+};
+
+/** The same target with nothing missing, for asserting the caveat stays away. */
+export const SAMPLE_UNINSTALL_COMPLETE: UninstallReport = {
+  ...SAMPLE_UNINSTALL,
+  skipped_unreadable: 0,
+  skipped_uncorroborated_name: 0,
+  partial: false,
+};
+
+/** An app the user picked that is still installed: no rows, by construction. */
+export const SAMPLE_UNINSTALL_INSTALLED: UninstallReport = {
+  ...SAMPLE_UNINSTALL,
+  target: "com.example.reader",
+  installed: true,
+  installed_at: ["/Applications/Example Reader.app"],
+  rows: [],
+  offerable_count: 0,
+  offerable_bytes: 0,
+  withheld_count: 0,
+  skipped_unreadable: 0,
+  skipped_uncorroborated_name: 0,
+  caveats: [],
+  partial: false,
+};
+
+export const SAMPLE_UNINSTALL_EMPTY: UninstallReport = {
+  ...SAMPLE_UNINSTALL_INSTALLED,
+  target: "com.contoso.sync",
+  installed: false,
+  installed_at: [],
+};
+
+/** What `dispose_leftovers` returns after the offerable rows are chosen. */
+export const SAMPLE_UNINSTALL_SUMMARY: CleanSummary = {
+  dry_run: false,
+  executed: offerable.length,
+  refused: 0,
+  bytes_freed: offerable.reduce((n, r) => n + r.size_bytes, 0),
+  entries_freed: offerable
+    .filter((r) => r.is_dir)
+    .reduce((n, r) => n + r.file_count, 0),
 };
 
 // --- Space Lens ------------------------------------------------------------

@@ -540,7 +540,24 @@ instead.**
       are individually disposable, on purpose and pinned. Two thin Tauri
       commands; `CleanSummary.entries_freed` says how many names a directory
       action stood for.
-  - [ ] **The module UI.** *Visual → taste gate.*
+  - [ ] **The module UI.** *Visual → taste gate; opened as a PR with
+    screenshots, never auto-merged.* Built as `UninstallerView` ("Applications"
+    in the sidebar, under Clean). **Identity comes from a bundle the app saw:**
+    the picker lists installed applications (a new read-only
+    `installed_apps` command, top-level bundles only), and choosing one records
+    its identifier *before* the user removes it — the interim answer to open
+    question 1. An app already gone can be named by identifier, beside a
+    caveat about `com.apple.` components. Picking an installed app yields the
+    "Still installed" state with instructions, never rows. In the list, a row
+    the backend withholds — the user's documents inside a container, a shared
+    group container, a still-installed sibling's data, a tree disposal is
+    certain to refuse — is rendered as **information, not a control**: a lock
+    where the checkbox would be, the reason where the path would be, a tag
+    saying which. Nothing is pre-selected and there is no select-all. The
+    sheet says a folder is a recursive removal that needs the extra
+    confirmation, however small; the `cfprefsd` caveat rides on the report and
+    again on the sheet when a preferences row is selected; the done state
+    says how many files the folders stood for.
   - [ ] **Team-id-prefixed containers are an under-match.** Two of 822
     containers on the reference machine are named `<TEAMID>.<id>`; the
     id-keyed matcher does not claim them (a prefix strip in `Containers` would

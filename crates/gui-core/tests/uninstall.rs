@@ -19,7 +19,8 @@ use macclean_core::uninstall::{
     Location, UninstallConfig, CONTAINER_STATE_PARTS, CONTAINER_USER_DATA_PARTS, SEARCHED_LOCATIONS,
 };
 use macclean_gui_core::{
-    dispose_leftovers_with_sink, uninstall_leftovers_in, CleanSummary, Expected, UninstallTarget,
+    dispose_leftovers_with_sink, installed_apps_in, uninstall_leftovers_in, CleanSummary, Expected,
+    UninstallTarget,
 };
 
 // --- fixtures --------------------------------------------------------------
@@ -230,6 +231,34 @@ fn an_unusable_id_or_name_is_refused_before_anything_is_read() {
         display_name: Some("a/b".into()),
     };
     assert!(uninstall_leftovers_in(&cfg, &bad_name).is_err());
+}
+
+#[test]
+fn the_app_picker_lists_top_level_bundles_only_sorted_by_name() {
+    // Helpers nested inside an app are in the inventory — they must be, to
+    // withhold their data — but they are not things a person removes, so they
+    // are not choices. And an unreadable root refuses, as the inventory does.
+    let (_g, cfg, apps) = fixture();
+    install(&apps, "Zed Notes", "com.acme.Notes");
+    install(&apps, "acme Reader", "com.acme.Reader");
+    let helper = apps.join("Zed Notes.app/Contents/Library/LoginItems");
+    install(&helper, "Helper", "com.acme.Notes.Helper");
+
+    let list = installed_apps_in(&cfg).unwrap();
+
+    assert_eq!(
+        list.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+        vec!["acme Reader", "Zed Notes"],
+        "top-level only, case-insensitively by name"
+    );
+    assert_eq!(list[1].id, "com.acme.Notes");
+    assert!(list[1].bundle_path.ends_with("Zed Notes.app"));
+
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&apps, fs::Permissions::from_mode(0o000)).unwrap();
+    let result = installed_apps_in(&cfg);
+    fs::set_permissions(&apps, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(result.is_err(), "an unreadable root is not an empty list");
 }
 
 // --- disposal: the positive, so the negatives cannot pass vacuously ---------

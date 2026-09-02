@@ -538,7 +538,7 @@ function ConfirmModal({
 
   return (
     <div
-      className="overlay-in fixed inset-0 z-10 flex items-center justify-center bg-black/60 p-6"
+      className="overlay-in fixed inset-0 z-10 flex items-center justify-center bg-black/60 p-6 pl-[256px]"
       role="dialog"
       aria-modal="true"
       aria-labelledby="lo-confirm-title"

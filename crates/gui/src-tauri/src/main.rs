@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter};
 use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
 use macclean_gui_core::{
-    self as gui, CleanSummary, Expected, Filters, LargeOldReportDto, Permissions,
+    self as gui, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto, Permissions,
     SpaceLensReportDto, UninstallReportDto, UninstallTarget,
 };
 
@@ -154,6 +154,14 @@ async fn dispose_paths(
     .map_err(|e| format!("dispose task failed: {e}"))?
 }
 
+/// Read-only: the applications a user may pick from. Top-level bundles only.
+#[tauri::command]
+async fn installed_apps() -> Result<Vec<InstalledAppDto>, String> {
+    tauri::async_runtime::spawn_blocking(gui::installed_apps)
+        .await
+        .map_err(|e| format!("installed-apps task failed: {e}"))?
+}
+
 /// Read-only: what an application left behind. The frontend names an id and,
 /// optionally, a display name — nothing else. It cannot set the home or the
 /// inventory roots, because a frontend that could would be able to make an
@@ -216,6 +224,7 @@ fn main() {
             clean,
             large_and_old,
             dispose_paths,
+            installed_apps,
             uninstall_leftovers,
             dispose_leftovers,
             space_lens

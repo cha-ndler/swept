@@ -4,10 +4,18 @@ import CleanView from "./CleanView";
 import LargeOldView from "./LargeOldView";
 import SpaceLensView from "./SpaceLensView";
 import StartupView from "./StartupView";
-import { FilesIcon, LensIcon, ShieldIcon, StackIcon, WrenchIcon } from "./Shell";
+import UninstallerView from "./UninstallerView";
+import {
+  AppsIcon,
+  FilesIcon,
+  LensIcon,
+  ShieldIcon,
+  StackIcon,
+  WrenchIcon,
+} from "./Shell";
 import { formatBytes } from "./format";
 
-type Module = "cleanup" | "large-old" | "space-lens" | "startup";
+type Module = "cleanup" | "applications" | "large-old" | "space-lens" | "startup";
 
 /**
  * The app shell: a persistent module sidebar beside a content pane.
@@ -26,7 +34,13 @@ type Module = "cleanup" | "large-old" | "space-lens" | "startup";
  * dead rows would promise a capability that isn't there — the same class of
  * dishonesty as the sample-data fallback removed in v0.3.
  */
-const MODULES = ["cleanup", "large-old", "space-lens", "startup"] as const;
+const MODULES = [
+  "cleanup",
+  "applications",
+  "large-old",
+  "space-lens",
+  "startup",
+] as const;
 
 function initialModule(): Module {
   const tab = new URLSearchParams(window.location.search).get("tab");
@@ -41,6 +55,7 @@ export default function App() {
     () => new Set([initialModule()]),
   );
   const [reclaimable, setReclaimable] = useState<number | null>(null);
+  const [leftoverBytes, setLeftoverBytes] = useState<number | null>(null);
   const [largeOldBytes, setLargeOldBytes] = useState<number | null>(null);
   const [measuredBytes, setMeasuredBytes] = useState<number | null>(null);
   const [loginCount, setLoginCount] = useState<number | null>(null);
@@ -66,6 +81,16 @@ export default function App() {
           badge={reclaimable === null ? "—" : formatBytes(reclaimable)}
           active={active === "cleanup"}
           onClick={() => open("cleanup")}
+        />
+        {/* Under Clean, because it removes things — but only rows the user
+            ticks one by one, for one application they named. The badge is the
+            last report's offerable figure, and an em dash until there is one. */}
+        <ModuleButton
+          icon={<AppsIcon />}
+          name="Applications"
+          badge={leftoverBytes === null ? "—" : formatBytes(leftoverBytes)}
+          active={active === "applications"}
+          onClick={() => open("applications")}
         />
 
         {/* Explore, not Clean. Neither of these two removes anything on its
@@ -116,6 +141,11 @@ export default function App() {
         {visited.has("cleanup") && (
           <Pane show={active === "cleanup"}>
             <CleanView onReclaimable={setReclaimable} />
+          </Pane>
+        )}
+        {visited.has("applications") && (
+          <Pane show={active === "applications"}>
+            <UninstallerView onTotal={setLeftoverBytes} />
           </Pane>
         )}
         {visited.has("large-old") && (

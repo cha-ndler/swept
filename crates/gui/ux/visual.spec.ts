@@ -4,6 +4,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { mkdirSync } from "node:fs";
 import {
   SAMPLE_DISPOSE_SUMMARY,
+  SAMPLE_INSTALLED_APPS,
   SAMPLE_LARGE_OLD,
   SAMPLE_LOGIN_ITEMS,
   SAMPLE_REPORT,
@@ -11,6 +12,11 @@ import {
   SAMPLE_SPACE_LENS_COMPLETE,
   SAMPLE_SPACE_LENS_EMPTY,
   SAMPLE_SUMMARY,
+  SAMPLE_UNINSTALL,
+  SAMPLE_UNINSTALL_COMPLETE,
+  SAMPLE_UNINSTALL_EMPTY,
+  SAMPLE_UNINSTALL_INSTALLED,
+  SAMPLE_UNINSTALL_SUMMARY,
 } from "./fixtures";
 
 const SHOTS = "ux/screenshots";
@@ -40,9 +46,21 @@ async function installBackend(
     largeOld?: unknown;
     disposeSummary?: unknown;
     spaceLens?: unknown;
+    installedApps?: unknown;
+    uninstall?: unknown;
+    uninstallSummary?: unknown;
+    /** When set, `dispose_leftovers` rejects with this message. */
+    uninstallReject?: string;
+    /** Hang only the leftover search, so the picker still answers. */
+    hangLeftovers?: boolean;
   } = {},
 ) {
   const payload = {
+    installedApps: opts.installedApps ?? SAMPLE_INSTALLED_APPS,
+    uninstall: opts.uninstall ?? SAMPLE_UNINSTALL,
+    uninstallSummary: opts.uninstallSummary ?? SAMPLE_UNINSTALL_SUMMARY,
+    uninstallReject: opts.uninstallReject ?? null,
+    hangLeftovers: opts.hangLeftovers ?? false,
     report: opts.report ?? SAMPLE_REPORT,
     items: opts.items ?? SAMPLE_LOGIN_ITEMS,
     summary: opts.summary ?? SAMPLE_SUMMARY,
@@ -80,6 +98,15 @@ async function installBackend(
         if (cmd === "large_and_old") return Promise.resolve(p.largeOld);
         if (cmd === "dispose_paths") return Promise.resolve(p.disposeSummary);
         if (cmd === "space_lens") return Promise.resolve(p.spaceLens);
+        if (cmd === "installed_apps") return Promise.resolve(p.installedApps);
+        if (cmd === "uninstall_leftovers")
+          return p.hangLeftovers
+            ? new Promise(() => {})
+            : Promise.resolve(p.uninstall);
+        if (cmd === "dispose_leftovers")
+          return p.uninstallReject
+            ? Promise.reject(p.uninstallReject)
+            : Promise.resolve(p.uninstallSummary);
         return Promise.reject(new Error(`unstubbed command: ${cmd}`));
       },
       transformCallback: (cb: unknown) => cb,
@@ -553,4 +580,195 @@ test("space-lens error", async ({ page }, testInfo) => {
   await page.goto("/?tab=space-lens");
   await expect(page.getByRole("alert")).toContainText("measure your folders");
   await capture(page, "space-lens-error", testInfo.project.name);
+});
+
+// --- Applications ----------------------------------------------------------
+//
+// The module whose ceiling is a scan: the backend decides which rows may be
+// chosen at all, and the screenshots carry that. Withheld rows are on screen
+// with their reason and no checkbox; nothing is pre-selected; and the sheet
+// says that a folder is a recursive removal and needs the extra confirmation.
+
+/** Name an app that is already gone, and wait for its leftovers. */
+async function openLeftovers(page: Page) {
+  await page.goto("/?tab=applications");
+  await page.getByLabel("Bundle identifier").fill("com.acme.notes");
+  await page.getByRole("button", { name: "Look for leftovers" }).click();
+  await expect(page.getByText(/items to review/)).toBeVisible();
+}
+
+test("applications picker", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/?tab=applications");
+  await expect(
+    page.getByRole("heading", { name: "Applications" }),
+  ).toBeVisible();
+  await expect(page.getByText("Which application?")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Example Reader/ }),
+  ).toBeVisible();
+  await capture(page, "applications-pick", testInfo.project.name);
+});
+
+test("applications results", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openLeftovers(page);
+  await expect(page.getByText("7 items to review")).toBeVisible();
+  await capture(page, "applications-results", testInfo.project.name);
+});
+
+test("withheld rows carry no checkbox, and nothing is pre-selected", async ({
+  page,
+}) => {
+  await installBackend(page);
+  await openLeftovers(page);
+
+  // Exactly the offerable rows are controls — no more, no fewer — and none
+  // arrives ticked.
+  const boxes = page.getByRole("checkbox");
+  await expect(boxes).toHaveCount(7);
+  for (let i = 0; i < 7; i++) {
+    await expect(boxes.nth(i)).not.toBeChecked();
+  }
+
+  // The withheld rows are on screen, each with its reason: the user's own
+  // documents, a still-installed sibling, a shared group container, and a
+  // tree disposal is certain to refuse.
+  await expect(
+    page.getByText(/only copy — so it is shown, not offered/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/still installed and this is its data/),
+  ).toBeVisible();
+  await expect(page.getByText(/shared between apps/)).toBeVisible();
+  await expect(page.getByText(/this tool cannot remove it/)).toBeVisible();
+
+  const act = page.getByRole("button", { name: /to Trash…$/ });
+  await expect(act).toBeDisabled();
+  await expect(page.getByText("Nothing selected")).toBeVisible();
+
+  await boxes.first().check();
+  await expect(act).toBeEnabled();
+});
+
+test("applications confirm", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openLeftovers(page);
+  // The first offerable row is a folder, so the sheet must say what that
+  // means before the button is pressed.
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: /to Trash…$/ }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByText(/recursive removal/)).toBeVisible();
+  await capture(page, "applications-confirm", testInfo.project.name);
+});
+
+test("applications done", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openLeftovers(page);
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: /to Trash…$/ }).click();
+  await page
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+  await expect(page.getByText(/moved to the Trash/)).toBeVisible();
+  await capture(page, "applications-done", testInfo.project.name);
+});
+
+test("applications still installed", async ({ page }, testInfo) => {
+  // Picking an installed app records its identity and says what to do next;
+  // it offers nothing, because an installed app has no leftovers.
+  await installBackend(page, { uninstall: SAMPLE_UNINSTALL_INSTALLED });
+  await page.goto("/?tab=applications");
+  await page.getByRole("button", { name: /Example Reader/ }).click();
+  await expect(page.getByText("Still installed")).toBeVisible();
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await capture(page, "applications-installed", testInfo.project.name);
+});
+
+test("applications empty", async ({ page }, testInfo) => {
+  await installBackend(page, { uninstall: SAMPLE_UNINSTALL_EMPTY });
+  await page.goto("/?tab=applications");
+  await page.getByLabel("Bundle identifier").fill("com.contoso.sync");
+  await page.getByRole("button", { name: "Look for leftovers" }).click();
+  await expect(page.getByText("Nothing left behind")).toBeVisible();
+  await capture(page, "applications-empty", testInfo.project.name);
+});
+
+test("a complete leftover search shows no coverage caveat", async ({
+  page,
+}) => {
+  await installBackend(page, { uninstall: SAMPLE_UNINSTALL_COMPLETE });
+  await openLeftovers(page);
+  await expect(page.getByText("This is a floor, not a total")).toHaveCount(0);
+});
+
+test("a refused leftover disposal is surfaced, not swallowed", async ({
+  page,
+}, testInfo) => {
+  await installBackend(page, {
+    uninstallReject:
+      "refused: 1 of 1 selected items are not something this scan offers, so nothing was touched.",
+  });
+  await openLeftovers(page);
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: /to Trash…$/ }).click();
+  await page
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+
+  await expect(page.getByRole("alert")).toContainText("nothing was touched");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await capture(page, "applications-refused", testInfo.project.name);
+});
+
+test("applications loading", async ({ page }, testInfo) => {
+  await installBackend(page, { hang: true });
+  await page.goto("/?tab=applications");
+  await expect(
+    page.getByRole("heading", { name: "Applications" }),
+  ).toBeVisible();
+  await capture(page, "applications-loading", testInfo.project.name);
+});
+
+test("applications scanning", async ({ page }, testInfo) => {
+  // The state a user watches while a real disk walk runs — distinct from the
+  // picker's own loading state, and announced rather than silent.
+  await installBackend(page, { hangLeftovers: true });
+  await page.goto("/?tab=applications");
+  await page.getByRole("button", { name: /Example Reader/ }).click();
+  await expect(
+    page.getByRole("status", { name: "Looking for leftovers" }),
+  ).toBeVisible();
+  await capture(page, "applications-scanning", testInfo.project.name);
+});
+
+test("applications error", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__TAURI_INTERNALS__ = {
+      invoke: (cmd: string) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        if (cmd === "permissions")
+          return Promise.resolve({
+            trash_readable: true,
+            containers_readable: true,
+            all_readable: true,
+          });
+        return Promise.reject("cannot determine home directory");
+      },
+      transformCallback: (cb: unknown) => cb,
+    };
+  });
+  await page.goto("/?tab=applications");
+  await expect(page.getByRole("alert")).toContainText(
+    "list your applications",
+  );
+  // Naming an app by hand still works when the list could not be read — and
+  // its own failure is reported the same way.
+  await page.getByLabel("Bundle identifier").fill("com.acme.notes");
+  await page.getByRole("button", { name: "Look for leftovers" }).click();
+  await expect(page.getByRole("alert")).toContainText("look for leftovers");
+  await capture(page, "applications-error", testInfo.project.name);
 });

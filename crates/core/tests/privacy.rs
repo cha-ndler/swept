@@ -1176,10 +1176,18 @@ fn a_directory_whose_measurement_was_cut_short_is_shown_and_not_offered() {
 
 // --- Safari ----------------------------------------------------------------
 
-/// Safari's own container was never exercised by anything, so both container
-/// tuples could be flipped to offerable with every test still passing.
+/// The loosening, and the shape of it.
+///
+/// Safari's container cookie jar **is** offered: M4's "no module offers a path
+/// inside another app's container" solves a question of ownership that does not
+/// arise for an app that is always installed and whose browsing data the user
+/// has explicitly asked to clear. Withholding it meant the Safari half of this
+/// module could act on nothing at all on a current Mac.
+///
+/// What is under `WebKit` is still withheld — for being website storage, which
+/// is the true reason, rather than for being in a container.
 #[test]
-fn safaris_container_data_is_shown_and_never_offered() {
+fn safaris_container_cookie_jar_is_offered_and_its_website_data_is_not() {
     let (_d, home) = fixture();
     let jar = home.join("Library/Containers/com.apple.Safari/Data/Library/Cookies");
     write(&jar.join("Cookies.binarycookies"), 100);
@@ -1188,20 +1196,29 @@ fn safaris_container_data_is_shown_and_never_offered() {
 
     let report = scan(&cfg(&home));
     assert_eq!(report.rows.len(), 2);
-    for row in &report.rows {
-        assert!(!row.offerable, "{} was offered", row.path.display());
-        assert!(row.withheld.is_some());
-    }
-    // The cookie jar is withheld *because* it is in the container — that is the
-    // only thing keeping this module out of another app's sandbox. (The
-    // `WebsiteData` row is withheld too, but as website storage, which is the
-    // more informative of the two reasons and is checked first.)
-    let jar = report
+
+    let jar_row = report
         .rows
         .iter()
         .find(|r| r.class == Class::Cookies)
         .unwrap();
-    assert!(jar.withheld.as_ref().unwrap().contains("container"));
+    assert!(
+        jar_row.offerable,
+        "the container jar is where Safari's cookies now live"
+    );
+    assert_eq!(jar_row.consequence, Consequence::SignsYouOut);
+
+    let data = report
+        .rows
+        .iter()
+        .find(|r| r.class == Class::SiteStorage)
+        .unwrap();
+    assert!(!data.offerable);
+    assert!(
+        data.withheld.as_ref().unwrap().contains("website storage"),
+        "the reason must be the true one, not that it sits in a container: {:?}",
+        data.withheld
+    );
 }
 
 /// `~/Library/Cookies` is not Safari's. It is the shared CFNetwork jar every

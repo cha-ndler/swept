@@ -81,9 +81,6 @@ pub const SAFARI_QUIT_CAVEAT: &str = "Safari leaves no marker saying whether it 
 const SITE_STORAGE_REASON: &str = "this is website storage — where a site or a local-first web \
      app keeps data, sometimes the only copy of the user's work — so it is shown, not offered";
 
-const SAFARI_CONTAINER_REASON: &str = "this is inside Safari's own sandbox container; no module \
-     offers a path inside another app's container yet, so it is shown, not offered";
-
 /// `~/Library/Cookies` is **not** Safari's.
 ///
 /// It is the shared CFNetwork / `NSHTTPCookieStorage` jar that every
@@ -578,16 +575,40 @@ static SAFARI_ENTRIES: &[Entry] = &[
 /// decision for a human, not a side effect of this one. The honest consequence:
 /// on recent macOS the container jar is the live one, so Safari cookies may
 /// have nothing offerable until that decision is taken.
+/// Safari's four roots, and the only one this module refuses on sight.
+///
+/// # Why the container is offered, having once been withheld
+///
+/// M4 established that no module offers a path inside another application's
+/// sandbox container, and this table inherited the rule. It should not have.
+/// M4's rule solves a question of **ownership**: a container may belong to an
+/// app that is still installed, so removing its contents destroys a live app's
+/// state, and the entitlement that would settle who owns it is in a bundle that
+/// is gone. Neither half applies here. Safari is always installed, nothing is
+/// being inferred about who owns the data, and the user has explicitly asked to
+/// clear Safari's browsing data — the container is simply where macOS now keeps
+/// it.
+///
+/// Withholding it therefore bought no safety. It only meant that on a current
+/// Mac the Safari half of this module could act on nothing at all, which is a
+/// feature that does not work rather than a guarantee that something cannot go
+/// wrong.
+///
+/// `WebKit` is offered here too, and is still withheld in practice: everything
+/// under it is `Class::SiteStorage`, which withholds itself for its own reason.
+/// That is deliberate — the reason a row is not offered should be the true one,
+/// and "it is website storage, which may be the only copy of someone's work" is
+/// a better sentence than "it is in a container".
 static SAFARI_ROOTS: &[(&str, Option<&'static str>)] = &[
     ("Library/Safari", None),
     ("Library/Cookies", Some(SHARED_COOKIE_JAR_REASON)),
     (
         "Library/Containers/com.apple.Safari/Data/Library/Cookies",
-        Some(SAFARI_CONTAINER_REASON),
+        None,
     ),
     (
         "Library/Containers/com.apple.Safari/Data/Library/WebKit",
-        Some(SAFARI_CONTAINER_REASON),
+        None,
     ),
 ];
 

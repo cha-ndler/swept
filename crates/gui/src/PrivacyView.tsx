@@ -4,6 +4,7 @@ import { call, describeError } from "./backend";
 import { Checkbox, Segmented } from "./Controls";
 import { formatBytes } from "./format";
 import {
+  ChevronIcon,
   Group,
   Icon,
   InfoIcon,
@@ -474,7 +475,7 @@ function Results({
         </div>
       </div>
 
-      <Track rows={report.rows} />
+      <Track rows={report.rows} filter={filter} />
 
       {/* Without this the first four rows on a real machine are all locked and
           not one of the five actionable ones is above the fold: website storage
@@ -532,7 +533,11 @@ function splitBytes(bytes: number): [string, string] {
  * Space Lens — but "what kind of traces am I about to remove, and how much of
  * what I can see is even on offer". One bar answers both.
  */
-function Track({ rows }: { rows: PrivacyRow[] }) {
+function Track({ rows, filter }: { rows: PrivacyRow[]; filter: Filter }) {
+  // The same conditional the subhead uses. These two strings are the only form
+  // of the claim a sighted reviewer cannot check by looking, which is exactly
+  // why they were the pair that stayed wrong when the visible copy was fixed.
+  const shownBut = filter === "all" ? "shown but " : "";
   const offerable = rows.filter((r) => r.offerable);
   const withheldBytes = rows
     .filter((r) => !r.offerable)
@@ -560,7 +565,7 @@ function Track({ rows }: { rows: PrivacyRow[] }) {
         <div
           className="flex h-2 flex-1 gap-px overflow-hidden rounded-full bg-white/[.05]"
           role="img"
-          aria-label={`${formatBytes(offered)} offered across ${segments.length} kinds; ${formatBytes(withheldBytes)} shown but not offered`}
+          aria-label={`${formatBytes(offered)} offered across ${segments.length} kinds; ${formatBytes(withheldBytes)} ${shownBut}not offered`}
         >
           {segments.map((s) => (
             <span
@@ -586,7 +591,7 @@ function Track({ rows }: { rows: PrivacyRow[] }) {
             <span
               className="block h-2 w-10 flex-none rounded-full"
               style={HATCH}
-              title={`Shown but not offered: ${formatBytes(withheldBytes)}`}
+              title={`${shownBut ? "Shown but not" : "Not"} offered: ${formatBytes(withheldBytes)}`}
               aria-hidden="true"
             />
           </>
@@ -679,6 +684,10 @@ function BrowserSection({
   onShowHidden: () => void;
 }) {
   const order = (a: PrivacyRow, b: PrivacyRow) =>
+    // Offerable first. Under All, class order alone put five locked rows ahead
+    // of three actionable ones and pushed the actionable ones back below the
+    // fold — the problem the filter exists to solve, returning by another door.
+    Number(b.offerable) - Number(a.offerable) ||
     CLASS_ORDER.indexOf(a.class) - CLASS_ORDER.indexOf(b.class) ||
     (a.profile ?? "").localeCompare(b.profile ?? "") ||
     a.path.localeCompare(b.path);
@@ -733,11 +742,18 @@ function BrowserSection({
             </span>
           ))}
         </h3>
-        {shared.map((reason) => (
-          <p key={reason} className="text-muted mt-1 text-caption leading-snug">
-            {tildeAll(reason)}
-          </p>
-        ))}
+        {shared.length > 0 && (
+          <ul className="text-muted mt-1 space-y-0.5 text-caption leading-snug">
+            {shared.map((reason) => (
+              <li key={reason} className="flex gap-1.5">
+                <span className="text-subtle mt-px flex-none">
+                  <LockIcon size={11} />
+                </span>
+                <span>{tildeAll(reason)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {browser.access === "needs_full_disk_access" ? (
@@ -792,8 +808,9 @@ function BrowserSection({
           {hidden.length > 0 && (
             <button
               onClick={onShowHidden}
-              className="text-subtle mt-1.5 px-4 text-caption hover:text-muted"
+              className="text-subtle mt-1.5 flex items-center gap-1 rounded-control px-4 text-caption transition-colors duration-fast ease-mac hover:text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accentText"
             >
+              <ChevronIcon size={11} />
               {hidden.length} not offered —{" "}
               {list(
                 Array.from(new Set(hidden.map((r) => CLASS_LABELS[r.class]))).map(

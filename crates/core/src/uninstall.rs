@@ -91,8 +91,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::largeold::resolve_roots;
-use safety::denylist::is_protected;
 use safety::DirLimits;
+
+use crate::treewalk;
 
 /// Entry budget for a whole run, shared across every location and every
 /// per-row size walk.
@@ -102,14 +103,7 @@ use safety::DirLimits;
 /// six figures of files.
 pub const DEFAULT_MAX_EXAMINED: usize = 200_000;
 
-/// Hard recursion bound for a per-row size walk.
-///
-/// Deliberately equal to `safety::DirLimits::default().max_depth`: a row this
-/// scan was willing to size is a row `guard_dir` could plausibly be asked to
-/// vouch for later, and the two disagreeing about how deep is reasonable would
-/// be a surprise at exactly the wrong moment. Symlinks are never followed, so
-/// only a genuinely deep tree reaches it.
-pub const MAX_ROW_DEPTH: usize = 32;
+pub use crate::treewalk::MAX_ROW_DEPTH;
 
 /// How deep the inventory looks for `.app` bundles.
 ///
@@ -177,9 +171,6 @@ const CONTAINER_USER_DATA_REASON: &str = "a sandboxed app keeps the user's own d
 const GROUP_CONTAINER_REASON: &str = "a group container is shared between apps by \
      construction, and the entitlement that would settle who owns it was in the bundle that \
      is gone";
-
-/// Prefix for the withheld reason of a row `guard_dir` is certain to refuse.
-const UNDISPOSABLE_REASON: &str = "this tool cannot remove it: ";
 
 /// The one caveat this half can know in advance, surfaced on any report that
 /// holds a preferences row. Nothing is quit or stopped to prevent it — that
@@ -529,25 +520,24 @@ pub struct LeftoverReport {
 }
 
 impl LeftoverReport {
-    /// True when the search saw less than it tried to see. The UI must present
-    /// the figures as a floor when this is set.
+    /// True when the figures are a floor rather than a total.
     ///
-    /// Withheld rows do **not** make a report partial: withholding is the
-    /// module working correctly, and a caveat that fires on correct behaviour
-    /// teaches people to ignore it.
-    ///
-    /// A floor counts only on an *offerable* row. A withheld row's figure is
-    /// informational — it is in no total a user can act on — and a tree
-    /// withheld *because* it holds a protected path is always a floor, since
-    /// the protected part is not measured. Counting that would make every
-    /// correctly-withheld `.git` tree a "partial" report.
+    /// A floor that a deliberate withholding explains is the module working,
+    /// and a caveat that fires on correct behaviour teaches people to ignore
+    /// it. A floor with no such explanation is a gap, whatever became of the
+    /// row — which is why this asks about `undisposable` rather than about
+    /// `offerable`: an incomplete measurement now withholds the row too, so
+    /// `offerable` no longer distinguishes the two cases.
     pub fn is_partial(&self) -> bool {
         self.truncated
             || self.skipped_unreadable > 0
             || self.skipped_symlink > 0
             || self.skipped_case_variant > 0
             || self.skipped_unrepresentable > 0
-            || self.rows.iter().any(|r| r.offerable && r.size_is_floor)
+            || self
+                .rows
+                .iter()
+                .any(|r| r.size_is_floor && r.undisposable.is_none())
     }
 
     pub fn total_bytes(&self) -> u64 {
@@ -612,6 +602,15 @@ pub struct UninstallConfig {
 }
 
 impl UninstallConfig {
+    /// The bounds a per-row measurement is judged against.
+    fn bounds(&self) -> crate::treewalk::Bounds {
+        crate::treewalk::Bounds {
+            home: self.home.clone(),
+            dir_limits: self.dir_limits,
+            max_examined: self.max_examined,
+        }
+    }
+
     pub fn new(home: PathBuf) -> Self {
         let app_roots = inventory_roots(&home);
         Self {
@@ -1467,119 +1466,42 @@ fn launch_agent_program(path: &Path) -> Option<PathBuf> {
 
 /// Apparent size and name count beneath `path`.
 ///
-/// Counts every name, including each name of a hard-linked file — see the
-/// module docs on why this is the opposite of `spacelens`. Never follows a
-/// symlink, never descends into a protected subtree, and returns a `floor`
-/// flag when it could not see everything.
-/// What a per-row size walk found, beyond the figures.
+/// What a per-row size walk found, plus the one judgement that is this
+/// module's own.
+///
+/// The walk and the `undisposable` predicate live in [`crate::treewalk`]
+/// because M5 needs the identical decision, and two copies of "will `guard_dir`
+/// refuse this?" that drifted would offer a checkbox the executor is certain to
+/// refuse. `license_suspected` stays here: it is an Uninstaller concern, and
+/// Privacy has no notion of a licence file.
 struct Measured {
     size_bytes: u64,
     file_count: u64,
     size_is_floor: bool,
-    /// See [`Candidate::undisposable`].
     undisposable: Option<&'static str>,
-    /// See [`Candidate::license_suspected`].
     license_suspected: bool,
 }
 
-/// What the walk saw on the way, separate from what it summed.
-#[derive(Default)]
-struct Seen {
-    floor: bool,
-    /// Every name beneath the root — files, directories, symlinks — which is
-    /// what `guard_dir` counts against `max_entries`. Distinct from
-    /// `file_count`, which excludes directories because a directory is not a
-    /// file the user will lose.
-    names: u64,
-    protected: bool,
-    too_deep: bool,
-}
-
 fn measure(path: &Path, cfg: &UninstallConfig, examined: &mut usize) -> Measured {
-    fn walk(
-        path: &Path,
-        depth: usize,
-        cfg: &UninstallConfig,
-        examined: &mut usize,
-        seen: &mut Seen,
-    ) -> (u64, u64) {
-        if depth > MAX_ROW_DEPTH {
-            // `guard_dir` refuses a directory this deep. A *file* this deep
-            // would have been allowed — its parent is one level up — so this
-            // over-refuses by at most one level, in the safe direction.
-            seen.floor = true;
-            seen.too_deep = true;
-            return (0, 0);
-        }
-        if *examined >= cfg.max_examined {
-            seen.floor = true;
-            return (0, 0);
-        }
-        let Ok(meta) = std::fs::symlink_metadata(path) else {
-            seen.floor = true;
-            return (0, 0);
-        };
-        if meta.file_type().is_symlink() {
-            // Owns none of its target's bytes, and is one name to unlink.
-            return (0, 1);
-        }
-        if meta.is_file() {
-            return (meta.len(), 1);
-        }
-        if !meta.is_dir() {
-            return (0, 0);
-        }
-        let Ok(entries) = std::fs::read_dir(path) else {
-            seen.floor = true;
-            return (0, 0);
-        };
-        let mut bytes = 0u64;
-        let mut count = 0u64;
-        for entry in entries {
-            *examined += 1;
-            let Ok(entry) = entry else {
-                seen.floor = true;
-                continue;
-            };
-            seen.names = seen.names.saturating_add(1);
-            let child = entry.path();
-            // A protected subtree inside a leftover tree — a vendored `.git`,
-            // most plausibly — is not measured, because it is not disposable.
-            // And it makes the whole row undisposable: `guard_dir` refuses the
-            // entire tree, so the row must not be offered.
-            if is_protected(&child, &cfg.home) {
-                seen.floor = true;
-                seen.protected = true;
-                continue;
-            }
-            let (b, c) = walk(&child, depth + 1, cfg, examined, seen);
-            bytes = bytes.saturating_add(b);
-            count = count.saturating_add(c);
-        }
-        (bytes, count)
-    }
-
-    let mut seen = Seen::default();
-    let (size_bytes, file_count) = walk(path, 0, cfg, examined, &mut seen);
-    let limits = cfg.dir_limits;
-    let undisposable = if seen.protected {
-        Some("the tree contains a protected path (a .git checkout, most likely)")
-    } else if seen.too_deep {
-        Some("the tree is deeper than a disposal may reach")
-    } else if seen.names > limits.max_entries as u64 {
-        Some("the tree holds more entries than a disposal may remove at once")
-    } else if size_bytes > limits.max_bytes {
-        Some("the tree is larger than a disposal may remove at once")
-    } else {
-        None
-    };
+    let m = treewalk::measure(path, &cfg.bounds(), examined);
     Measured {
-        size_bytes,
-        file_count,
-        size_is_floor: seen.floor,
-        undisposable,
+        size_bytes: m.size_bytes,
+        file_count: m.file_count,
+        size_is_floor: m.size_is_floor,
+        undisposable: m.undisposable,
         license_suspected: license_shaped(path),
     }
+}
+
+/// Whether a measured row may be offered at all. A tree `guard_dir` is
+/// certain to refuse is shown and withheld, never offered.
+fn offer(m: &Measured) -> (bool, Option<String>) {
+    treewalk::offer(&treewalk::Measured {
+        size_bytes: m.size_bytes,
+        file_count: m.file_count,
+        size_is_floor: m.size_is_floor,
+        undisposable: m.undisposable,
+    })
 }
 
 /// A licence, activation or receipt shape among `dir`'s immediate children,
@@ -1602,15 +1524,6 @@ fn license_shaped(dir: &Path) -> bool {
             || lower.ends_with(".activation")
             || (lower.starts_with("license") && lower.ends_with(".plist"))
     })
-}
-
-/// Whether a measured row may be offered at all. A tree `guard_dir` is
-/// certain to refuse is shown and withheld, never offered.
-fn offer(m: &Measured) -> (bool, Option<String>) {
-    match m.undisposable {
-        Some(why) => (false, Some(format!("{UNDISPOSABLE_REASON}{why}"))),
-        None => (true, None),
-    }
 }
 
 /// Convenience for callers that only have a `&Path` and a raw id string.

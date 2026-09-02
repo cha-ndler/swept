@@ -410,8 +410,11 @@ instead.**
     `resolve_roots`. Worth writing down because the two are easy to conflate:
     the roots list says what may be *read*, and `resolve_roots` is a stricter
     filter that two specific walkers apply on top of it.
-- [ ] **M4 — Uninstaller (leftovers-only)** — *discovery is done — id-keyed
-  locations, containers and the human-name tier; disposal and the UI are open.*
+- [x] **M4 — Uninstaller (leftovers-only)** — *shipped: id-keyed discovery,
+  containers and the human-name tier, directory-aware disposal, and the
+  Applications screen (merged at the taste gate). The under-match note below
+  stays open as a known limit, and the design's open questions are still the
+  human's to answer.*
   **Removing the `.app` bundle itself stays out of scope** — `/Applications` is
   on `PROTECTED_ABS_ROOTS` and carving it out is a denylist amendment needing
   explicit sign-off. *Riskiest task in the plan.*
@@ -466,8 +469,8 @@ instead.**
     roots is no longer enough — `<container>/Data/Documents` is *inside* a
     location root. Disposal must intersect the selection with the `offerable`
     rows of a fresh scan, the way Large & Old re-walks before it acts.
-  - [ ] **Directory-aware disposal** — *the executor half is done; the
-    discovery flags and the command layer are open.*
+  - [x] **Directory-aware disposal** — the executor half, the discovery
+    honesty flags and the command layer.
     - [x] **The executor learns a second action shape.** `PlannedDirAction`
       carries a `SafeDir` — the tree walked in full by `guard_dir` — and
       deliberately **no `Disposal`**: a recursive irreversible removal is not
@@ -540,9 +543,8 @@ instead.**
       are individually disposable, on purpose and pinned. Two thin Tauri
       commands; `CleanSummary.entries_freed` says how many names a directory
       action stood for.
-  - [ ] **The module UI.** *Visual → taste gate; opened as a PR with
-    screenshots, never auto-merged.* Built as `UninstallerView` ("Applications"
-    in the sidebar, under Clean). **Identity comes from a bundle the app saw:**
+  - [x] **The module UI.** *(Merged at the human taste gate.)* Built as
+    `UninstallerView` ("Applications" in the sidebar, under Clean). **Identity comes from a bundle the app saw:**
     the picker lists installed applications (a new read-only
     `installed_apps` command, top-level bundles only), and choosing one records
     its identifier *before* the user removes it — the interim answer to open
@@ -598,9 +600,90 @@ instead.**
     offerable?** It is where a sandboxed notes app keeps the notes, and also
     the largest thing an uninstalled sandboxed app leaves behind. Shown and
     never offered today; "offerable, never bulk" is the plausible loosening.
-- [ ] **M5 — Privacy** — browser caches/cookies/history. **Cookies sign the user
-  out everywhere** — separately opt-in, never pre-selected, never in Smart Scan
-  defaults, labelled with that consequence.
+- [ ] **M5 — Privacy** — *discovery is done; disposal and the UI are open.*
+  **Cookies sign the user out everywhere** — separately opt-in, never
+  pre-selected, never in Smart Scan defaults, labelled with that consequence.
+  - [x] **What browsers remember, read-only.** `core/src/privacy.rs` searches
+    twelve browsers — Safari, Firefox, and ten of the Chromium family as one
+    table row each — for five classes per profile: cookies, history, session,
+    website storage, in-profile caches. The whole module exists because the
+    trust kernel protects **nothing** here: a Firefox profile keeps
+    `cookies.sqlite` and `key4.db` — the key that decrypts every saved
+    password — in the same flat directory, and Chromium keeps `Cookies` and
+    `Login Data` as byte-adjacent siblings. Both pass `guard` cleanly. So the
+    rule is an **inclusion list consulted by lookup, never by listing**: a
+    constant name is joined onto a corroborated root and asked whether it
+    exists, so a file this module does not already know by name is never seen
+    rather than merely rejected. The lists are pinned, and the same test
+    asserts eleven named precious files are absent from them.
+    **No parsed string is ever joined onto a path.** The design called for
+    reading Chromium's `Local State` and Firefox's `profiles.ini` and then
+    validating the parsed names in six layers; instead profiles come from
+    `read_dir` and are corroborated (a `Preferences` file; `prefs.js` or
+    `times.json`), so the injection surface does not exist rather than being
+    defended against — `uninstall.rs` states the absence of exactly that as
+    one of its own invariants, and this keeps it. Cost: a Firefox profile
+    outside the Firefox root is not found. Under-reporting is the safe
+    direction.
+    Sidecars are one row, ordered **journal, shm, wal, database last**,
+    because `execute` continues past a failed action and a lone hot `-journal`
+    beside a newly created empty database is the one corrupting outcome.
+    Nothing under `~/Library/Caches` is emitted — already `user-caches`, and
+    two routes to the same bytes is a double count in M7's combined total — so
+    those are *named* in `covered_elsewhere`, which has no size field on
+    purpose.
+    Measured on a real machine, and three measurements changed the design: no
+    `Default` profile exists (it is `Profile 1`..`3` among ~25 non-profile
+    directories); Safari is hard-blocked without Full Disk Access, so
+    `NotInstalled` and `NeedsFullDiskAccess` are kept apart; and Firefox's
+    `.parentlock` is present whether or not Firefox is running, so keying
+    liveness on it would withhold every row forever while looking like it
+    worked — the real markers are `lock` and Chromium's `SingletonLock`, and
+    both fail *positive*, withholding a row we could have offered.
+    The safety review returned BLOCK with twelve findings, two of them found
+    by deleting a line and watching every test still pass. **A tree whose
+    measurement was cut short was offered as `0 B`** — the shared budget is
+    spent on the withheld site-storage trees before the cache rows are reached,
+    and `offer` judged rows only by `undisposable`, never by `size_is_floor`,
+    which also defeated the size threshold that would have withheld them
+    (an under-summed tree cannot exceed a limit). Fixed in `treewalk`, so M4 is
+    hardened by the same change. **The canonical-spelling re-check had no
+    test**, and without it a symlink named `Network` inside a profile emitted a
+    row that is lexically inside its own profile root while naming a file
+    somewhere else. And **Safari was exercised by nothing**, which hid a real
+    bug: the access probe opened only `Library/Safari`, so when that was absent
+    *or denied* — its resting state — the other three roots were never looked
+    at. Also found: `~/Library/Cookies` is not Safari's jar but the one every
+    non-sandboxed app shares, so it is now shown and never offered.
+  - [ ] **The disposal half.** Per-path `Consent.granted` / `granted_dirs`
+    grants, ceiling = the `offerable` rows of a scan run inside the call
+    (M4's rule), confined to each row's own `profile_root` rather than to a
+    location root. Cookies/history/session each need a **separate
+    acknowledgement** that defaults to refusing — the analogue of
+    `confirm_mass_delete`, so a UI that loses its checkbox state cannot
+    smuggle a cookie jar through.
+  - [ ] **The module UI.** *Visual → taste gate.*
+
+  Decisions taken conservatively, each one the human's to loosen:
+  - **A live browser withholds cookies/history/session**, and only caveats
+    caches. A running browser rewrites the database on quit, so "history
+    removed" would be visibly false a minute later.
+  - **Website storage is shown, never offered** — `Local Storage`,
+    `IndexedDB`, `storage/default` are where a local-first web app keeps the
+    user's only copy. Same posture as a container's `Documents` in M4. It is
+    also the largest row on the reference machine, so the cost is visible.
+  - **Safari's container paths are shown, never offered.** No module offers a
+    path inside another app's container yet. Consequence: on recent macOS the
+    container jar is the live one, so Safari cookies may have nothing
+    offerable until that changes.
+  - **Firefox history is not offered at all** — not caution: `places.sqlite`
+    holds the history *and* the bookmarks in one file, and separating them
+    means editing rows inside a database, which is a destructive capability
+    this tool does not have.
+  - **No subprocess and no `libc`**, so liveness is marker *presence*, never
+    proof of a running process. Verifying the pid would put the first
+    `unsafe` FFI into `macclean-core`; M4 answered "no subprocess" for
+    `codesign` and this holds the line.
 - [ ] **M6 — Maintenance (honest scope)** — reversible login-item management
   (move the plist to a managed disabled folder, not disposal). **Explicitly out
   of scope:** flush DNS, purge RAM, rebuild Spotlight, repair permissions — all

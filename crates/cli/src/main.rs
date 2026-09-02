@@ -15,6 +15,7 @@ use macclean_core::audit::AuditLog;
 use macclean_core::executor::{execute, Consent, SystemSink};
 use macclean_core::loginitems::{self, LoginItem};
 use macclean_core::plan::{Plan, MASS_DELETE_BYTES, MASS_DELETE_COUNT};
+use macclean_core::privacy;
 use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, ScanConfig};
 use safety::canonical_home;
@@ -72,6 +73,12 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Preview what browsers remember. Read-only; there is no `--execute`.
+    ///
+    /// Acting on any of this takes a per-path grant, which only the app can
+    /// ask for. This subcommand exists so the search can be exercised against
+    /// a real disk without one.
+    Privacy,
 }
 
 fn main() -> ExitCode {
@@ -158,6 +165,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             } else {
                 print_login_items(&items);
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Privacy => {
+            print_privacy(&privacy::scan(&privacy::PrivacyConfig::new(home)));
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -334,6 +345,93 @@ fn print_plan(plan: &Plan) {
             human_bytes(MASS_DELETE_BYTES)
         );
     }
+}
+
+/// Read-only preview of what browsers remember.
+///
+/// Prints what is offered and, separately, what is shown and withheld — the
+/// second list is the interesting one, because it is where this module refuses
+/// to act rather than failing to look.
+fn print_privacy(report: &privacy::PrivacyReport) {
+    for browser in &report.browsers {
+        let state = match &browser.access {
+            // Safari has no profiles by construction, so a profile count would
+            // read as a finding rather than a fact about how Safari is shaped.
+            privacy::Access::Readable if browser.family == privacy::Family::Safari => {
+                "readable".to_string()
+            }
+            privacy::Access::Readable if browser.profiles == 0 => {
+                // The measured case: a vendor directory another installer
+                // created, holding no profile the browser ever opened.
+                "installed files, but no profile this has ever opened".to_string()
+            }
+            privacy::Access::Readable => format!("{} profile(s)", browser.profiles),
+            privacy::Access::NotInstalled => "not installed".to_string(),
+            privacy::Access::NeedsFullDiskAccess => {
+                "needs Full Disk Access — grant it in System Settings › Privacy & Security"
+                    .to_string()
+            }
+            privacy::Access::Unreadable(why) => format!("unreadable: {why}"),
+        };
+        let live = if browser.may_be_live {
+            "  (looks like it is running)"
+        } else {
+            ""
+        };
+        println!("{:<22} {state}{live}", browser.name);
+    }
+
+    let (offered, withheld): (Vec<_>, Vec<_>) = report.rows.iter().partition(|r| r.offerable);
+
+    println!("\nOffered ({}):", offered.len());
+    for row in &offered {
+        println!(
+            "  {:>10}  {:<24} {}",
+            human_bytes(row.size_bytes),
+            row.label,
+            row.path.display()
+        );
+    }
+
+    println!("\nShown, not offered ({}):", withheld.len());
+    for row in &withheld {
+        println!(
+            "  {:>10}  {:<24} {}",
+            human_bytes(row.size_bytes),
+            row.label,
+            row.path.display()
+        );
+        if let Some(why) = &row.withheld {
+            println!("              {why}");
+        }
+    }
+
+    if !report.covered_elsewhere.is_empty() {
+        println!("\nAlready covered by another category:");
+        for covered in &report.covered_elsewhere {
+            println!("  {} ({})", covered.path.display(), covered.category);
+        }
+    }
+    if report.skipped_symlink > 0 {
+        println!(
+            "\n{} item(s) were symlinks and were not followed, so they are not \
+             counted above.",
+            report.skipped_symlink
+        );
+    }
+    for caveat in &report.caveats {
+        println!("\nnote: {caveat}");
+    }
+    println!(
+        "\nTotal offered: {}{}",
+        human_bytes(report.offerable_bytes()),
+        if report.is_partial() {
+            " (a floor — something could not be read)"
+        } else {
+            ""
+        }
+    );
+    println!("\nThis was a preview. Nothing here can be removed from the command line.");
 }
 
 fn human_bytes(bytes: u64) -> String {

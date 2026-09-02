@@ -89,3 +89,37 @@ impl Plan {
             || self.total_bytes() > MASS_DELETE_BYTES
     }
 }
+
+/// One file to move aside, reversibly.
+///
+/// Deliberately **not** a [`PlannedAction`], and [`StashPlan`] is deliberately
+/// not a [`Plan`]. Nothing converts between them, so a plan built to move a
+/// login item aside cannot be handed to `executor::execute`, and a disposal
+/// plan cannot be handed to `executor::stash`. The separation is the guarantee:
+/// a move is not a disposal, and no field of either type can express the other.
+///
+/// Note what is absent: no `Disposal`. A moved-aside file is never removed, so
+/// there is no variant to choose and no permanent branch to decline.
+#[derive(Debug, Clone)]
+pub struct PlannedMove {
+    pub path: SafePath,
+    pub size_bytes: u64,
+    /// Which module authorized this, carried into the audit note.
+    pub category: String,
+}
+
+/// A set of files to move aside, or to put back.
+///
+/// It has no thresholds and no mass-delete gate, because it removes nothing:
+/// the confirmation those exist for is about how much would be *lost*, and the
+/// answer here is always none.
+#[derive(Debug, Clone, Default)]
+pub struct StashPlan {
+    pub moves: Vec<PlannedMove>,
+}
+
+impl StashPlan {
+    pub fn count(&self) -> usize {
+        self.moves.len()
+    }
+}

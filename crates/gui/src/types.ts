@@ -32,7 +32,23 @@ export interface LoginItem {
   label: string;
   program: string | null;
   run_at_load: boolean;
-  disabled: boolean;
+  /**
+   * The plist's `Disabled` key — **a key in a file, not launchd's answer.**
+   *
+   * Named this way on purpose. Once launchd's own override database holds an
+   * entry for a label the key is ignored, and that database is root-owned and
+   * unreadable by this app. So the two can disagree, and a field called
+   * `disabled` would invite this screen to render a guess as a state.
+   */
+  plist_says_disabled: boolean;
+  /** What the job actually does at login. Derived, never assigned. */
+  class: "starts_at_login" | "starts_on_demand" | "broken" | "unknown";
+  /** It is in the moved-aside store rather than in LaunchAgents. */
+  moved_aside: boolean;
+  /** Another item in the same directory declares the same launchd `Label`. */
+  duplicate_label: boolean;
+  offerable: boolean;
+  withheld: string | null;
   source: string;
 }
 

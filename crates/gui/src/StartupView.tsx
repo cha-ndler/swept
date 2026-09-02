@@ -17,7 +17,7 @@ export default function StartupView({
       try {
         const list = await call<LoginItem[]>("login_items");
         setItems(list);
-        onCount?.(list.filter((i) => i.run_at_load && !i.disabled).length);
+        onCount?.(list.filter((i) => i.class === "starts_at_login").length);
       } catch (e) {
         // Never fall back to sample items: a fabricated startup list would have
         // the user reasoning about launch agents that may not exist.
@@ -68,7 +68,10 @@ function Body({ items, error }: { items: LoginItem[] | null; error: string }) {
     );
   }
 
-  const active = items.filter((i) => i.run_at_load && !i.disabled).length;
+  // The class, not `run_at_load`: a job with `KeepAlive` starts at load
+  // without the key, and one with `StartInterval` does not start at login at
+  // all. Counting the key alone was wrong in both directions.
+  const active = items.filter((i) => i.class === "starts_at_login").length;
 
   return (
     <>
@@ -84,7 +87,10 @@ function Body({ items, error }: { items: LoginItem[] | null; error: string }) {
       <div className="mt-3">
         <Banner tone="safe" icon={<ShieldIcon size={15} />}>
           Read-only. mac-cleaner never changes your startup items — reviewing
-          what starts automatically is the whole feature.
+          what starts automatically is the whole feature. Most apps now register
+          their login items with macOS directly; that list is in System Settings
+          › General › Login Items &amp; Extensions, and this app can neither read
+          it nor change it.
         </Banner>
       </div>
 
@@ -104,6 +110,15 @@ function Body({ items, error }: { items: LoginItem[] | null; error: string }) {
                     {it.program}
                   </p>
                 )}
+                {it.withheld && (
+                  <p className="text-muted mt-0.5 text-caption">{it.withheld}</p>
+                )}
+                {it.plist_says_disabled && (
+                  <p className="text-subtle mt-0.5 text-caption">
+                    its plist carries a <code>Disabled</code> key, which macOS
+                    may or may not be honouring
+                  </p>
+                )}
               </div>
               <Badge item={it} />
             </li>
@@ -115,23 +130,25 @@ function Body({ items, error }: { items: LoginItem[] | null; error: string }) {
 }
 
 function Badge({ item }: { item: LoginItem }) {
-  if (item.disabled) {
+  // Never "disabled": that is a key in a file, and launchd's own answer lives
+  // in a database this app cannot read. See `plist_says_disabled` in types.ts.
+  if (item.class === "starts_at_login") {
     return (
-      <span className="text-subtle shrink-0 rounded-full border border-separator px-2 py-0.5 text-caption">
-        disabled
+      <span className="shrink-0 rounded-full bg-accent px-2 py-0.5 text-caption font-medium text-white">
+        starts at login
       </span>
     );
   }
-  if (item.run_at_load) {
+  if (item.class === "broken") {
     return (
-      <span className="shrink-0 rounded-full bg-accent px-2 py-0.5 text-caption font-medium text-white">
-        runs at login
+      <span className="text-warning shrink-0 rounded-full border border-warning/40 px-2 py-0.5 text-caption">
+        program missing
       </span>
     );
   }
   return (
     <span className="text-subtle shrink-0 rounded-full border border-separator px-2 py-0.5 text-caption">
-      on demand
+      {item.class === "starts_on_demand" ? "on demand" : "cannot tell"}
     </span>
   );
 }

@@ -879,6 +879,14 @@ export const SAMPLE_STARTUP_EMPTY: StartupReport = {
   items: [],
   moved_aside: [],
   starts_at_login: 0,
+  // Spreading the populated report left "Looked at ~/Library/LaunchAgents (5)"
+  // under "Nothing is kept as a file in your LaunchAgents folder" — a pair the
+  // real app cannot produce.
+  sources: [
+    { path: LA, access: "readable", count: 0 },
+    { path: "/Library/LaunchAgents", access: "readable", count: 10 },
+    { path: "/Library/LaunchDaemons", access: "readable", count: 16 },
+  ],
 };
 
 export const SAMPLE_STARTUP_SUMMARY: StartupSummary = {

@@ -142,11 +142,15 @@ export default function StartupView({
         paths: acted,
         expected: { count: acted.length, bytes: 0 },
       });
-    } catch {
-      // The list is stale either way; looking again is the honest next step.
+      await load();
+      setPhase("none");
+    } catch (e) {
+      // The one refusal on a screen whose whole job is explaining refusals
+      // must not be the one that goes unexplained. It reuses the sheet.
+      setVerb("back");
+      setActionError(describeError(e));
+      setPhase("confirm");
     }
-    await load();
-    setPhase("none");
   }
 
   return (
@@ -191,25 +195,27 @@ export default function StartupView({
         )}
       </div>
 
-      {phase !== "done" && report && (
-        <ActionBar
-          count={chosen.length}
-          verb={verb}
-          ratio={
-            report.starts_at_login +
-              report.items.length -
+      {phase !== "done" &&
+        report &&
+        report.items.length + report.moved_aside.length > 0 && (
+          <ActionBar
+            count={chosen.length}
+            verb={verb}
+            ratio={
               report.starts_at_login +
-              report.system.length >
-            0
-              ? `${report.items.length} of ${report.items.length + report.system.length} · the rest macOS manages`
-              : null
-          }
-          onReview={() => {
-            setActionError("");
-            setPhase("confirm");
-          }}
-        />
-      )}
+                report.items.length -
+                report.starts_at_login +
+                report.system.length >
+              0
+                ? `${report.items.length} of ${report.items.length + report.system.length} · the rest macOS manages`
+                : null
+            }
+            onReview={() => {
+              setActionError("");
+              setPhase("confirm");
+            }}
+          />
+        )}
 
       {(phase === "confirm" || phase === "working") && (
         <ConfirmSheet
@@ -281,7 +287,9 @@ function Results({
           {report.items.length > report.starts_at_login && (
             <p className="text-muted text-caption">
               <span className="font-mono tabular-nums">
-                {(report.items.length - report.starts_at_login).toLocaleString()}
+                {(
+                  report.items.length - report.starts_at_login
+                ).toLocaleString()}
               </span>{" "}
               more here that do not start at login
             </p>
@@ -458,7 +466,10 @@ function Composition({ report }: { report: StartupReport }) {
       <ul className="text-muted mt-2 flex flex-wrap gap-x-4 gap-y-1 text-caption">
         <Key
           swatch={
-            <span className="h-[7px] w-[7px] rounded-full bg-accentGraphic" />
+            <span
+              aria-hidden="true"
+              className="block h-[7px] w-[7px] flex-none rounded-full bg-accentGraphic"
+            />
           }
           label="starts at login"
           count={atLogin}
@@ -466,7 +477,10 @@ function Composition({ report }: { report: StartupReport }) {
         {alsoHere > 0 && (
           <Key
             swatch={
-              <span className="h-[7px] w-[7px] rounded-full bg-[rgb(var(--text-3))]" />
+              <span
+                aria-hidden="true"
+                className="block h-[7px] w-[7px] flex-none rounded-full bg-[rgb(var(--text-3))]"
+              />
             }
             label="here, but not at login"
             count={alsoHere}
@@ -475,7 +489,11 @@ function Composition({ report }: { report: StartupReport }) {
         {managed > 0 && (
           <Key
             swatch={
-              <span className="h-2 w-3.5 rounded-[2px]" style={hatchKey} />
+              <span
+                aria-hidden="true"
+                className="block h-2 w-3.5 flex-none rounded-[2px]"
+                style={hatchKey}
+              />
             }
             label="macOS manages"
             count={managed}
@@ -487,11 +505,15 @@ function Composition({ report }: { report: StartupReport }) {
 }
 
 /**
- * One series: swatch, label, count. All three inside a single `<li>`.
+ * One series: swatch, label, count, all inside a single `<li>`.
  *
- * They were siblings before, so the count spans sat directly in the `<ul>` —
- * which the accessibility gate correctly rejected, and which also said the
- * legend had six entries when it has three.
+ * The swatch is rendered **directly** as a flex child rather than inside a
+ * wrapper. It had a wrapper before, and the swatch itself is a `<span>` — an
+ * inline non-replaced box, which ignores width and height — so every key in
+ * this legend measured 0×0 and the chart shipped with no colour key at all.
+ * Nothing failed: not the build, not the type check, and not the snapshot
+ * gate, because the component and its baseline were born in the same commit.
+ * The same class of silent-render bug `styles.css` warns about in its header.
  */
 function Key({
   swatch,
@@ -504,9 +526,7 @@ function Key({
 }) {
   return (
     <li className="flex items-center gap-1.5">
-      <span className="flex-none" aria-hidden="true">
-        {swatch}
-      </span>
+      {swatch}
       {label}
       <span className="font-mono tabular-nums">{count}</span>
     </li>
@@ -611,7 +631,9 @@ function Row({
             here in accent blue made it read as an actionable class — the same
             colour as "at login" and the same word as the primary button, on a
             row that has a checkbox. */}
-        {verb === "back" ? `was: ${CLASS_LABEL[item.class]}` : CLASS_LABEL[item.class]}
+        {verb === "back"
+          ? `was: ${CLASS_LABEL[item.class]}`
+          : CLASS_LABEL[item.class]}
       </span>
     </>
   );
@@ -803,11 +825,14 @@ function ActionBar({
           </>
         ) : (
           <>
-            <p className="font-mono text-emph font-semibold tabular-nums">
-              {count.toLocaleString()}
+            <p className="text-body">
+              <span className="font-mono font-semibold tabular-nums">
+                {count.toLocaleString()}
+              </span>{" "}
+              selected
             </p>
             <p className="text-muted text-caption">
-              selected · nothing is removed, and you can put it back
+              Nothing is removed, and you can put it back.
             </p>
           </>
         )}

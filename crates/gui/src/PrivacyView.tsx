@@ -83,7 +83,11 @@ export default function PrivacyView({
     try {
       const r = await call<PrivacyReport>("privacy_report");
       setReport(r);
-      onCount?.(r.rows.filter((x) => x.offerable).length);
+      // 0 becomes `—`: every other module shows a dash when it has nothing to
+      // say, and a bare zero in that slot reads as a measurement rather than an
+      // absence.
+      const n = r.rows.filter((x) => x.offerable).length;
+      onCount?.(n === 0 ? null : n);
     } catch (e) {
       setReport(null);
       setError(describeError(e));
@@ -262,7 +266,7 @@ const CONSEQUENCES: Record<
     ack: "loses_open_tabs",
   },
   loses_site_data: {
-    past: "Website storage",
+    past: "Site storage cleared",
     tag: "site data",
     short: "Website storage",
     sentence: "",
@@ -430,15 +434,20 @@ function Results({
       <div className="flex items-end justify-between gap-6">
         <div className="min-w-0">
           <p className="text-subtle truncate text-micro font-semibold uppercase">
-            What your browsers remember
+            Browser data
           </p>
           <h2 className="mt-1 text-title font-semibold">
             {offerable.length.toLocaleString()} item
             {offerable.length === 1 ? "" : "s"} to review
           </h2>
+          {/* "shown" is only true when they are on screen. Under a filter
+              that hides them, saying so is a small lie the screen tells about
+              itself — and it reached the aria-label too, so it was a lie told
+              to screen-reader users in the same breath. */}
           {withheld.length > 0 && (
             <p className="text-muted text-caption">
-              {withheld.length.toLocaleString()} more shown but not offered
+              {withheld.length.toLocaleString()} more
+              {filter === "all" ? " shown but" : ""} not offered
             </p>
           )}
         </div>
@@ -494,14 +503,12 @@ function Results({
         <BrowserSection
           key={b.id}
           browser={b}
+          all={report.rows.filter((r) => r.browser === b.id)}
           rows={shown.filter((r) => r.browser === b.id)}
-          hidden={
-            report.rows.filter((r) => r.browser === b.id).length -
-            shown.filter((r) => r.browser === b.id).length
-          }
           selected={selected}
           onToggle={onToggle}
           onGrant={onGrant}
+          onShowHidden={() => setFilter("all")}
         />
       ))}
 
@@ -565,12 +572,24 @@ function Track({ rows }: { rows: PrivacyRow[] }) {
           ))}
         </div>
         {withheldBytes > 0 && (
-          <span
-            className="block h-2 w-10 flex-none rounded-full"
-            style={HATCH}
-            title={`Shown but not offered: ${formatBytes(withheldBytes)}`}
-            aria-hidden="true"
-          />
+          <>
+            {/* An axis break. The tail is a fixed width, not a share of the
+                bar, and without the convention that says so it could be read
+                as proportional — which is the misreading the rescale was
+                meant to end, arriving from the other side. */}
+            <span
+              className="text-subtle flex-none select-none text-caption leading-none"
+              aria-hidden="true"
+            >
+              ⁄⁄
+            </span>
+            <span
+              className="block h-2 w-10 flex-none rounded-full"
+              style={HATCH}
+              title={`Shown but not offered: ${formatBytes(withheldBytes)}`}
+              aria-hidden="true"
+            />
+          </>
         )}
       </div>
       <ul className="text-muted mt-2 flex flex-wrap gap-x-4 gap-y-1 text-caption">
@@ -643,38 +662,42 @@ function ColumnHeader() {
 
 function BrowserSection({
   browser,
+  all,
   rows,
-  hidden,
   selected,
   onToggle,
   onGrant,
+  onShowHidden,
 }: {
   browser: PrivacyBrowser;
+  /** Every row this browser has, whatever the filter shows. */
+  all: PrivacyRow[];
   rows: PrivacyRow[];
-  hidden: number;
   selected: Set<string>;
   onToggle: (path: string) => void;
   onGrant: () => void;
+  onShowHidden: () => void;
 }) {
-  const ordered = [...rows].sort(
-    (a, b) =>
-      CLASS_ORDER.indexOf(a.class) - CLASS_ORDER.indexOf(b.class) ||
-      (a.profile ?? "").localeCompare(b.profile ?? "") ||
-      a.path.localeCompare(b.path),
-  );
+  const order = (a: PrivacyRow, b: PrivacyRow) =>
+    CLASS_ORDER.indexOf(a.class) - CLASS_ORDER.indexOf(b.class) ||
+    (a.profile ?? "").localeCompare(b.profile ?? "") ||
+    a.path.localeCompare(b.path);
+  const ordered = [...rows].sort(order);
+  const hidden = all.filter((r) => !rows.includes(r)).sort(order);
 
-  // A reason that applies to several rows is said once.
-  //
-  // Without this, "Google Chrome looks like it is running (…SingletonLock is
-  // present), and it would write this back" renders on three consecutive rows,
-  // costing each of them two extra lines and — at 720px — turning the group
-  // into four lines of the same sentence. The row keeps its own line for what
-  // is particular to it.
-  const shared = sharedReason(ordered);
+  // A reason that applies to several rows is said once. Without it, "Google
+  // Chrome looks like it is running (…SingletonLock is present), and it would
+  // write this back" renders on three consecutive rows, costing each of them
+  // two extra lines and — at 720px — turning the group into four lines of the
+  // same sentence.
+  const shared = sharedReasons(ordered);
 
+  // Counted over *all* the browser's rows, not the visible subset: a chip that
+  // followed the filter would quietly restate the filter as if it were a fact
+  // about the browser.
   const counts = CLASS_ORDER.map((c) => ({
     cls: c,
-    n: ordered.filter((r) => r.class === c).length,
+    n: all.filter((r) => r.class === c).length,
   })).filter((c) => c.n > 0);
 
   return (
@@ -689,31 +712,32 @@ function BrowserSection({
               {browser.profiles} profiles
             </span>
           )}
-          {/* Why this browser's cookies and history are absent from the
-              offered view. Without it, filtering to what can be acted on
-              silently removes the explanation along with the rows. */}
           {browser.may_be_live && (
             <span className="text-muted rounded-full bg-white/[.05] px-2 text-micro font-semibold uppercase leading-4">
               looks like it is running
             </span>
           )}
-          {/* The by-consequence read, without regrouping the list. */}
+          {/* The by-consequence read, without regrouping the list. The digits
+              stay in text colour: a category hue is for a graphic, never for
+              text carrying its own meaning. */}
           {counts.map((c) => (
             <span
               key={c.cls}
-              className={`flex items-center gap-1 text-micro normal-case tracking-normal ${CLASS_HUES[c.cls].text}`}
+              className="text-muted flex items-center gap-1 text-micro normal-case tracking-normal"
               title={`${c.n} ${CLASS_LABELS[c.cls]}`}
             >
-              <ClassIcon cls={c.cls} size={12} />
+              <span className={`flex-none ${CLASS_HUES[c.cls].text}`}>
+                <ClassIcon cls={c.cls} size={12} />
+              </span>
               {c.n}
             </span>
           ))}
         </h3>
-        {shared && (
-          <p className="text-muted mt-1 text-caption leading-snug">
-            {tildeAll(shared)}
+        {shared.map((reason) => (
+          <p key={reason} className="text-muted mt-1 text-caption leading-snug">
+            {tildeAll(reason)}
           </p>
-        )}
+        ))}
       </div>
 
       {browser.access === "needs_full_disk_access" ? (
@@ -740,44 +764,64 @@ function BrowserSection({
             </button>
           </div>
         </Group>
-      ) : ordered.length === 0 ? (
-        <p className="text-subtle px-4 text-caption">
-          {hidden} row{hidden === 1 ? "" : "s"} hidden by the filter above.
-        </p>
       ) : (
-        <Group role="list" label={browser.name}>
-          {ordered.map((row, i) => (
-            <Row
-              key={row.path}
-              row={row}
-              first={i === 0}
-              multiProfile={browser.profiles > 1}
-              hideReason={row.withheld === shared}
-              checked={selected.has(row.path)}
-              onToggle={() => onToggle(row.path)}
-            />
-          ))}
-        </Group>
+        <>
+          {ordered.length > 0 && (
+            <Group role="list" label={browser.name}>
+              {ordered.map((row, i) => (
+                <Row
+                  key={row.path}
+                  row={row}
+                  first={i === 0}
+                  multiProfile={browser.profiles > 1}
+                  hideReason={
+                    row.withheld !== null && shared.includes(row.withheld)
+                  }
+                  checked={selected.has(row.path)}
+                  onToggle={() => onToggle(row.path)}
+                />
+              ))}
+            </Group>
+          )}
+          {/* Say what the filter is holding back, and name it.
+              Leaving this to the "looks like it is running" chip covered one
+              browser and one reason: Firefox's 66 MiB of website storage
+              disappeared with no trace at all, and Safari — with nothing
+              offered — got a full explanatory card, so one screen had three
+              different answers to "why isn't it here". */}
+          {hidden.length > 0 && (
+            <button
+              onClick={onShowHidden}
+              className="text-subtle mt-1.5 px-4 text-caption hover:text-muted"
+            >
+              {hidden.length} not offered —{" "}
+              {list(
+                Array.from(new Set(hidden.map((r) => CLASS_LABELS[r.class]))).map(
+                  (l) => l.toLowerCase(),
+                ),
+              )}
+            </button>
+          )}
+        </>
       )}
     </section>
   );
 }
 
-/** The withheld reason shared by two or more of these rows, if there is one. */
-function sharedReason(rows: PrivacyRow[]): string | null {
+/**
+ * Every withheld reason two or more of these rows share.
+ *
+ * Not just the commonest: a browser that is running *and* holds website storage
+ * has two shared reasons, and hoisting only the winner leaves the other one
+ * repeating down the rows — the exact problem this exists to solve, half
+ * solved, with the tie broken by map insertion order.
+ */
+function sharedReasons(rows: PrivacyRow[]): string[] {
   const counts = new Map<string, number>();
   for (const r of rows) {
     if (r.withheld) counts.set(r.withheld, (counts.get(r.withheld) ?? 0) + 1);
   }
-  let best: string | null = null;
-  let most = 1;
-  for (const [reason, n] of counts) {
-    if (n > most) {
-      best = reason;
-      most = n;
-    }
-  }
-  return best;
+  return [...counts.entries()].filter(([, n]) => n > 1).map(([reason]) => reason);
 }
 
 /** The path with the home directory folded to `~`. */
@@ -1224,8 +1268,8 @@ function ConfirmModal({
                   — "refused:" is for the audit log, not for a person. */}
               <p className="text-body">{sentence(error)}</p>
               <p className="text-muted mt-1 text-caption">
-                The list is now out of date against the backend&apos;s own
-                re-scan, so the only honest next step is to look again.
+                The list is out of date now, so the only honest next step is to
+                look again.
               </p>
             </div>
           )}
@@ -1429,7 +1473,7 @@ function Skeleton() {
       <div className="flex items-end justify-between gap-6">
         <div>
           <p className="text-subtle text-micro font-semibold uppercase">
-            What your browsers remember
+            Browser data
           </p>
           <h2 className="text-muted mt-1 text-title font-semibold">
             Looking through your browsers…

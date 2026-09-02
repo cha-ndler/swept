@@ -10,6 +10,13 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **Privacy module** — the screen for what browsers remember, under Protect.
+  The size is not the headline: the chart is by consequence, every row says
+  what it costs you, the sidebar badge is a count, and the confirmation sheet
+  takes a separate acknowledgement for each consequence in the selection with
+  the action disabled until every one is ticked. Rows the backend withholds are
+  shown as information with their reason, and a browser behind Full Disk Access
+  is told apart from one that is not installed. (#44)
 - **Privacy disposal** — `dispose_privacy`, whose ceiling is the offerable rows
   of a scan run inside the call, confined to each row's own profile rather than
   to a location root. A database and its `-journal`/`-shm`/`-wal` are one row,
@@ -137,6 +144,10 @@ first two modules that look outside the cleanup allowlist.
   became a falsehood the moment a second one did. It now carries the action's
   own category, so a browser cache is not logged as an uninstaller leftover and
   a privacy row records which acknowledgement allowed it. (#43)
+- **A tag on a selected row failed the contrast floor.** The tint behind a
+  ticked row is lighter than the resting surface, and the tag's colour had been
+  chosen against the resting one — 4.21:1 where 4.5 is the floor for text that
+  size. Fixed in both the Privacy and Applications screens. (#44)
 - **A tree whose measurement was cut short is no longer offered.** Both modules
   that can offer a directory share one walk, and it judged a row only by
   whether `guard_dir` would refuse it — never by whether the walk had finished.

@@ -677,7 +677,22 @@ instead.**
     as an uninstaller leftover. The note now carries the action's own
     category, so the log says which module, and which acknowledgement,
     authorized each line.
-  - [ ] **The module UI.** *Visual → taste gate.*
+  - [ ] **The module UI.** *Visual → taste gate; opened as a PR with
+    screenshots, never auto-merged.* Built as `PrivacyView` ("Privacy" in the
+    sidebar, under **Protect** — the headings are about what a module is
+    *for*, and this one is not about space). **The size is not the point**, so
+    the stacked track is by consequence rather than location, every row wears
+    the consequence as a tag and a glyph, the sidebar badge is a count rather
+    than bytes, and the confirmation sheet asks for a **separate
+    acknowledgement of each consequence in the selection** with the primary
+    action disabled until each is ticked — the interface of a gate
+    `dispose_privacy` already enforces, so a sheet that did not ask would
+    produce a refusal the user could not act on. Withheld rows *recede* rather
+    than being raised the way Applications does it, because here they are the
+    majority. A reason shared by several rows is hoisted to the group header
+    and said once. Denied and absent are drawn differently: Safari gets a card
+    with a route to System Settings, and browsers with nothing to report get
+    one line at the foot of the page.
 
   Decisions taken conservatively, each one the human's to loosen:
   - **A live browser withholds cookies/history/session**, and only caveats

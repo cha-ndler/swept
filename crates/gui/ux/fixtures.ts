@@ -507,8 +507,10 @@ const PROF1 = `${L}/Application Support/Google/Chrome/Profile 1`;
 const PROF2 = `${L}/Application Support/Google/Chrome/Profile 2`;
 const FF = `${L}/Application Support/Firefox/Profiles/uh8x.default-release`;
 
-const LIVE_REASON =
-  "Google Chrome looks like it is running (Library/Application Support/Google/Chrome/SingletonLock is present), and it would write this back";
+// The backend names the marker as an absolute path — the point being that the
+// user can go and look at a stale lock file — so the fixture carries one too,
+// and the view folds it to `~/`.
+const LIVE_REASON = `Google Chrome looks like it is running (${L}/Application Support/Google/Chrome/SingletonLock is present), and it would write this back`;
 const STORAGE_REASON =
   "this is website storage — where a site or a local-first web app keeps data, sometimes the only copy of the user's work — so it is shown, not offered";
 export const RUNNING_BROWSER_CAVEAT =

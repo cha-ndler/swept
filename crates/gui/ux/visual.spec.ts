@@ -94,7 +94,10 @@ async function installBackend(
   await page.addInitScript((p) => {
     const w = window as unknown as Record<string, unknown>;
     w.__TAURI_INTERNALS__ = {
-      invoke: (cmd: string, args: { handler?: (e: unknown) => void }) => {
+      invoke: (
+        cmd: string,
+        args: { handler?: (e: unknown) => void; paths?: string[] },
+      ) => {
         // `listen()` round-trips through invoke; `transformCallback` below is the
         // identity, so `args.handler` is the raw callback. Stash it so a test can
         // drive real progress renders.
@@ -126,10 +129,27 @@ async function installBackend(
           return p.hangPrivacy
             ? new Promise(() => {})
             : Promise.resolve(p.privacy);
-        if (cmd === "dispose_privacy")
-          return p.privacyReject
-            ? Promise.reject(p.privacyReject)
-            : Promise.resolve(p.privacySummary);
+        if (cmd === "dispose_privacy") {
+          if (p.privacyReject) return Promise.reject(p.privacyReject);
+          // Derive the summary from the paths actually requested. A fixed
+          // fixture let a baseline lock a headline and a figure from two
+          // different actions — "Caches cleared / 39.0 MiB" for a selection of
+          // one 14.3 MiB row — a pair the real app cannot produce.
+          const chosen = (
+            p.privacy as { rows: { path: string; size_bytes: number; is_dir: boolean; file_count: number }[] }
+          ).rows.filter((r) =>
+            ((args as { paths?: string[] }).paths ?? []).includes(r.path),
+          );
+          return Promise.resolve({
+            dry_run: false,
+            executed: chosen.length,
+            refused: 0,
+            bytes_freed: chosen.reduce((n, r) => n + r.size_bytes, 0),
+            entries_freed: chosen
+              .filter((r) => r.is_dir)
+              .reduce((n, r) => n + r.file_count, 0),
+          });
+        }
         // The one URL the app will ever open; the screen only needs it not to
         // throw.
         if (cmd === "open_privacy_settings") return Promise.resolve(null);
@@ -932,4 +952,65 @@ test("privacy loading", async ({ page }, testInfo) => {
   await page.goto("/?tab=privacy");
   await expect(page.getByText(/Looking through your browsers/)).toBeVisible();
   await capture(page, "privacy-loading", testInfo.project.name);
+});
+
+/**
+ * The filter's other two states, which nothing captured before — and they hold
+ * the entire surface of the withheld treatment: the hoisted reasons, the rows
+ * that recede rather than being raised, and on a real machine the majority of
+ * what the module found.
+ */
+test("privacy withheld", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openPrivacy(page);
+  await page.getByRole("radio", { name: /Not offered/ }).click();
+  await capture(page, "privacy-withheld", testInfo.project.name);
+});
+
+test("privacy all", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openPrivacy(page);
+  await page.getByRole("radio", { name: "All" }).click();
+  await capture(page, "privacy-all", testInfo.project.name);
+});
+
+/** Hidden rows are named per group, not left to be inferred from a chip. */
+test("the filter says what it is holding back, per browser", async ({
+  page,
+}) => {
+  await installBackend(page);
+  await openPrivacy(page);
+  // Firefox is not running, so it carries no "looks like it is running" chip;
+  // before this, its 66 MiB of website storage vanished with no trace at all.
+  const say = page.getByRole("button", {
+    name: /1 not offered — website storage/,
+  });
+  await expect(say).toBeVisible();
+  await say.click();
+  await expect(page.getByRole("radio", { name: "All" })).toBeChecked();
+});
+
+/**
+ * The multi-consequence done headline — the case the past-tense summary exists
+ * for, and the one that has to survive 720px.
+ */
+test("privacy done with several consequences", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openPrivacy(page);
+  await page.getByRole("checkbox", { name: /Select Cookies/ }).first().check();
+  await page
+    .getByRole("checkbox", { name: /Select Session backups/ })
+    .first()
+    .check();
+  await page.getByRole("checkbox", { name: /Select GPU cache/ }).first().check();
+  await page.getByRole("button", { name: /Move .* to Trash…/ }).click();
+  await page.getByRole("checkbox", { name: "Signs you out" }).check();
+  await page.getByRole("checkbox", { name: "Loses open tabs" }).check();
+  await page.getByRole("button", { name: "Move to Trash" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Signed out · Sessions cleared · Caches cleared",
+    }),
+  ).toBeVisible();
+  await capture(page, "privacy-done-multi", testInfo.project.name);
 });

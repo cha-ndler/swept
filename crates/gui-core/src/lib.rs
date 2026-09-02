@@ -22,6 +22,7 @@ use macclean_core::executor::{execute, Consent, Sink, SystemSink};
 use macclean_core::largeold;
 use macclean_core::loginitems::{self, LoginItem};
 use macclean_core::plan::{Disposal, Plan, PlannedAction, PlannedDirAction};
+use macclean_core::privacy::{self, Class, Consequence};
 use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, scan_with_progress, Progress, ScanConfig};
 use macclean_core::spacelens;
@@ -277,6 +278,9 @@ pub fn clean_at(
 pub struct Permissions {
     pub trash_readable: bool,
     pub containers_readable: bool,
+    /// Safari's data is TCC-gated separately, and it is the one browser whose
+    /// data is unreadable by default rather than occasionally.
+    pub safari_readable: bool,
     /// Every gated root opened successfully.
     pub all_readable: bool,
 }
@@ -286,10 +290,12 @@ pub struct Permissions {
 pub fn probe_permissions(home: &Path) -> Permissions {
     let trash_readable = is_readable(&home.join(".Trash"));
     let containers_readable = is_readable(&home.join("Library/Containers"));
+    let safari_readable = is_readable(&home.join("Library/Safari"));
     Permissions {
         trash_readable,
         containers_readable,
-        all_readable: trash_readable && containers_readable,
+        safari_readable,
+        all_readable: trash_readable && containers_readable && safari_readable,
     }
 }
 
@@ -1243,6 +1249,457 @@ pub fn dispose_leftovers(
         &UninstallConfig::new(home),
         target,
         &paths,
+        expected,
+        confirm_mass_delete,
+        &SystemSink,
+        &mut audit,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Privacy
+//
+// The third module whose disposal ceiling is a scan run inside the call, and
+// the first with a *second* consent axis. Cookies sign the user out
+// everywhere, history cannot be brought back, and a session is the tabs they
+// have open — so each is refused unless the request carries an explicit
+// acknowledgement of that specific consequence.
+// ---------------------------------------------------------------------------
+
+/// Which consequences the user has explicitly acknowledged.
+///
+/// The analogue of `confirm_mass_delete`, and like it, **refused by default**:
+/// `Default` acknowledges nothing, and `#[serde(default)]` means a frontend
+/// that omits the field — or loses its checkbox state on a re-render — cannot
+/// smuggle a cookie jar through. Each consequence is its own axis, because
+/// acknowledging one must not carry the others.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(default)]
+pub struct Acknowledged {
+    pub signs_you_out: bool,
+    pub erases_history: bool,
+    pub loses_open_tabs: bool,
+}
+
+/// Why this row still needs a word from the user, if it does.
+fn acknowledgement_missing(c: Consequence, ack: Acknowledged) -> Option<&'static str> {
+    match c {
+        Consequence::SignsYouOut if !ack.signs_you_out => {
+            Some("you would be signed out of every site this browser holds a cookie for")
+        }
+        Consequence::ErasesHistory if !ack.erases_history => {
+            Some("your browsing history would be erased, and it cannot be brought back")
+        }
+        Consequence::LosesOpenTabs if !ack.loses_open_tabs => {
+            Some("you would lose the open tabs and the saved session")
+        }
+        // Structurally unacknowledgeable. Website storage is never offerable,
+        // so this is unreachable through the ceiling — it is here so that the
+        // impossibility is stated in the type's own terms rather than resting
+        // entirely on a filter somewhere else.
+        Consequence::LosesSiteData => Some("website storage is never offered"),
+        _ => None,
+    }
+}
+
+/// The audit category, which is also what the log names as the authority for
+/// each line — so a run can be read back and each row traced to the
+/// acknowledgement that allowed it.
+fn privacy_category(class: Class) -> &'static str {
+    match class {
+        Class::Cookies => "privacy-cookies",
+        Class::History => "privacy-history",
+        Class::Session => "privacy-session",
+        Class::ProfileCache => "privacy-cache",
+        Class::SiteStorage => "privacy-site-storage",
+    }
+}
+
+fn class_name(class: Class) -> &'static str {
+    match class {
+        Class::Cookies => "cookies",
+        Class::History => "history",
+        Class::Session => "session",
+        Class::SiteStorage => "site_storage",
+        Class::ProfileCache => "cache",
+    }
+}
+
+fn consequence_name(c: Consequence) -> &'static str {
+    match c {
+        Consequence::SignsYouOut => "signs_you_out",
+        Consequence::ErasesHistory => "erases_history",
+        Consequence::LosesOpenTabs => "loses_open_tabs",
+        Consequence::LosesSiteData => "loses_site_data",
+        Consequence::Regenerable => "regenerable",
+    }
+}
+
+/// One row of what a browser remembers.
+///
+/// Note what is absent: no `selected` field, and **no member paths**. The
+/// frontend names a row by its own `path` and nothing else, so it cannot name a
+/// sidecar; the backend expands the members from the fresh scan at the moment
+/// it acts.
+#[derive(Debug, Clone, Serialize)]
+pub struct PrivacyRowDto {
+    pub browser: String,
+    pub browser_name: String,
+    pub profile: Option<String>,
+    pub class: String,
+    pub consequence: String,
+    pub label: String,
+    pub path: String,
+    /// How many names this row stands for, for display only.
+    pub member_count: usize,
+    pub is_dir: bool,
+    pub size_bytes: u64,
+    pub file_count: u64,
+    pub size_is_floor: bool,
+    pub offerable: bool,
+    pub bulk_grantable: bool,
+    pub smart_scan_eligible: bool,
+    pub withheld: Option<String>,
+    pub undisposable: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PrivacyBrowserDto {
+    pub id: String,
+    pub name: String,
+    pub access: String,
+    pub access_detail: Option<String>,
+    pub profiles: usize,
+    pub may_be_live: bool,
+    pub notes: Vec<String>,
+}
+
+/// Something another category already cleans. Deliberately carries no size.
+#[derive(Debug, Clone, Serialize)]
+pub struct CoveredDto {
+    pub path: String,
+    pub category: String,
+    pub browser: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PrivacyReportDto {
+    pub rows: Vec<PrivacyRowDto>,
+    pub browsers: Vec<PrivacyBrowserDto>,
+    pub covered_elsewhere: Vec<CoveredDto>,
+    pub offerable_bytes: u64,
+    pub skipped_symlink: usize,
+    pub partial: bool,
+    pub caveats: Vec<String>,
+}
+
+fn privacy_row_dto(row: &privacy::Row) -> PrivacyRowDto {
+    PrivacyRowDto {
+        browser: row.browser.to_string(),
+        browser_name: row.browser_name.to_string(),
+        profile: row.profile.clone(),
+        class: class_name(row.class).to_string(),
+        consequence: consequence_name(row.consequence).to_string(),
+        label: row.label.to_string(),
+        path: row.path.display().to_string(),
+        member_count: row.members.len(),
+        is_dir: row.is_dir,
+        size_bytes: row.size_bytes,
+        file_count: row.file_count,
+        size_is_floor: row.size_is_floor,
+        offerable: row.offerable,
+        bulk_grantable: row.bulk_grantable,
+        smart_scan_eligible: row.smart_scan_eligible,
+        withheld: row.withheld.clone(),
+        undisposable: row.undisposable.map(str::to_string),
+    }
+}
+
+/// Read-only. See [`privacy::scan`] — nothing here can authorize anything.
+pub fn privacy_report_in(cfg: &privacy::PrivacyConfig) -> PrivacyReportDto {
+    let report = privacy::scan(cfg);
+    PrivacyReportDto {
+        rows: report.rows.iter().map(privacy_row_dto).collect(),
+        browsers: report
+            .browsers
+            .iter()
+            .map(|b| PrivacyBrowserDto {
+                id: b.id.to_string(),
+                name: b.name.to_string(),
+                access: match b.access {
+                    privacy::Access::Readable => "readable",
+                    privacy::Access::NotInstalled => "not_installed",
+                    privacy::Access::NeedsFullDiskAccess => "needs_full_disk_access",
+                    privacy::Access::Unreadable(_) => "unreadable",
+                }
+                .to_string(),
+                access_detail: match &b.access {
+                    privacy::Access::Unreadable(why) => Some(why.clone()),
+                    _ => None,
+                },
+                profiles: b.profiles,
+                may_be_live: b.may_be_live,
+                notes: b.notes.iter().map(|n| n.to_string()).collect(),
+            })
+            .collect(),
+        covered_elsewhere: report
+            .covered_elsewhere
+            .iter()
+            .map(|c| CoveredDto {
+                path: c.path.display().to_string(),
+                category: c.category.to_string(),
+                browser: c.browser.to_string(),
+            })
+            .collect(),
+        offerable_bytes: report.offerable_bytes(),
+        skipped_symlink: report.skipped_symlink,
+        partial: report.is_partial(),
+        caveats: report.caveats.iter().map(|c| c.to_string()).collect(),
+    }
+}
+
+/// Read-only report against the real home.
+pub fn privacy_report() -> Result<PrivacyReportDto, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    Ok(privacy_report_in(&privacy::PrivacyConfig::new(home)))
+}
+
+/// Act on a privacy selection. Trash only, per-path grants only.
+///
+/// The ceiling is not a set of roots but **the `offerable` rows of a scan run
+/// inside this call**, the rule M4 established. On top of that, two things this
+/// module needs that the Uninstaller did not:
+///
+/// * **A row is a set of files.** The caller names a row by its own path; the
+///   members — a database and its `-journal`/`-shm`/`-wal` — are expanded here,
+///   from the fresh scan. A sidecar named on its own is not a key in the
+///   ceiling and is refused, so the frontend cannot decompose a row.
+/// * **A second consent axis.** Every selected row's consequence must be
+///   acknowledged, and an unacknowledged one refuses the whole request rather
+///   than being skipped — a partial run is never what was confirmed.
+#[allow(clippy::too_many_arguments)]
+pub fn dispose_privacy_with_sink(
+    cfg: &privacy::PrivacyConfig,
+    paths: &[String],
+    acknowledged: Acknowledged,
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+    sink: &dyn Sink,
+    audit: &mut AuditLog,
+) -> Result<CleanSummary, String> {
+    if paths.is_empty() {
+        return refuse_and_record(audit, "refused: nothing was selected.".to_string());
+    }
+    // The denylist's home-relative rules compare component-wise against the
+    // home, so a non-canonical spelling would silently disable them for the
+    // whole run.
+    match safety::canonical_home(&cfg.home) {
+        Ok(canonical) if canonical == cfg.home => {}
+        _ => {
+            return refuse_and_record(
+                audit,
+                "refused: the home directory is not its canonical spelling, so the \
+                 denylist's home-relative rules could not be trusted for this run."
+                    .to_string(),
+            )
+        }
+    }
+
+    let report = privacy::scan(cfg);
+
+    // The ceiling: the offerable rows of *this* scan, keyed by bytes.
+    //
+    // Discovery already guarantees that `offerable` implies not site storage,
+    // no withholding and no `undisposable` reason. This is the last layer
+    // before a mutation, so that agreement is enforced here rather than
+    // trusted: a one-word regression in a row constructor must not be able to
+    // hand a password database to the Trash from here.
+    let offerable: BTreeMap<&OsStr, &privacy::Row> = report
+        .rows
+        .iter()
+        .filter(|r| {
+            r.offerable
+                && r.class != Class::SiteStorage
+                && r.withheld.is_none()
+                && r.undisposable.is_none()
+        })
+        .map(|r| (r.path.as_os_str(), r))
+        .collect();
+
+    let mut actions = Vec::new();
+    let mut dirs = Vec::new();
+    let mut granted = Vec::new();
+    let mut granted_dirs = Vec::new();
+    let mut rejected: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<&OsStr> = BTreeSet::new();
+    let mut selected_rows = 0usize;
+    let mut selected_bytes = 0u64;
+
+    for raw in paths {
+        let key = OsStr::new(raw.as_str());
+        let shown = clip(raw);
+        let Some(row) = offerable.get(key) else {
+            rejected.push(format!("{shown}: not something this scan offers"));
+            continue;
+        };
+        if !seen.insert(key) {
+            continue;
+        }
+        selected_rows += 1;
+        selected_bytes = selected_bytes.saturating_add(row.size_bytes);
+
+        if let Some(why) = acknowledgement_missing(row.consequence, acknowledged) {
+            rejected.push(format!("{shown}: {why}, and that was not acknowledged"));
+            continue;
+        }
+
+        // The row's own root, not a location root. This is what stops one
+        // profile's row from authorizing a path in the next.
+        let confine = [row.profile_root.clone()];
+
+        for member in &row.members {
+            let member_shown = clip(&member.display().to_string());
+            let meta = match std::fs::symlink_metadata(member) {
+                Ok(m) => m,
+                Err(e) => {
+                    rejected.push(format!("{member_shown}: {e}"));
+                    continue;
+                }
+            };
+            if meta.file_type().is_symlink() {
+                rejected.push(format!("{member_shown}: is now a symlink"));
+                continue;
+            }
+            // In each branch, in order: the denylist (through the guard), then
+            // the canonical spelling, then the row's own root. Each can only
+            // narrow what came before it.
+            if meta.is_dir() {
+                let dir = match safety::guard_dir(member, &cfg.home, DirLimits::default()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        rejected.push(format!("{member_shown}: {e}"));
+                        continue;
+                    }
+                };
+                if dir.as_path().as_os_str() != member.as_os_str() {
+                    rejected.push(format!(
+                        "{member_shown}: resolves to {} — not the directory that was listed",
+                        dir.as_path().display()
+                    ));
+                    continue;
+                }
+                if !safety::allowlist::is_allowed(dir.as_path(), &confine) {
+                    rejected.push(format!("{member_shown}: outside its own profile"));
+                    continue;
+                }
+                granted_dirs.push(dir.clone());
+                dirs.push(PlannedDirAction {
+                    dir,
+                    category: privacy_category(row.class).to_string(),
+                });
+            } else {
+                let safe = match safety::guard(member, &cfg.home) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        rejected.push(format!("{member_shown}: {e}"));
+                        continue;
+                    }
+                };
+                if safe.as_path().as_os_str() != member.as_os_str() {
+                    rejected.push(format!(
+                        "{member_shown}: resolves to {safe} — not the file that was listed"
+                    ));
+                    continue;
+                }
+                if !safety::allowlist::is_allowed(safe.as_path(), &confine) {
+                    rejected.push(format!("{member_shown}: outside its own profile"));
+                    continue;
+                }
+                granted.push(safe.clone());
+                actions.push(PlannedAction {
+                    path: safe,
+                    size_bytes: meta.len(),
+                    disposal: Disposal::Trash,
+                    category: privacy_category(row.class).to_string(),
+                });
+            }
+        }
+    }
+
+    if !rejected.is_empty() {
+        let shown: Vec<&str> = rejected.iter().take(3).map(|s| s.as_str()).collect();
+        let more = rejected.len().saturating_sub(shown.len());
+        let suffix = if more > 0 {
+            format!(" (and {more} more)")
+        } else {
+            String::new()
+        };
+        return refuse_and_record(
+            audit,
+            format!(
+                "refused: {} of {} selected items could not be acted on, so nothing was \
+                 touched. Scan again and review. First problems: {}{}",
+                rejected.len(),
+                paths.len(),
+                shown.join("; "),
+                suffix
+            ),
+        );
+    }
+
+    // Drift is measured against what the sheet showed — rows and their sizes.
+    if let Some(exp) = expected {
+        if let Some(why) = selection_drifted(selected_rows, selected_bytes, exp) {
+            return refuse_and_record(
+                audit,
+                format!(
+                    "refused: {why}, so nothing was touched. This would now act on {} rows \
+                     ({} bytes), but you confirmed {} rows ({} bytes). Scan again and review.",
+                    selected_rows, selected_bytes, exp.count, exp.bytes
+                ),
+            );
+        }
+    }
+
+    let plan = Plan {
+        actions,
+        dirs,
+        skipped_protected: 0,
+    };
+    let consent = Consent {
+        execute: true,
+        allow_permanent: false,
+        confirmed_mass_delete: confirm_mass_delete,
+        granted,
+        granted_dirs,
+    };
+
+    match execute(&plan, consent, &cfg.home, sink, audit) {
+        Ok(report) => Ok(CleanSummary {
+            dry_run: report.dry_run,
+            executed: report.executed,
+            refused: report.refused,
+            bytes_freed: report.bytes_executed,
+            entries_freed: report.entries_executed,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Act on a privacy selection against the real home and the system Trash.
+pub fn dispose_privacy(
+    paths: Vec<String>,
+    acknowledged: Acknowledged,
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+) -> Result<CleanSummary, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    let audit_path = default_audit_path().map_err(|e| e.to_string())?;
+    let mut audit = AuditLog::open(&audit_path).map_err(|e| e.to_string())?;
+    dispose_privacy_with_sink(
+        &privacy::PrivacyConfig::new(home),
+        &paths,
+        acknowledged,
         expected,
         confirm_mass_delete,
         &SystemSink,

@@ -291,7 +291,7 @@ pub fn execute(
                         a.path.as_path(),
                         a.size_bytes,
                         None,
-                        note_for(auth),
+                        note_for(auth, &a.category),
                     )?;
                     report.planned += 1;
                 }
@@ -319,7 +319,7 @@ pub fn execute(
                         d.dir.as_path(),
                         d.dir.bytes(),
                         Some(d.dir.entries() as u64),
-                        Some(GRANT_DIR_NOTE.to_string()),
+                        Some(grant_note(GRANT_DIR_NOTE, &d.category)),
                     )?;
                     report.planned += 1;
                     report.entries_planned = report
@@ -383,7 +383,7 @@ pub fn execute(
             )?;
             continue;
         }
-        let note = note_for(auth);
+        let note = note_for(auth, &a.category);
 
         // Grants widen *where* we may act, never *how*.
         //
@@ -554,7 +554,7 @@ pub fn execute(
                     fresh.as_path(),
                     fresh.bytes(),
                     Some(fresh.entries() as u64),
-                    Some(GRANT_DIR_NOTE.to_string()),
+                    Some(grant_note(GRANT_DIR_NOTE, &d.category)),
                 )?;
             }
             Err(e) => {
@@ -583,8 +583,19 @@ const GRANT_NOTE: &str = "user-granted path outside the allowlist";
 
 /// Audit note for a directory disposed of by grant. Distinct from
 /// [`GRANT_NOTE`] so the log tells one file from a whole tree at a glance.
-const GRANT_DIR_NOTE: &str =
-    "user-granted directory (uninstaller leftover), moved to the Trash as one recoverable unit";
+///
+/// It used to name the Uninstaller, which was true while that was the only
+/// caller and became a falsehood the moment a second module planned a
+/// directory action: a browser cache would have been logged as an uninstaller
+/// leftover. The action's own category is appended instead, so the log says
+/// which module — and, for Privacy, which consequence the user acknowledged —
+/// authorized each line.
+const GRANT_DIR_NOTE: &str = "user-granted directory, moved to the Trash as one recoverable unit";
+
+/// The note a granted action carries, naming the category that authorized it.
+fn grant_note(base: &str, category: &str) -> String {
+    format!("{base} [{category}]")
+}
 
 /// Refusal reason for a *file* action that names a directory. See
 /// [`authorize`] for why that is a blanket refusal rather than a
@@ -676,9 +687,9 @@ fn authorize_dir(fresh: &SafeDir, granted: &[SafeDir]) -> Result<(), &'static st
 
 /// The audit note an authorization deserves. `Refused` never reaches here —
 /// refusals carry their own reason string through [`refuse`].
-fn note_for(auth: Authorization) -> Option<String> {
+fn note_for(auth: Authorization, category: &str) -> Option<String> {
     match auth {
-        Authorization::Granted => Some(GRANT_NOTE.to_string()),
+        Authorization::Granted => Some(grant_note(GRANT_NOTE, category)),
         _ => None,
     }
 }

@@ -8,8 +8,8 @@ use tauri::{AppHandle, Emitter};
 use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
 use macclean_gui_core::{
-    self as gui, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto, Permissions,
-    SpaceLensReportDto, UninstallReportDto, UninstallTarget,
+    self as gui, Acknowledged, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto,
+    Permissions, PrivacyReportDto, SpaceLensReportDto, UninstallReportDto, UninstallTarget,
 };
 
 /// Event channel the frontend listens on for scan progress.
@@ -194,6 +194,38 @@ async fn dispose_leftovers(
     .map_err(|e| format!("dispose-leftovers task failed: {e}"))?
 }
 
+/// Read-only: what browsers remember. Takes nothing from the frontend, because
+/// there is nothing it could usefully say — the browser table and the
+/// recognised names are the module's own, and a frontend that could add to
+/// either would be able to name a file this tool has never vetted.
+#[tauri::command]
+async fn privacy_report() -> Result<PrivacyReportDto, String> {
+    tauri::async_runtime::spawn_blocking(gui::privacy_report)
+        .await
+        .map_err(|e| format!("privacy task failed: {e}"))?
+}
+
+/// Move individually-chosen privacy rows to the Trash.
+///
+/// Like `dispose_leftovers`, the ceiling is the `offerable` rows of a scan run
+/// inside the call. On top of that, `acknowledged` is a second consent axis:
+/// cookies, history and sessions each need their own explicit word, and it
+/// defaults to granting none — so a frontend that loses its checkbox state
+/// refuses rather than proceeds.
+#[tauri::command]
+async fn dispose_privacy(
+    paths: Vec<String>,
+    acknowledged: Acknowledged,
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+) -> Result<CleanSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        gui::dispose_privacy(paths, acknowledged, expected, confirm_mass_delete)
+    })
+    .await
+    .map_err(|e| format!("dispose-privacy task failed: {e}"))?
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -227,6 +259,8 @@ fn main() {
             installed_apps,
             uninstall_leftovers,
             dispose_leftovers,
+            privacy_report,
+            dispose_privacy,
             space_lens
         ])
         .run(tauri::generate_context!())

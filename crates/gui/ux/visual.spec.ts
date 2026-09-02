@@ -1064,9 +1064,9 @@ test("what macOS manages is a table with no controls", async ({ page }) => {
   await expect(boxes).toHaveCount(5); // 4 offerable + 1 set aside; never the 3 system jobs
   for (const b of await boxes.all()) await expect(b).not.toBeChecked();
 
-  await expect(page.getByText("com.vendor.driver")).toHaveCount(0);
+  await expect(page.getByText("com.vendor1.driver")).toHaveCount(0);
   await page.getByRole("button", { name: /more macOS manages/ }).click();
-  await expect(page.getByText("com.vendor.driver")).toBeVisible();
+  await expect(page.getByText("com.vendor1.driver")).toBeVisible();
 });
 
 /** The disclosure that reframes the count sits above it, with its route. */
@@ -1103,7 +1103,11 @@ test("startup done", async ({ page }, testInfo) => {
     .check();
   await page.getByRole("button", { name: /Set 1 aside…/ }).click();
   await page.getByRole("button", { name: "Set aside", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "1 set aside" })).toBeVisible();
+  // The figure is its own mono line above the heading, as the house does it.
+  await expect(page.getByRole("heading", { name: "set aside" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Put it back" }),
+  ).toBeVisible();
   await capture(page, "startup-done", testInfo.project.name);
 });
 

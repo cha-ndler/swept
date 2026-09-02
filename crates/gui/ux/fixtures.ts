@@ -837,30 +837,27 @@ export const SAMPLE_STARTUP: StartupReport = {
       path: `${STORE}/com.example.reader.autostart.plist`,
     }),
   ],
+  // 26 of them, because that is the ratio the screen is built around: on a
+  // reference machine this app can act on 5 of 31 launchd jobs. Rendering the
+  // design at 5:3 would have shown a shape the real thing never has.
   system: [
-    {
-      label: "com.vendor.driver",
-      program: "/Library/PrivilegedHelperTools/vendor-driver",
-      path: "/Library/LaunchDaemons/com.vendor.driver.plist",
+    ...Array.from({ length: 10 }, (_, i) => ({
+      label: `com.vendor${i + 1}.agent`,
+      program: `/Library/Application Support/Vendor ${i + 1}/agent`,
+      path: `/Library/LaunchAgents/com.vendor${i + 1}.agent.plist`,
+      directory: "/Library/LaunchAgents",
+    })),
+    ...Array.from({ length: 16 }, (_, i) => ({
+      label: `com.vendor${i + 1}.driver`,
+      program: `/Library/PrivilegedHelperTools/vendor${i + 1}-driver`,
+      path: `/Library/LaunchDaemons/com.vendor${i + 1}.driver.plist`,
       directory: "/Library/LaunchDaemons",
-    },
-    {
-      label: "com.vendor.agent",
-      program: "/Library/Application Support/Vendor/agent",
-      path: "/Library/LaunchAgents/com.vendor.agent.plist",
-      directory: "/Library/LaunchAgents",
-    },
-    {
-      label: "com.othervendor.updater",
-      program: "/Library/Application Support/Other/updater",
-      path: "/Library/LaunchAgents/com.othervendor.updater.plist",
-      directory: "/Library/LaunchAgents",
-    },
+    })),
   ],
   sources: [
     { path: LA, access: "readable", count: 5 },
-    { path: "/Library/LaunchAgents", access: "readable", count: 2 },
-    { path: "/Library/LaunchDaemons", access: "readable", count: 1 },
+    { path: "/Library/LaunchAgents", access: "readable", count: 10 },
+    { path: "/Library/LaunchDaemons", access: "readable", count: 16 },
   ],
   starts_at_login: 2,
   modern_store_present: true,

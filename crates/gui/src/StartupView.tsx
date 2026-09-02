@@ -59,6 +59,9 @@ export default function StartupView({
   const [phase, setPhase] = useState<Phase>("none");
   const [actionError, setActionError] = useState("");
   const [summary, setSummary] = useState<StartupSummary | null>(null);
+  // What the done state acted on. Kept because `load()` clears the selection,
+  // and because undoing needs the names as they are *now* — in the store.
+  const [acted, setActed] = useState<string[]>([]);
   const [showSystem, setShowSystem] = useState(false);
 
   const load = useCallback(async () => {
@@ -69,7 +72,9 @@ export default function StartupView({
     try {
       const r = await call<StartupReport>("startup_report");
       setReport(r);
-      onCount?.(r.starts_at_login);
+      // `—` rather than `0`, like every sibling: a bare zero in that slot reads
+      // as a measurement where the others read as an absence.
+      onCount?.(r.starts_at_login === 0 ? null : r.starts_at_login);
     } catch (e) {
       setReport(null);
       setError(describeError(e));
@@ -114,12 +119,34 @@ export default function StartupView({
         },
       );
       setSummary(s);
+      setActed(
+        chosen.map((r) =>
+          verb === "aside"
+            ? `${report?.store ?? ""}/${r.path.split("/").pop() ?? ""}`
+            : r.path,
+        ),
+      );
       setPhase("done");
       onCount?.(null);
     } catch (e) {
       setActionError(describeError(e));
       setPhase("confirm");
     }
+  }
+
+  /** Put back exactly what was just set aside. */
+  async function undo() {
+    setPhase("working");
+    try {
+      await call<StartupSummary>("put_back", {
+        paths: acted,
+        expected: { count: acted.length, bytes: 0 },
+      });
+    } catch {
+      // The list is stale either way; looking again is the honest next step.
+    }
+    await load();
+    setPhase("none");
   }
 
   return (
@@ -142,7 +169,13 @@ export default function StartupView({
           <ErrorState message={error} onRetry={() => void load()} />
         )}
         {phase === "done" && summary && (
-          <Done summary={summary} verb={verb} onAgain={() => void load()} />
+          <Done
+            summary={summary}
+            verb={verb}
+            store={report?.store ?? ""}
+            onUndo={() => void undo()}
+            onAgain={() => void load()}
+          />
         )}
         {phase !== "done" && report && (
           <Results
@@ -158,10 +191,19 @@ export default function StartupView({
         )}
       </div>
 
-      {phase !== "done" && report && chosen.length > 0 && (
+      {phase !== "done" && report && (
         <ActionBar
           count={chosen.length}
           verb={verb}
+          ratio={
+            report.starts_at_login +
+              report.items.length -
+              report.starts_at_login +
+              report.system.length >
+            0
+              ? `${report.items.length} of ${report.items.length + report.system.length} · the rest macOS manages`
+              : null
+          }
           onReview={() => {
             setActionError("");
             setPhase("confirm");
@@ -238,19 +280,26 @@ function Results({
           </h2>
           {report.items.length > report.starts_at_login && (
             <p className="text-muted text-caption">
-              {(report.items.length - report.starts_at_login).toLocaleString()}{" "}
-              more here that do not
+              <span className="font-mono tabular-nums">
+                {(report.items.length - report.starts_at_login).toLocaleString()}
+              </span>{" "}
+              more here that do not start at login
             </p>
           )}
         </div>
-        <span className="text-muted mt-1 inline-flex flex-none items-center gap-1.5 rounded-full border border-separator px-2 py-0.5 text-micro font-semibold uppercase">
-          <span
-            className="h-[7px] w-[7px] rounded-full bg-success"
-            aria-hidden="true"
-          />
-          Reversible
-        </span>
+        {/* Nothing is reversible when there is nothing to reverse. */}
+        {report.items.length > 0 && (
+          <span className="text-muted mt-1 inline-flex flex-none items-center gap-1.5 rounded-full border border-separator px-2 py-0.5 text-micro font-semibold uppercase">
+            <span
+              className="h-[7px] w-[7px] rounded-full bg-success"
+              aria-hidden="true"
+            />
+            Preview only · reversible
+          </span>
+        )}
       </div>
+
+      <Composition report={report} />
 
       {report.partial && (
         <div className="mt-3">
@@ -329,8 +378,138 @@ function Results({
         />
       )}
 
+      {report.sources.length > 0 && (
+        <p className="text-subtle mt-6 px-4 text-caption">
+          Looked at{" "}
+          {report.sources
+            .filter((x) => x.access === "readable")
+            .map((x) => `${tilde(x.path)} (${x.count})`)
+            .join(" · ")}
+          .
+        </p>
+      )}
+
       <NotThisApp />
     </>
+  );
+}
+
+/**
+ * The ratio, as an object rather than three paragraphs of apology.
+ *
+ * This screen's whole thesis is that it can act on a small share of what
+ * starts your Mac, and until this existed that was carried by prose alone —
+ * the numbers "5" and "31" appeared nowhere, and three of the four sentences
+ * that made the point sat *below* the list. One track puts it above the fold
+ * and gives the count a denominator.
+ *
+ * Counts, not sizes: a launch agent's size says nothing about what it does.
+ * And the modern store deliberately gets **no segment** — its size is
+ * unreadable, so drawing a width for it would be inventing a figure. It stays
+ * a sentence.
+ */
+function Composition({ report }: { report: StartupReport }) {
+  const atLogin = report.starts_at_login;
+  const alsoHere = Math.max(report.items.length - atLogin, 0);
+  const managed = report.system.length;
+  const total = atLogin + alsoHere + managed;
+  if (total === 0) return null;
+
+  const pct = (n: number) => (n / total) * 100;
+  const seg = "block h-full";
+  // Measured on the Uninstaller's track at ~4:1 against the window, and reused
+  // rather than re-derived: two hatches that drifted would be two claims about
+  // one idea.
+  const hatch = {
+    backgroundImage:
+      "repeating-linear-gradient(135deg, rgb(var(--text-3) / .7) 0 2px, transparent 2px 5px)",
+  };
+  const hatchKey = {
+    backgroundImage:
+      "repeating-linear-gradient(135deg, rgb(var(--text-3) / .7) 0 1px, transparent 1px 3px)",
+  };
+
+  return (
+    <div className="mt-4">
+      <div
+        className="flex h-2 w-full gap-px overflow-hidden rounded-full bg-white/[.05]"
+        role="img"
+        aria-label={`${atLogin} of ${total} start when you log in; ${alsoHere} more are kept as files here; ${managed} are managed by macOS and cannot be changed`}
+      >
+        {atLogin > 0 && (
+          <span
+            className={`${seg} bg-accentGraphic`}
+            style={{ width: `${pct(atLogin)}%`, minWidth: "3px" }}
+          />
+        )}
+        {alsoHere > 0 && (
+          <span
+            className={`${seg} bg-[rgb(var(--text-3))]`}
+            style={{ width: `${pct(alsoHere)}%`, minWidth: "3px" }}
+          />
+        )}
+        {managed > 0 && (
+          <span
+            className={seg}
+            style={{ width: `${pct(managed)}%`, minWidth: "3px", ...hatch }}
+          />
+        )}
+      </div>
+      <ul className="text-muted mt-2 flex flex-wrap gap-x-4 gap-y-1 text-caption">
+        <Key
+          swatch={
+            <span className="h-[7px] w-[7px] rounded-full bg-accentGraphic" />
+          }
+          label="starts at login"
+          count={atLogin}
+        />
+        {alsoHere > 0 && (
+          <Key
+            swatch={
+              <span className="h-[7px] w-[7px] rounded-full bg-[rgb(var(--text-3))]" />
+            }
+            label="here, but not at login"
+            count={alsoHere}
+          />
+        )}
+        {managed > 0 && (
+          <Key
+            swatch={
+              <span className="h-2 w-3.5 rounded-[2px]" style={hatchKey} />
+            }
+            label="macOS manages"
+            count={managed}
+          />
+        )}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * One series: swatch, label, count. All three inside a single `<li>`.
+ *
+ * They were siblings before, so the count spans sat directly in the `<ul>` —
+ * which the accessibility gate correctly rejected, and which also said the
+ * legend had six entries when it has three.
+ */
+function Key({
+  swatch,
+  label,
+  count,
+}: {
+  swatch: ReactNode;
+  label: string;
+  count: number;
+}) {
+  return (
+    <li className="flex items-center gap-1.5">
+      <span className="flex-none" aria-hidden="true">
+        {swatch}
+      </span>
+      {label}
+      <span className="font-mono tabular-nums">{count}</span>
+    </li>
   );
 }
 
@@ -386,7 +565,15 @@ function Row({
 }) {
   // A row's own reason earns the line; otherwise the program, which is what
   // tells a person what this actually is.
-  const line = item.withheld ?? item.program ?? tilde(item.path);
+  // The reconciliation belongs on screen, not in a `title`. A row saying both
+  // "marked disabled in its file" and "at login" is contradictory until you
+  // read why, and a tooltip is invisible to keyboard, to touch, and to every
+  // screenshot a reviewer looks at.
+  const line = item.withheld
+    ? item.withheld
+    : item.plist_says_disabled
+      ? "its file says disabled; macOS keeps the real answer where this app cannot read it"
+      : (item.program ?? tilde(item.path));
 
   const body = (
     <>
@@ -403,10 +590,7 @@ function Row({
             </span>
           )}
           {item.plist_says_disabled && (
-            <span
-              className="text-muted flex-none rounded-full bg-white/[.05] px-2 text-micro font-semibold uppercase leading-4"
-              title="Its file carries a Disabled key. macOS keeps the real answer in a database this app cannot read, so the two can disagree."
-            >
+            <span className="text-muted flex-none rounded-full bg-white/[.05] px-2 text-micro font-semibold uppercase leading-4">
               marked disabled in its file
             </span>
           )}
@@ -419,10 +603,15 @@ function Row({
         </span>
       </span>
       <span
-        className={`w-[150px] flex-none text-right text-caption ${CLASS_TONE[item.class]}`}
-        title={item.describes}
+        className={`w-[150px] flex-none text-right text-caption ${
+          verb === "back" ? "text-subtle" : CLASS_TONE[item.class]
+        }`}
       >
-        {verb === "back" ? "set aside" : CLASS_LABEL[item.class]}
+        {/* The column is a *when*. "Set aside" is a state, and rendering it
+            here in accent blue made it read as an actionable class — the same
+            colour as "at login" and the same word as the primary button, on a
+            row that has a checkbox. */}
+        {verb === "back" ? `was: ${CLASS_LABEL[item.class]}` : CLASS_LABEL[item.class]}
       </span>
     </>
   );
@@ -486,7 +675,9 @@ function SystemInventory({
         aria-expanded={open}
         className="text-muted flex items-center gap-1.5 rounded-control px-4 text-micro font-semibold uppercase transition-colors duration-fast ease-mac hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accentText"
       >
-        <span className={open ? "rotate-90 transition-transform" : "transition-transform"}>
+        <span
+          className={`transition-transform duration-fast ease-mac ${open ? "rotate-90" : ""}`}
+        >
           <ChevronIcon size={11} />
         </span>
         {items.length} more macOS manages
@@ -587,31 +778,55 @@ function NotThisApp() {
 function ActionBar({
   count,
   verb,
+  ratio,
   onReview,
 }: {
   count: number;
   verb: Verb;
+  ratio: string | null;
   onReview: () => void;
 }) {
   return (
     <div className="flex flex-none items-center justify-between gap-4 border-t border-separator bg-surface px-6 py-3">
+      {/* Always mounted, matching the siblings. A bar that appears only once
+          something is ticked cannot tell a first-time reader what the screen
+          does — and an `aria-live` region mounted together with its content is
+          routinely not announced at all. */}
       <div className="min-w-0" aria-live="polite">
-        <p className="text-body font-medium">
-          {count.toLocaleString()} selected
-        </p>
-        {/* The timing caveat lives on the sheet, at the moment of consent —
-            saying it here too put the same sentence on screen twice. */}
-        <p className="text-muted text-caption">
-          Nothing is removed. You can put it back.
-        </p>
+        {count === 0 ? (
+          <>
+            <p className="text-body font-medium">Nothing selected</p>
+            <p className="text-muted text-caption">
+              Tick each item you want set aside. mac-cleaner never picks these
+              for you.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="font-mono text-emph font-semibold tabular-nums">
+              {count.toLocaleString()}
+            </p>
+            <p className="text-muted text-caption">
+              selected · nothing is removed, and you can put it back
+            </p>
+          </>
+        )}
+        {count === 0 && ratio && (
+          <p className="text-subtle mt-0.5 font-mono text-caption tabular-nums">
+            {ratio}
+          </p>
+        )}
       </div>
       <button
         onClick={onReview}
-        className="flex-none whitespace-nowrap rounded-control bg-accent px-4 py-2 text-body font-semibold text-white transition-colors duration-fast ease-mac"
+        disabled={count === 0}
+        className="flex-none whitespace-nowrap rounded-control bg-accent px-4 py-2 text-body font-semibold text-white transition-colors duration-fast ease-mac disabled:cursor-not-allowed disabled:border disabled:border-separator disabled:bg-surface2 disabled:text-subtle"
       >
-        {verb === "aside"
-          ? `Set ${count.toLocaleString()} aside…`
-          : `Put ${count.toLocaleString()} back…`}
+        {count === 0
+          ? "Set aside…"
+          : verb === "aside"
+            ? `Set ${count.toLocaleString()} aside…`
+            : `Put ${count.toLocaleString()} back…`}
       </button>
     </div>
   );
@@ -670,10 +885,24 @@ function ConfirmSheet({
                   ? `Set ${rows.length} aside?`
                   : `Put ${rows.length} back?`}
             </h2>
+            {/* Gated on `!error`. This line rendered outside the error branch,
+                so a refusal showed "Nothing was changed" with "They stop
+                starting when you log in." directly beneath it — the failure
+                dialog asserting the success outcome. */}
             <p className="text-muted mt-1 text-body">
-              {aside
-                ? "They stop starting when you log in."
-                : "They start again when you log in."}
+              {error ? (
+                "Your login items are exactly as they were."
+              ) : aside ? (
+                <>
+                  {rows.length === 1 ? "It stops" : "They stop"} starting when
+                  you log in.
+                </>
+              ) : (
+                <>
+                  {rows.length === 1 ? "It starts" : "They start"} again when
+                  you log in.
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -778,25 +1007,33 @@ function sentence(raw: string): string {
 function Done({
   summary,
   verb,
+  store,
+  onUndo,
   onAgain,
 }: {
   summary: StartupSummary;
   verb: Verb;
+  store: string;
+  onUndo: () => void;
   onAgain: () => void;
 }) {
+  const aside = verb === "aside";
   return (
-    <Outcome
-      tone="success"
-      icon={<ShieldIcon size={20} />}
-      title={
-        verb === "aside"
-          ? `${summary.moved} set aside`
-          : `${summary.moved} put back`
-      }
-      body={
-        <>
+    <div className="mx-auto mt-10 max-w-md">
+      <Group className="px-6 py-7 text-center">
+        <span className="mx-auto grid h-11 w-11 place-items-center rounded-card bg-success/[.14] text-success">
+          <ShieldIcon size={20} />
+        </span>
+        <p className="mt-3 font-mono text-display font-semibold tabular-nums">
+          {summary.moved}
+        </p>
+        <h2 className="mt-1 text-title font-semibold">
+          {aside ? "set aside" : "put back"}
+        </h2>
+        <p className="text-muted mx-auto mt-1.5 max-w-sm text-body leading-relaxed">
           It takes effect at your next login — anything already running keeps
-          running until you log out. Nothing was removed.
+          running until you log out. Nothing was removed, and every item is in
+          the audit log.
           {summary.refused > 0 && (
             <>
               {" "}
@@ -805,10 +1042,33 @@ function Done({
               check and left alone.
             </>
           )}
-        </>
-      }
-      action={{ label: "Look again", onClick: onAgain }}
-    />
+        </p>
+        {/* The moment someone wants to go and find the folder is this one. */}
+        {aside && store && (
+          <p className="text-subtle mx-auto mt-2 max-w-sm break-all font-mono text-caption">
+            {tilde(store)}
+          </p>
+        )}
+        <div className="mt-4 flex items-center justify-center gap-1">
+          {/* The verb's entire justification is that it can be undone, so the
+              moment of regret gets a control rather than instructions. */}
+          {aside && summary.moved > 0 && (
+            <button
+              className="rounded-control px-4 py-2 text-body font-medium text-muted transition-colors duration-fast ease-mac hover:text-text"
+              onClick={onUndo}
+            >
+              Put it back
+            </button>
+          )}
+          <button
+            className="rounded-control border border-border bg-surface2 px-3 py-1 text-body font-medium text-text transition-colors duration-fast ease-mac"
+            onClick={onAgain}
+          >
+            Look again
+          </button>
+        </div>
+      </Group>
+    </div>
   );
 }
 
@@ -894,7 +1154,10 @@ function Skeleton() {
             className="h-[7px] w-[7px] rounded-full bg-success"
             aria-hidden="true"
           />
-          Read-only · nothing is changed by a scan
+          <span className="hidden md:inline">
+            Read-only · nothing is changed by a scan
+          </span>
+          <span className="md:hidden">Read-only</span>
         </span>
       </div>
       <Group className="mt-6">

@@ -10,6 +10,25 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **Privacy discovery** — a read-only search of what twelve browsers remember
+  (Safari, Firefox, and ten of the Chromium family), across cookies, history,
+  session, website storage and in-profile caches. The trust kernel protects
+  nothing on this surface — `key4.db` sits in the same flat directory as
+  `cookies.sqlite`, and `Login Data` is a byte-adjacent sibling of `Cookies` —
+  so recognition is an inclusion list consulted by *lookup*: a constant name
+  joined onto a corroborated root, never a listing that is filtered, so an
+  unrecognised file is never seen rather than merely rejected. No string parsed
+  out of a file is ever joined onto a path: profiles come from `read_dir` plus
+  corroboration, not from `Local State` or `profiles.ini`. A database and its
+  `-journal`/`-shm`/`-wal` are one row, ordered so the database goes last. A
+  browser that looks like it is running withholds its cookies, history and
+  sessions; website storage, Safari's container paths and Firefox history are
+  shown and never offered. Nothing under `~/Library/Caches` is emitted, because
+  the ordinary cleaner already covers it. Nothing is removed and no `SafePath`
+  is minted. (#42)
+- **`macclean privacy`** — a read-only preview of the above. There is no
+  `--execute`: acting on any of it takes a per-path grant that only the app can
+  ask for. (#42)
 - **Applications module** — the Uninstaller's screen. Pick an installed app
   (its identity is recorded before you remove it) or name one already gone;
   review what it left behind, with rows the tool will not offer shown as

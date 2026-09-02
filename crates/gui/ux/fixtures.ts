@@ -8,6 +8,9 @@ import type {
   PrivacyReport,
   PrivacyRow,
   ScanReport,
+  StartupItem,
+  StartupReport,
+  StartupSummary,
   SpaceLensReport,
   SpaceNode,
   UninstallReport,
@@ -771,4 +774,117 @@ export const SAMPLE_PRIVACY_SUMMARY: CleanSummary = {
   entries_freed: privacyOfferable
     .filter((r) => r.is_dir)
     .reduce((n, r) => n + r.file_count, 0),
+};
+
+// --- Startup ---------------------------------------------------------------
+//
+// Shaped after the reference machine, with every name invented: 5 items this
+// app can act on against 26 it can only read, and the modern store present but
+// unreadable. That ratio is the design problem the screen is built around.
+
+const LA = `${L}/LaunchAgents`;
+const STORE = `${LA}/Moved aside by mac-cleaner`;
+
+function sitem(
+  label: string,
+  cls: StartupItem["class"],
+  over: Partial<StartupItem> = {},
+): StartupItem {
+  const describes = {
+    starts_at_login: "starts when you log in",
+    starts_on_demand: "starts when something asks for it",
+    broken: "its program is missing, so it fails at every login",
+    unknown: "this app cannot tell when it starts",
+  }[cls];
+  return {
+    label,
+    program: `/Applications/${label.split(".").pop()}.app/Contents/MacOS/helper`,
+    class: cls,
+    describes,
+    run_at_load: cls === "starts_at_login",
+    plist_says_disabled: false,
+    moved_aside: false,
+    duplicate_label: false,
+    offerable: true,
+    withheld: null,
+    path: `${LA}/${label}.plist`,
+    ...over,
+  };
+}
+
+export const SAMPLE_STARTUP: StartupReport = {
+  items: [
+    sitem("com.acme.notes.helper", "starts_at_login"),
+    sitem("com.contoso.sync", "starts_at_login", {
+      plist_says_disabled: true,
+    }),
+    sitem("com.northwind.updater", "starts_on_demand"),
+    sitem("com.acme.oldtool", "broken", {
+      program: "/Applications/Old Tool.app/Contents/MacOS/oldtool",
+    }),
+    // Shown and never offered: a file this app cannot read as a plist.
+    sitem("settings-backup", "unknown", {
+      program: null,
+      offerable: false,
+      withheld:
+        "this file could not be read as a property list, so this app cannot say what it launches",
+      path: `${LA}/settings-backup.txt`,
+    }),
+  ],
+  moved_aside: [
+    sitem("com.example.reader.autostart", "starts_at_login", {
+      moved_aside: true,
+      path: `${STORE}/com.example.reader.autostart.plist`,
+    }),
+  ],
+  system: [
+    {
+      label: "com.vendor.driver",
+      program: "/Library/PrivilegedHelperTools/vendor-driver",
+      path: "/Library/LaunchDaemons/com.vendor.driver.plist",
+      directory: "/Library/LaunchDaemons",
+    },
+    {
+      label: "com.vendor.agent",
+      program: "/Library/Application Support/Vendor/agent",
+      path: "/Library/LaunchAgents/com.vendor.agent.plist",
+      directory: "/Library/LaunchAgents",
+    },
+    {
+      label: "com.othervendor.updater",
+      program: "/Library/Application Support/Other/updater",
+      path: "/Library/LaunchAgents/com.othervendor.updater.plist",
+      directory: "/Library/LaunchAgents",
+    },
+  ],
+  sources: [
+    { path: LA, access: "readable", count: 5 },
+    { path: "/Library/LaunchAgents", access: "readable", count: 2 },
+    { path: "/Library/LaunchDaemons", access: "readable", count: 1 },
+  ],
+  starts_at_login: 2,
+  modern_store_present: true,
+  store: STORE,
+  deferred: [
+    [
+      "~/Library/Preferences/com.apple.loginitems.plist",
+      "the legacy login-items store, superseded on modern macOS",
+    ],
+  ],
+  caveats: [],
+  skipped_unrepresentable: 0,
+  partial: false,
+};
+
+/** Nothing kept as a file — the state a modern Mac is most likely to be in. */
+export const SAMPLE_STARTUP_EMPTY: StartupReport = {
+  ...SAMPLE_STARTUP,
+  items: [],
+  moved_aside: [],
+  starts_at_login: 0,
+};
+
+export const SAMPLE_STARTUP_SUMMARY: StartupSummary = {
+  moved: 1,
+  refused: 0,
 };

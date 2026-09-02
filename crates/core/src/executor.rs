@@ -1436,6 +1436,49 @@ mod stash_tests {
     // and because a future caller building plans differently would make the
     // denylist half reachable again.
 
+    /// `create_new` is the load-bearing part of the note, and the caller-level
+    /// test could not see it: the second run skips the whole block at
+    /// `!store.exists()`, so it passed because of that guard rather than
+    /// because of the flag. Here the function is called directly.
+    #[test]
+    fn the_note_is_never_written_over_one_that_is_already_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = std::fs::canonicalize(dir.path()).unwrap();
+        let note = store.join(crate::loginitems::STORE_NOTE_NAME);
+        std::fs::write(&note, b"my own notes").unwrap();
+
+        write_store_note(&store);
+
+        assert_eq!(std::fs::read(&note).unwrap(), b"my own notes");
+    }
+
+    /// The store check that actually earns its place, and the one no test had
+    /// reached in three rounds.
+    ///
+    /// `a_store_that_is_a_symlink_refuses_the_whole_run` is caught by
+    /// `!meta.is_dir()` — `symlink_metadata` never reports a symlink as a
+    /// directory — so neither named check was doing the work anywhere. The
+    /// unique job of the canonical-equality check is a store reached through a
+    /// symlinked *parent*: with `~/Library/LaunchAgents` a link, the store is a
+    /// real directory, its canonical parent matches, and its name is right, so
+    /// every other check passes and the run would operate in the redirected
+    /// folder.
+    #[test]
+    fn a_store_reached_through_a_symlinked_parent_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(home.join("Library")).unwrap();
+        let elsewhere = home.join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join(crate::loginitems::STORE_DIR_NAME)).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, home.join("Library/LaunchAgents")).unwrap();
+
+        let store = crate::loginitems::store_dir(&home);
+        assert!(
+            validate_store(&store, &home).is_err(),
+            "a store reached through a symlinked parent is not the store"
+        );
+    }
+
     /// The store's identity is checked once, for the whole run, and an absent
     /// store is allowed because it is created on the first move.
     #[test]

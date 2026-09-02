@@ -113,8 +113,16 @@ pub struct PlannedMove {
     /// symlinks, so a plist that was *already* a link arrives as its target —
     /// which is not itself a link and is its own canonical spelling, so no
     /// check downstream can tell. Keeping the original spelling and requiring
-    /// the two to be equal is what refuses it, and it is the same rule the
-    /// Uninstaller and Privacy state as "byte-equal to the row that was shown".
+    /// the two to be equal is what refuses it.
+    ///
+    /// Be precise about what that buys, because it is a weaker claim than the
+    /// Uninstaller's and Privacy's "byte-equal to the row that was shown". What
+    /// the type guarantees is **this acts on the file the caller named** —
+    /// `path` is derived from `as_listed` by canonicalization inside the only
+    /// constructor, so if they are equal they are the same path. It does *not*
+    /// know what the user was shown. Keeping the displayed row and the
+    /// constructed path in sync remains the caller's obligation, and the
+    /// command layer must not read this as already handled.
     as_listed: PathBuf,
     size_bytes: u64,
     /// Which module authorized this, carried into the audit note.

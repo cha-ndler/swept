@@ -702,10 +702,16 @@ instead.**
     `IndexedDB`, `storage/default` are where a local-first web app keeps the
     user's only copy. Same posture as a container's `Documents` in M4. It is
     also the largest row on the reference machine, so the cost is visible.
-  - **Safari's container paths are shown, never offered.** No module offers a
-    path inside another app's container yet. Consequence: on recent macOS the
-    container jar is the live one, so Safari cookies may have nothing
-    offerable until that changes.
+  - **Safari's container cookie jar is offered** — reversing the conservative
+    call made when this module landed. M4's "no module offers a path inside
+    another app's container" answers a question of *ownership*: a container may
+    belong to an app that is still installed, and the entitlement that would
+    settle who owns it was in the bundle that is gone. Neither half applies to
+    Safari, which is always installed and whose browsing data the user has
+    explicitly asked to clear. Withholding it bought no safety and meant the
+    Safari half of the module could act on nothing at all on a current Mac.
+    What sits under `WebKit` is still withheld — for being website storage,
+    which is the true reason, rather than for being in a container.
   - **Firefox history is not offered at all** — not caution: `places.sqlite`
     holds the history *and* the bookmarks in one file, and separating them
     means editing rows inside a database, which is a destructive capability

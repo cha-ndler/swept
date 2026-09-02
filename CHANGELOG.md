@@ -136,6 +136,14 @@ first two modules that look outside the cleanup allowlist.
   different pictures. (#30)
 
 ### Safety
+- **Safari's own cookie jar is offered, having been withheld.** The rule it
+  inherited — no module offers a path inside another app's sandbox container —
+  answers a question of *ownership* that does not arise for an app that is
+  always installed and whose browsing data the user explicitly asked to clear.
+  Withholding it bought no safety; it only meant the Safari half of the Privacy
+  module could act on nothing at all on a current Mac. Website storage under
+  that container is still withheld, for being website storage rather than for
+  where it sits. (#46)
 - **The app stopped saying "disabled" about something it cannot know.** A
   plist's `Disabled` key is only the initial value for a job that launchd's own
   override database has never seen; that database is root-owned and unreadable

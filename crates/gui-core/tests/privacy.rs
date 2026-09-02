@@ -220,8 +220,25 @@ fn a_site_storage_row_cannot_be_disposed_of_even_when_named_directly() {
     assert!(p.join("Local Storage/leveldb/x").exists());
 }
 
+/// The shared CFNetwork jar, which is not Safari's: every non-sandboxed app on
+/// the Mac writes to it, so a row saying "Safari" would take consent against a
+/// false description. Safari's *own* jar, inside its container, is offered —
+/// this is the one that is not.
 #[test]
 fn a_withheld_row_cannot_be_disposed_of_even_when_named_directly() {
+    let (_d, cfg) = fixture();
+    let shared = cfg.home.join("Library/Cookies/Cookies.binarycookies");
+    write_sized(&shared, 100);
+
+    let mut a = audit(&cfg);
+    let err = dispose(&cfg, &[s(&shared)], everything(), &mut a).unwrap_err();
+    assert!(err.contains("not something this scan offers"));
+    assert!(shared.exists());
+}
+
+/// The other half of the same decision: Safari's container jar goes through.
+#[test]
+fn safaris_own_cookie_jar_can_now_be_disposed_of() {
     let (_d, cfg) = fixture();
     let jar = cfg
         .home
@@ -229,9 +246,10 @@ fn a_withheld_row_cannot_be_disposed_of_even_when_named_directly() {
     write_sized(&jar, 100);
 
     let mut a = audit(&cfg);
-    let err = dispose(&cfg, &[s(&jar)], everything(), &mut a).unwrap_err();
-    assert!(err.contains("not something this scan offers"));
-    assert!(jar.exists());
+    let summary = dispose(&cfg, &[s(&jar)], everything(), &mut a).unwrap();
+    assert_eq!(summary.executed, 1);
+    assert!(!jar.exists());
+    assert!(cfg.home.join("FixtureTrash/Cookies.binarycookies").exists());
 }
 
 /// The scan happens inside the call, so a browser that started up while the

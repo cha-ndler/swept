@@ -4,18 +4,26 @@ import CleanView from "./CleanView";
 import LargeOldView from "./LargeOldView";
 import SpaceLensView from "./SpaceLensView";
 import StartupView from "./StartupView";
+import PrivacyView from "./PrivacyView";
 import UninstallerView from "./UninstallerView";
 import {
   AppsIcon,
   FilesIcon,
   LensIcon,
+  MaskIcon,
   ShieldIcon,
   StackIcon,
   WrenchIcon,
 } from "./Shell";
 import { formatBytes } from "./format";
 
-type Module = "cleanup" | "applications" | "large-old" | "space-lens" | "startup";
+type Module =
+  | "cleanup"
+  | "applications"
+  | "large-old"
+  | "space-lens"
+  | "privacy"
+  | "startup";
 
 /**
  * The app shell: a persistent module sidebar beside a content pane.
@@ -39,6 +47,7 @@ const MODULES = [
   "applications",
   "large-old",
   "space-lens",
+  "privacy",
   "startup",
 ] as const;
 
@@ -58,6 +67,7 @@ export default function App() {
   const [leftoverBytes, setLeftoverBytes] = useState<number | null>(null);
   const [largeOldBytes, setLargeOldBytes] = useState<number | null>(null);
   const [measuredBytes, setMeasuredBytes] = useState<number | null>(null);
+  const [privacyCount, setPrivacyCount] = useState<number | null>(null);
   const [loginCount, setLoginCount] = useState<number | null>(null);
 
   function open(m: Module) {
@@ -114,7 +124,22 @@ export default function App() {
           onClick={() => open("space-lens")}
         />
 
+        {/* Protect, not Clean. The headings are about what a module is *for*:
+            Cleanup and Applications are about space, Explore is about seeing
+            the disk, and this is about what your machine remembers of you.
+            And the badge is a **count**, not bytes — nobody opens this screen
+            to reclaim 19 MiB, so a size here would be the one number that does
+            not describe why anyone came. The artboard's sidebar already shows
+            a bare count in this slot. */}
         <SideLabel>Protect</SideLabel>
+        <ModuleButton
+          icon={<MaskIcon />}
+          name="Privacy"
+          badge={privacyCount === null ? "—" : String(privacyCount)}
+          active={active === "privacy"}
+          onClick={() => open("privacy")}
+        />
+
         <ModuleButton
           icon={<WrenchIcon />}
           name="Startup"
@@ -156,6 +181,11 @@ export default function App() {
         {visited.has("space-lens") && (
           <Pane show={active === "space-lens"}>
             <SpaceLensView onTotal={setMeasuredBytes} />
+          </Pane>
+        )}
+        {visited.has("privacy") && (
+          <Pane show={active === "privacy"}>
+            <PrivacyView onCount={setPrivacyCount} />
           </Pane>
         )}
         {visited.has("startup") && (

@@ -4,6 +4,9 @@ import type {
   LargeOldReport,
   LeftoverRow,
   LoginItem,
+  PrivacyBrowser,
+  PrivacyReport,
+  PrivacyRow,
   ScanReport,
   SpaceLensReport,
   SpaceNode,
@@ -490,4 +493,262 @@ export const SAMPLE_SPACE_LENS_EMPTY: SpaceLensReport = {
   node_budget_reached: false,
   deduped_hardlinks: 0,
   partial: false,
+};
+
+// --- Privacy ---------------------------------------------------------------
+//
+// Shaped after a real run on a reference machine, with every name invented:
+// Chrome present and *running* (so its cookies, history and session are
+// withheld while its caches stay offered), Firefox present with two profiles,
+// Safari denied by Full Disk Access, and several Chromium-family vendor
+// directories that exist but hold no profile the browser ever opened.
+
+const PROF1 = `${L}/Application Support/Google/Chrome/Profile 1`;
+const PROF2 = `${L}/Application Support/Google/Chrome/Profile 2`;
+const FF = `${L}/Application Support/Firefox/Profiles/uh8x.default-release`;
+
+// The backend names the marker as an absolute path — the point being that the
+// user can go and look at a stale lock file — so the fixture carries one too,
+// and the view folds it to `~/`.
+const LIVE_REASON = `Google Chrome looks like it is running (${L}/Application Support/Google/Chrome/SingletonLock is present), and it would write this back`;
+const STORAGE_REASON =
+  "this is website storage — where a site or a local-first web app keeps data, sometimes the only copy of the user's work — so it is shown, not offered";
+export const RUNNING_BROWSER_CAVEAT =
+  "a browser looks like it is running: its caches will be rebuilt as soon as it is used again, and anything it is holding open is shown but not offered";
+const FIREFOX_HISTORY_NOTE =
+  "Firefox history is not offered: places.sqlite holds the history and the bookmarks in one file, so removing it would take the bookmarks too";
+
+function prow(
+  path: string,
+  label: string,
+  cls: PrivacyRow["class"],
+  over: Partial<PrivacyRow> = {},
+): PrivacyRow {
+  const consequence: PrivacyRow["consequence"] = {
+    cookies: "signs_you_out",
+    history: "erases_history",
+    session: "loses_open_tabs",
+    site_storage: "loses_site_data",
+    cache: "regenerable",
+  }[cls] as PrivacyRow["consequence"];
+  const offerable = over.offerable ?? true;
+  return {
+    browser: "google-chrome",
+    browser_name: "Google Chrome",
+    profile: null,
+    class: cls,
+    consequence,
+    label,
+    path,
+    member_count: 1,
+    is_dir: false,
+    size_bytes: 0,
+    file_count: 1,
+    size_is_floor: false,
+    offerable,
+    bulk_grantable: offerable && consequence === "regenerable",
+    smart_scan_eligible: offerable && consequence === "regenerable",
+    withheld: null,
+    undisposable: null,
+    ...over,
+  };
+}
+
+const PRIVACY_ROWS: PrivacyRow[] = [
+  // Chrome is running, so everything it holds open is shown and withheld.
+  prow(`${PROF1}/Cookies`, "Cookies", "cookies", {
+    profile: "Profile 1",
+    size_bytes: Math.round(1.2 * MiB),
+    offerable: false,
+    withheld: LIVE_REASON,
+  }),
+  prow(`${PROF1}/History`, "Browsing history", "history", {
+    profile: "Profile 1",
+    size_bytes: Math.round(8.9 * MiB),
+    member_count: 2,
+    file_count: 2,
+    offerable: false,
+    withheld: LIVE_REASON,
+  }),
+  prow(`${PROF1}/Sessions`, "Saved sessions", "session", {
+    profile: "Profile 1",
+    is_dir: true,
+    size_bytes: Math.round(4.5 * MiB),
+    file_count: 38,
+    offerable: false,
+    withheld: LIVE_REASON,
+  }),
+  prow(`${PROF1}/Local Storage`, "Local storage", "site_storage", {
+    profile: "Profile 1",
+    is_dir: true,
+    size_bytes: Math.round(8.1 * MiB),
+    file_count: 214,
+    offerable: false,
+    withheld: STORAGE_REASON,
+  }),
+  prow(`${PROF1}/Service Worker`, "Service workers", "site_storage", {
+    profile: "Profile 1",
+    is_dir: true,
+    size_bytes: Math.round(362 * MiB),
+    file_count: 4_106,
+    offerable: false,
+    withheld: STORAGE_REASON,
+  }),
+  prow(`${PROF1}/GPUCache`, "GPU cache", "cache", {
+    profile: "Profile 1",
+    is_dir: true,
+    size_bytes: Math.round(14.3 * MiB),
+    file_count: 62,
+  }),
+  prow(`${PROF2}/GPUCache`, "GPU cache", "cache", {
+    profile: "Profile 2",
+    is_dir: true,
+    size_bytes: Math.round(544 * KiB),
+    file_count: 9,
+  }),
+  prow(`${PROF2}/Code Cache`, "Code cache", "cache", {
+    profile: "Profile 2",
+    is_dir: true,
+    size_bytes: Math.round(21.6 * MiB),
+    file_count: 341,
+    size_is_floor: true,
+  }),
+  // Firefox is not running, so its cookies and session are on offer. Its
+  // history is not, and the report says why in its own words.
+  prow(`${FF}/cookies.sqlite`, "Cookies", "cookies", {
+    browser: "firefox",
+    browser_name: "Firefox",
+    size_bytes: Math.round(512 * KiB),
+    member_count: 2,
+    file_count: 2,
+  }),
+  prow(`${FF}/sessionstore-backups`, "Session backups", "session", {
+    browser: "firefox",
+    browser_name: "Firefox",
+    is_dir: true,
+    size_bytes: Math.round(2.1 * MiB),
+    file_count: 11,
+  }),
+  prow(`${FF}/storage/default`, "Site storage", "site_storage", {
+    browser: "firefox",
+    browser_name: "Firefox",
+    is_dir: true,
+    size_bytes: Math.round(66 * MiB),
+    file_count: 1_940,
+    offerable: false,
+    withheld: STORAGE_REASON,
+  }),
+];
+
+const privacyOfferable = PRIVACY_ROWS.filter((r) => r.offerable);
+
+const PRIVACY_BROWSERS: PrivacyBrowser[] = [
+  {
+    id: "safari",
+    name: "Safari",
+    access: "needs_full_disk_access",
+    access_detail: null,
+    profiles: 0,
+    may_be_live: false,
+    notes: [],
+  },
+  {
+    id: "google-chrome",
+    name: "Google Chrome",
+    access: "readable",
+    access_detail: null,
+    profiles: 3,
+    may_be_live: true,
+    notes: [],
+  },
+  {
+    id: "microsoft-edge",
+    name: "Microsoft Edge",
+    access: "readable",
+    access_detail: null,
+    profiles: 0,
+    may_be_live: false,
+    notes: [],
+  },
+  {
+    id: "vivaldi",
+    name: "Vivaldi",
+    access: "not_installed",
+    access_detail: null,
+    profiles: 0,
+    may_be_live: false,
+    notes: [],
+  },
+  {
+    id: "firefox",
+    name: "Firefox",
+    access: "readable",
+    access_detail: null,
+    profiles: 2,
+    may_be_live: false,
+    notes: [FIREFOX_HISTORY_NOTE],
+  },
+];
+
+export const SAMPLE_PRIVACY: PrivacyReport = {
+  rows: PRIVACY_ROWS,
+  browsers: PRIVACY_BROWSERS,
+  covered_elsewhere: [
+    {
+      path: `${L}/Caches/Google/Chrome`,
+      category: "user-caches",
+      browser: "google-chrome",
+    },
+    {
+      path: `${L}/Caches/Firefox`,
+      category: "user-caches",
+      browser: "firefox",
+    },
+  ],
+  offerable_bytes: privacyOfferable.reduce((n, r) => n + r.size_bytes, 0),
+  skipped_symlink: 4,
+  skipped_unrepresentable: 0,
+  partial: true,
+  caveats: [RUNNING_BROWSER_CAVEAT],
+};
+
+/** Nothing denied, nothing running: the state where no caveat should show. */
+export const SAMPLE_PRIVACY_COMPLETE: PrivacyReport = {
+  ...SAMPLE_PRIVACY,
+  rows: PRIVACY_ROWS.filter((r) => r.withheld !== LIVE_REASON),
+  browsers: PRIVACY_BROWSERS.map((b) =>
+    b.access === "needs_full_disk_access"
+      ? { ...b, access: "readable" as const, profiles: 1 }
+      : { ...b, may_be_live: false },
+  ),
+  skipped_symlink: 0,
+  partial: false,
+  caveats: [],
+};
+
+/** No browser left anything this screen offers. */
+export const SAMPLE_PRIVACY_EMPTY: PrivacyReport = {
+  rows: [],
+  browsers: PRIVACY_BROWSERS.map((b) => ({
+    ...b,
+    access: "readable" as const,
+    may_be_live: false,
+  })),
+  covered_elsewhere: [],
+  offerable_bytes: 0,
+  skipped_symlink: 0,
+  skipped_unrepresentable: 0,
+  partial: false,
+  caveats: [],
+};
+
+/** What `dispose_privacy` returns once the offerable rows are chosen. */
+export const SAMPLE_PRIVACY_SUMMARY: CleanSummary = {
+  dry_run: false,
+  executed: privacyOfferable.length,
+  refused: 0,
+  bytes_freed: privacyOfferable.reduce((n, r) => n + r.size_bytes, 0),
+  entries_freed: privacyOfferable
+    .filter((r) => r.is_dir)
+    .reduce((n, r) => n + r.file_count, 0),
 };

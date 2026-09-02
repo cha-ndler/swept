@@ -19,12 +19,13 @@
 use std::error::Error;
 use std::fmt;
 use std::io;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use safety::{allowlist, guard, guard_dir, DirLimits, SafeDir, SafePath};
 
 use crate::audit::{now_ms, AuditEntry, AuditLog, Disposition, Phase};
-use crate::plan::{Disposal, Plan};
+use crate::plan::{Disposal, Plan, PlannedMove, StashPlan};
 
 /// Where disposed files go. Abstracted so tests avoid the real system Trash.
 ///
@@ -784,4 +785,712 @@ fn refuse(
         entries,
         Some(note.to_string()),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Moving aside, and putting back
+//
+// The first mutation in this codebase that is neither a trash nor a disposal.
+// It lives here rather than in a module of its own because the architecture
+// says the executor is *the only mutator* — a `maintenance::` module that moved
+// files would make that sentence false, and the sentence is how a reviewer
+// knows where to look.
+//
+// What it deliberately does not share with disposal: no `Sink` (its two methods
+// carry arguments about `unlink(2)` and `EPERM` that say nothing about a move,
+// and every `execute` caller would inherit a capability none of them should
+// have), no `Plan`, no `Consent`, and no bytes-freed figure — nothing is freed.
+// ---------------------------------------------------------------------------
+
+/// The most individually-picked plists one run may move.
+///
+/// The measured surface on a reference machine is five. More than sixty-four is
+/// not a person ticking boxes, and an over-long list is refused wholesale
+/// rather than truncated — truncating would act on a different set than the
+/// caller asked for. Same reasoning as [`MAX_GRANTS`], smaller number, because
+/// the population is smaller.
+pub const MAX_STARTUP_GRANTS: usize = 64;
+
+const STASH_NOTE: &str = "moved aside, reversibly — the file still exists at";
+const RESTORE_NOTE: &str = "put back under the name it had, from";
+
+#[derive(Debug)]
+pub enum StashError {
+    /// The home is not its canonical spelling, so the denylist's home-relative
+    /// rules could not be trusted for this run.
+    Home,
+    /// The store is not a folder this app may use. Fail-closed, whole-run.
+    Store(&'static str),
+    TooManyGrants {
+        count: usize,
+        max: usize,
+    },
+    Audit(io::Error),
+}
+
+impl std::fmt::Display for StashError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StashError::Home => write!(
+                f,
+                "the home directory is not its canonical spelling, so the denylist's \
+                 home-relative rules could not be trusted for this run"
+            ),
+            StashError::Store(why) => write!(f, "the moved-aside folder {why}"),
+            StashError::TooManyGrants { count, max } => write!(
+                f,
+                "{count} granted paths is more than the {max} this run allows"
+            ),
+            StashError::Audit(e) => write!(f, "the audit log could not be written: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for StashError {}
+
+/// Where a moved-aside file is created and where a name is removed.
+///
+/// Separate from [`Sink`] so no disposal caller inherits it, and a trait rather
+/// than two free functions so the partial-failure paths are **testable** rather
+/// than argued about. A link that succeeds followed by a removal that fails is
+/// the one state this module must get right, and it cannot be provoked against
+/// a real filesystem.
+pub trait StashSink {
+    /// Create a second name for the same file. Must **fail** if `to` exists,
+    /// and must create nothing when it fails.
+    fn link(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// Remove one name. Never recursive.
+    fn unlink(&self, path: &Path) -> io::Result<()>;
+}
+
+pub struct SystemStashSink;
+
+impl StashSink for SystemStashSink {
+    /// `hard_link` **is** the destination check.
+    ///
+    /// It fails with `EEXIST` and creates nothing, which is why there is no
+    /// `if to.exists()` above it. A check-then-write is racy, and having one
+    /// here would invite someone to later swap the atomic primitive for
+    /// `rename`, which replaces an existing destination silently.
+    fn link(&self, from: &Path, to: &Path) -> io::Result<()> {
+        std::fs::hard_link(from, to)
+    }
+
+    /// Files only, for the reason [`Sink::delete`] gives at length: the
+    /// unavoidable check/use race fails closed on a directory.
+    fn unlink(&self, path: &Path) -> io::Result<()> {
+        std::fs::remove_file(path)
+    }
+}
+
+/// Consent for a reversible move. `Default` is a dry run granting nothing.
+///
+/// A separate type from [`Consent`], with no conversion in either direction.
+/// That is what makes "a grant to move a plist aside cannot dispose of it" a
+/// property of the types rather than a rule someone has to remember.
+#[derive(Debug, Clone, Default)]
+pub struct StashConsent {
+    pub execute: bool,
+    pub granted: Vec<SafePath>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct StashReport {
+    pub dry_run: bool,
+    pub planned: usize,
+    pub moved: usize,
+    pub refused: usize,
+}
+
+/// The store must be a folder this app may use, checked once for the whole run.
+///
+/// Its parent being the LaunchAgents directory is not cosmetic: it is what lets
+/// putting an item back need **no recorded state**, because the destination is
+/// simply the store's own parent. A store anywhere else would need a manifest,
+/// and a manifest is file content that names a path — the thing `uninstall` and
+/// `privacy` both refuse to have.
+fn validate_store(store: &Path, home: &Path) -> Result<PathBuf, StashError> {
+    let agents = crate::loginitems::default_dir(home);
+    let canonical_agents = std::fs::canonicalize(&agents)
+        .map_err(|_| StashError::Store("is not beside a LaunchAgents folder this app can find"))?;
+
+    match std::fs::symlink_metadata(store) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                return Err(StashError::Store("is a link to somewhere else"));
+            }
+            if !meta.is_dir() {
+                return Err(StashError::Store("is not a folder"));
+            }
+            let canonical = std::fs::canonicalize(store)
+                .map_err(|_| StashError::Store("could not be resolved"))?;
+            if canonical != store {
+                return Err(StashError::Store("is not its own canonical spelling"));
+            }
+            if canonical.parent() != Some(canonical_agents.as_path()) {
+                return Err(StashError::Store("is not inside your LaunchAgents folder"));
+            }
+            // And it is *the* folder, not merely one inside LaunchAgents.
+            // Without this a caller could aim either direction at any
+            // subdirectory the user happened to make.
+            if canonical.file_name()
+                != Some(std::ffi::OsStr::new(crate::loginitems::STORE_DIR_NAME))
+            {
+                return Err(StashError::Store(
+                    "is not the folder this app sets things aside in",
+                ));
+            }
+            Ok(canonical)
+        }
+        // Absent is fine: it is created on the first move, never by a scan.
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            if store.parent() != Some(canonical_agents.as_path()) {
+                return Err(StashError::Store("is not inside your LaunchAgents folder"));
+            }
+            if store.file_name() != Some(std::ffi::OsStr::new(crate::loginitems::STORE_DIR_NAME)) {
+                return Err(StashError::Store(
+                    "is not the folder this app sets things aside in",
+                ));
+            }
+            Ok(store.to_path_buf())
+        }
+        Err(_) => Err(StashError::Store("could not be looked at")),
+    }
+}
+
+/// What the store says about itself to someone who no longer has this app.
+const STORE_NOTE_TEXT: &str = "\
+These files were moved here by mac-cleaner so they would stop running when you
+log in. Nothing was changed inside them and nothing was removed.
+
+To put one back, drag it up one level into LaunchAgents, then log out and log
+in again. That is all mac-cleaner does when you press Put back.
+
+If you ever see the same file both here and one level up, mac-cleaner made
+the copy but could not remove the original — it is still running at login.
+Deleting whichever copy you do not want is safe; they are the same file.
+
+You can delete this note. You do not need mac-cleaner to undo any of this.
+";
+
+/// Move each planned file into `store`, reversibly.
+///
+/// The primitive is **link, verify, unlink** — never `rename`, which replaces
+/// an existing destination silently, and never copy-then-remove, which has a
+/// window in which the only whole copy is a partial one. The verify step
+/// compares `(dev, ino)` of both names before either is removed, so the only
+/// removal this module performs is of a name that provably shares an inode with
+/// a second name created moments before.
+///
+/// **This module cannot lose a file's bytes**, with one residual stated rather
+/// than glossed: the removal is by *path*, after a check that was also by path,
+/// so a swap of a directory *component* inside that window could redirect it.
+/// That race cannot be closed from user space without holding the directory
+/// open, and the same caveat is stated on `Sink::delete` and on the directory
+/// re-walk. What is closed is everything reachable by swapping the file itself.
+/// Every failure lands on "nothing happened" or "two names for one file", never
+/// on "no names".
+pub fn stash(
+    plan: &StashPlan,
+    consent: StashConsent,
+    store: &Path,
+    home: &Path,
+    sink: &dyn StashSink,
+    audit: &mut AuditLog,
+) -> Result<StashReport, StashError> {
+    move_files(plan, consent, store, home, sink, audit, Direction::Aside)
+}
+
+/// Put each planned file back under the name it had.
+///
+/// The destination is the store's own parent, which is why this needs no
+/// recorded state: nothing has to remember where a file came from, so no file's
+/// contents ever name a destination.
+pub fn restore(
+    plan: &StashPlan,
+    consent: StashConsent,
+    store: &Path,
+    home: &Path,
+    sink: &dyn StashSink,
+    audit: &mut AuditLog,
+) -> Result<StashReport, StashError> {
+    move_files(plan, consent, store, home, sink, audit, Direction::Back)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Aside,
+    Back,
+}
+
+fn move_files(
+    plan: &StashPlan,
+    consent: StashConsent,
+    store: &Path,
+    home: &Path,
+    sink: &dyn StashSink,
+    audit: &mut AuditLog,
+    direction: Direction,
+) -> Result<StashReport, StashError> {
+    // Every whole-run refusal leaves a record, for the reason
+    // `record_run_refusal` exists: a caller sending a protected or foreign path
+    // is exactly the signal worth having in the log, and it was the one thing
+    // the log never mentioned.
+    if let Err(e) = whole_run_gate(&consent, home) {
+        return Err(refuse_stash_run(audit, e));
+    }
+    let store = match validate_store(store, home) {
+        Ok(s) => s,
+        Err(e) => return Err(refuse_stash_run(audit, e)),
+    };
+    let agents = match std::fs::canonicalize(crate::loginitems::default_dir(home)) {
+        Ok(a) => a,
+        Err(_) => {
+            return Err(refuse_stash_run(
+                audit,
+                StashError::Store("is not beside a LaunchAgents folder this app can find"),
+            ))
+        }
+    };
+
+    let (from_dir, to_dir) = match direction {
+        Direction::Aside => (agents.clone(), store.clone()),
+        Direction::Back => (store.clone(), agents.clone()),
+    };
+
+    let mut report = StashReport {
+        dry_run: !consent.execute,
+        ..Default::default()
+    };
+    let phase = if consent.execute {
+        Phase::Executed
+    } else {
+        Phase::Planned
+    };
+
+    for m in &plan.moves {
+        let path = m.path().as_path();
+        if let Err(why) = vet(m, &from_dir, home, &consent) {
+            refuse_item(&mut report, audit, phase, path, m.size_bytes(), why)?;
+            continue;
+        }
+
+        // `file_name` off an already-guarded, already-canonical path: no
+        // separator, nothing parsed, nothing a caller chose.
+        let Some(name) = path.file_name() else {
+            refuse_item(
+                &mut report,
+                audit,
+                phase,
+                path,
+                m.size_bytes(),
+                "it has no file name",
+            )?;
+            continue;
+        };
+        let dest = to_dir.join(name);
+
+        if !consent.execute {
+            report.planned += 1;
+            record(
+                audit,
+                Phase::Planned,
+                disposition_of(direction),
+                path,
+                m.size_bytes(),
+                None,
+                Some(move_note(direction, &dest, m.category())),
+            )
+            .map_err(audit_error)?;
+            continue;
+        }
+
+        if direction == Direction::Aside && !store.exists() {
+            if std::fs::create_dir_all(&store).is_err() {
+                refuse_item(
+                    &mut report,
+                    audit,
+                    phase,
+                    path,
+                    m.size_bytes(),
+                    "the moved-aside folder could not be created",
+                )?;
+                continue;
+            }
+            write_store_note(&store);
+        }
+
+        match link_verify_unlink(path, &dest, sink) {
+            Outcome::Moved => {
+                report.moved += 1;
+                record(
+                    audit,
+                    Phase::Executed,
+                    disposition_of(direction),
+                    path,
+                    m.size_bytes(),
+                    None,
+                    Some(move_note(direction, &dest, m.category())),
+                )
+                .map_err(audit_error)?;
+            }
+            Outcome::Untouched(why) => {
+                report.refused += 1;
+                record(
+                    audit,
+                    Phase::Executed,
+                    Disposition::Refused,
+                    path,
+                    m.size_bytes(),
+                    None,
+                    Some(why),
+                )
+                .map_err(audit_error)?;
+            }
+            // Two names for one file. Both lines are true: the copy exists, and
+            // the original is still there, so the item still runs at login.
+            // Neither line alone would describe the disk.
+            Outcome::BothRemain(why) => {
+                report.refused += 1;
+                // Both lines name the *source*. Putting the destination on the
+                // first meant a reader grepping the path they know found only a
+                // refusal, and never the line saying a copy exists.
+                record(
+                    audit,
+                    Phase::Executed,
+                    disposition_of(direction),
+                    path,
+                    m.size_bytes(),
+                    None,
+                    Some(move_note(direction, &dest, m.category())),
+                )
+                .map_err(audit_error)?;
+                record(
+                    audit,
+                    Phase::Executed,
+                    Disposition::Refused,
+                    path,
+                    m.size_bytes(),
+                    None,
+                    Some(why),
+                )
+                .map_err(audit_error)?;
+            }
+        }
+    }
+
+    Ok(report)
+}
+
+enum Outcome {
+    Moved,
+    /// Nothing changed on disk.
+    Untouched(String),
+    /// The second name was created and the first could not be removed.
+    BothRemain(String),
+}
+
+/// Link, verify, unlink. See [`stash`] for why it is these three, in this
+/// order, and no others.
+fn link_verify_unlink(from: &Path, to: &Path, sink: &dyn StashSink) -> Outcome {
+    // The identity is taken **before** the link, and that ordering is the whole
+    // correctness of the rollback below.
+    //
+    // An earlier version compared the two paths to each other *after* linking
+    // and, when they disagreed, removed the destination to "roll back". That
+    // conflates two different worlds. If the *source* was swapped, the
+    // destination is still our link and removing it is right. If the
+    // *destination* was swapped — an installer writing a fresh plist over the
+    // name in the same instant — then the thing now at `to` is somebody else's
+    // file with one name, and removing it destroys it. Which is precisely the
+    // outcome this module claims it cannot produce.
+    //
+    // Holding the pre-link identity lets each side be judged on its own, so a
+    // name is only ever removed once it has been shown to be the file we linked.
+    let Ok(before) = std::fs::symlink_metadata(from) else {
+        return Outcome::Untouched("it could not be looked at, so nothing was moved".to_string());
+    };
+
+    if let Err(e) = sink.link(from, to) {
+        return Outcome::Untouched(format!("it could not be moved aside: {e}"));
+    }
+
+    // `symlink_metadata`, never `metadata`: a symlink swapped into either name
+    // must report itself rather than whatever it points at.
+    let ours = |p: &Path| {
+        std::fs::symlink_metadata(p)
+            .map(|m| m.dev() == before.dev() && m.ino() == before.ino())
+            // Fail closed. "We could not tell" must never mean "assume it is
+            // the same file" — that would make the check decorative in exactly
+            // the conditions it exists for.
+            .unwrap_or(false)
+    };
+    let dest_is_ours = ours(to);
+    let source_is_ours = ours(from);
+
+    if !(dest_is_ours && source_is_ours) {
+        // Remove only a name we can prove we created. When the destination is
+        // not ours we leave it alone — it is somebody else's file, and it may
+        // be the only name that file has.
+        if dest_is_ours {
+            let _ = sink.unlink(to);
+        }
+        return Outcome::Untouched(if dest_is_ours {
+            "it was replaced while being moved, so it was left exactly as it is".to_string()
+        } else {
+            "something else took the destination name while this was moving, so nothing was \
+             moved; a spare name may remain in the folder"
+                .to_string()
+        });
+    }
+
+    match sink.unlink(from) {
+        Ok(()) => Outcome::Moved,
+        Err(e) => Outcome::BothRemain(format!(
+            "the copy was made but the original could not be removed, so this still runs at \
+             login: {e}"
+        )),
+    }
+}
+
+/// Every check that must pass before a file is touched, in order. Each can only
+/// narrow what came before it.
+fn vet(
+    m: &PlannedMove,
+    from_dir: &Path,
+    home: &Path,
+    consent: &StashConsent,
+) -> Result<(), &'static str> {
+    let path = m.path().as_path();
+
+    // The chokepoint FIRST, then authorization — the order this file states for
+    // disposal and which this function had inverted: "a grant widens where we
+    // may act, it never bypasses the denylist." Both were ANDed, so nothing was
+    // bypassable, but a protected path was refused with "nobody granted this",
+    // which is the less useful line to find in the log.
+    match guard(path, home) {
+        Ok(fresh) if fresh.as_path() == path => {}
+        _ => return Err("it is protected, or no longer resolves to itself"),
+    }
+
+    if !consent.granted.iter().any(|g| g.as_path() == path) {
+        return Err("nobody granted this path");
+    }
+
+    // The listed spelling must be the one we are about to act on.
+    //
+    // This is what refuses a plist that was *already* a symlink. `guard`
+    // resolves it, so by the time it reaches here it looks perfect: not a link,
+    // its own canonical spelling, a real `.plist` in the right folder — and it
+    // is a different file from the one the user ticked. The `is_symlink` check
+    // below cannot see it, because there is nothing left to see.
+    if m.as_listed() != path {
+        return Err("it is a link to somewhere else, and this app acts on what it showed you");
+    }
+
+    let meta = std::fs::symlink_metadata(path).map_err(|_| "it could not be looked at")?;
+    // Defence in depth: after the equality above, a symlink cannot reach here.
+    if meta.file_type().is_symlink() {
+        return Err("it is a link to somewhere else");
+    }
+    // `is_file`, not `!is_dir`: a socket, FIFO or device node is neither.
+    if !meta.is_file() {
+        return Err("it is not a regular file");
+    }
+    if path.extension().and_then(|e| e.to_str()) != Some("plist") {
+        return Err("it is not a .plist");
+    }
+    // Exactly this directory, never `starts_with`: launchd does not recurse
+    // into a subfolder, and neither should the offer.
+    if path.parent() != Some(from_dir) {
+        return Err("it is not in the folder this run acts on");
+    }
+    Ok(())
+}
+
+/// Put the explanation into the store, once.
+///
+/// A courtesy rather than a safety property, so a failure is not fatal — the
+/// folder works without it. `create_new` is the load-bearing part: the note
+/// says the user may edit or delete it, so a later run must never overwrite
+/// what they wrote. Its own function so that rule can be tested directly,
+/// rather than only through a caller that skips the whole block once the store
+/// exists.
+fn write_store_note(store: &Path) {
+    let _ = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(store.join(crate::loginitems::STORE_NOTE_NAME))
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(STORE_NOTE_TEXT.as_bytes())
+        });
+}
+
+/// Refuse one item, and leave a record of having refused it.
+///
+/// Every `continue` in the loop goes through here. Two of them used to skip the
+/// log — reachable ones, with a read-only LaunchAgents folder — and a refusal
+/// nothing records is indistinguishable from a run that never considered the
+/// item.
+fn refuse_item(
+    report: &mut StashReport,
+    audit: &mut AuditLog,
+    phase: Phase,
+    path: &Path,
+    size_bytes: u64,
+    why: &str,
+) -> Result<(), StashError> {
+    report.refused += 1;
+    record(
+        audit,
+        phase,
+        Disposition::Refused,
+        path,
+        size_bytes,
+        None,
+        Some(why.to_string()),
+    )
+    .map_err(audit_error)
+}
+
+/// The two whole-run conditions that do not depend on the store.
+fn whole_run_gate(consent: &StashConsent, home: &Path) -> Result<(), StashError> {
+    match safety::canonical_home(home) {
+        Ok(canonical) if canonical == home => {}
+        _ => return Err(StashError::Home),
+    }
+    if consent.granted.len() > MAX_STARTUP_GRANTS {
+        return Err(StashError::TooManyGrants {
+            count: consent.granted.len(),
+            max: MAX_STARTUP_GRANTS,
+        });
+    }
+    Ok(())
+}
+
+/// Record a whole-run refusal, then hand back the error that caused it.
+///
+/// If the record itself cannot be written, that failure wins: refusing without
+/// a trace is the thing item 6 exists to prevent, and it should not be reported
+/// as the original reason.
+fn refuse_stash_run(audit: &mut AuditLog, why: StashError) -> StashError {
+    match record_run_refusal(audit, &why.to_string()) {
+        Ok(()) => why,
+        Err(ExecError::Audit(e)) => StashError::Audit(e),
+        Err(other) => StashError::Audit(io::Error::other(other.to_string())),
+    }
+}
+
+fn disposition_of(direction: Direction) -> Disposition {
+    match direction {
+        Direction::Aside => Disposition::Stashed,
+        Direction::Back => Disposition::Restored,
+    }
+}
+
+fn move_note(direction: Direction, other: &Path, category: &str) -> String {
+    let base = match direction {
+        Direction::Aside => STASH_NOTE,
+        Direction::Back => RESTORE_NOTE,
+    };
+    format!("{base} {} [{category}]", other.display())
+}
+
+fn audit_error(e: ExecError) -> StashError {
+    match e {
+        ExecError::Audit(io) => StashError::Audit(io),
+        other => StashError::Audit(io::Error::other(other.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod stash_tests {
+    use super::*;
+
+    // Why the guard call in `vet` has no test, stated rather than faked.
+    //
+    // An earlier version of this module carried a test named for it that
+    // never called `vet` at all — it built a Keychains path, called `guard`,
+    // and asserted the denylist refused it, which is a test `denylist` already
+    // has. A test named for a safety property that does not exercise it is
+    // worse than no test, because it reads as coverage.
+    //
+    // The honest position: **the denylist half of that call is unreachable by
+    // construction.** `PlannedMove` holds a `SafePath`, whose only constructor
+    // is `guard`, so a protected path cannot get into a plan to be re-checked.
+    // And nothing inside `~/Library/LaunchAgents` can *become* protected after
+    // the fact — the protected home subpaths are siblings of that directory,
+    // not children, and a `.git` there would be a sibling too. So no fixture,
+    // in-crate or out, separates the guard from the parent confinement on the
+    // denylist question.
+    //
+    // What *is* reachable is the guard's other job: re-resolving the path. A
+    // file that vanished between planning and acting is refused by the guard,
+    // with the guard's own reason — and that is pinned by
+    // `a_plist_that_vanished_between_planning_and_acting_is_refused_by_the_guard`
+    // in `tests/stash.rs`, which asserts the *reason*, since a version without
+    // the guard call would refuse it too but say something else.
+    //
+    // The call stays because the chokepoint rule is what a reviewer looks for,
+    // and because a future caller building plans differently would make the
+    // denylist half reachable again.
+
+    /// `create_new` is the load-bearing part of the note, and the caller-level
+    /// test could not see it: the second run skips the whole block at
+    /// `!store.exists()`, so it passed because of that guard rather than
+    /// because of the flag. Here the function is called directly.
+    #[test]
+    fn the_note_is_never_written_over_one_that_is_already_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = std::fs::canonicalize(dir.path()).unwrap();
+        let note = store.join(crate::loginitems::STORE_NOTE_NAME);
+        std::fs::write(&note, b"my own notes").unwrap();
+
+        write_store_note(&store);
+
+        assert_eq!(std::fs::read(&note).unwrap(), b"my own notes");
+    }
+
+    /// The store check that actually earns its place, and the one no test had
+    /// reached in three rounds.
+    ///
+    /// `a_store_that_is_a_symlink_refuses_the_whole_run` is caught by
+    /// `!meta.is_dir()` — `symlink_metadata` never reports a symlink as a
+    /// directory — so neither named check was doing the work anywhere. The
+    /// unique job of the canonical-equality check is a store reached through a
+    /// symlinked *parent*: with `~/Library/LaunchAgents` a link, the store is a
+    /// real directory, its canonical parent matches, and its name is right, so
+    /// every other check passes and the run would operate in the redirected
+    /// folder.
+    #[test]
+    fn a_store_reached_through_a_symlinked_parent_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(home.join("Library")).unwrap();
+        let elsewhere = home.join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join(crate::loginitems::STORE_DIR_NAME)).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, home.join("Library/LaunchAgents")).unwrap();
+
+        let store = crate::loginitems::store_dir(&home);
+        assert!(
+            validate_store(&store, &home).is_err(),
+            "a store reached through a symlinked parent is not the store"
+        );
+    }
+
+    /// The store's identity is checked once, for the whole run, and an absent
+    /// store is allowed because it is created on the first move.
+    #[test]
+    fn an_absent_store_in_the_right_place_is_accepted_and_a_wrong_name_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(home.join("Library/LaunchAgents")).unwrap();
+
+        let right = crate::loginitems::store_dir(&home);
+        assert!(validate_store(&right, &home).is_ok());
+
+        let wrong = crate::loginitems::default_dir(&home).join("Something else");
+        assert!(validate_store(&wrong, &home).is_err());
+    }
 }

@@ -3,6 +3,8 @@
 //! A `Plan` is produced by the scanner and never mutates the filesystem.
 //! Constructing one is always safe; only [`crate::executor`] can act on it.
 
+use std::path::{Path, PathBuf};
+
 use safety::{SafeDir, SafePath};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,5 +89,99 @@ impl Plan {
         !self.dirs.is_empty()
             || self.count() > MASS_DELETE_COUNT
             || self.total_bytes() > MASS_DELETE_BYTES
+    }
+}
+
+/// One file to move aside, reversibly.
+///
+/// Deliberately **not** a [`PlannedAction`], and [`StashPlan`] is deliberately
+/// not a [`Plan`]. Nothing converts between them, so a plan built to move a
+/// login item aside cannot be handed to `executor::execute`, and a disposal
+/// plan cannot be handed to `executor::stash`. The separation is the guarantee:
+/// a move is not a disposal, and no field of either type can express the other.
+///
+/// Note what is absent: no `Disposal`. A moved-aside file is never removed, so
+/// there is no variant to choose and no permanent branch to decline.
+#[derive(Debug, Clone)]
+pub struct PlannedMove {
+    /// The path as `guard` resolved it — what will actually be acted on.
+    path: SafePath,
+    /// The path **as it was listed to the user**, before `guard` canonicalized
+    /// it.
+    ///
+    /// Load-bearing, and easy to mistake for redundancy. `guard` resolves
+    /// symlinks, so a plist that was *already* a link arrives as its target —
+    /// which is not itself a link and is its own canonical spelling, so no
+    /// check downstream can tell. Keeping the original spelling and requiring
+    /// the two to be equal is what refuses it.
+    ///
+    /// Be precise about what that buys, because it is a weaker claim than the
+    /// Uninstaller's and Privacy's "byte-equal to the row that was shown". What
+    /// the type guarantees is **this acts on the file the caller named** —
+    /// `path` is derived from `as_listed` by canonicalization inside the only
+    /// constructor, so if they are equal they are the same path. It does *not*
+    /// know what the user was shown. Keeping the displayed row and the
+    /// constructed path in sync remains the caller's obligation, and the
+    /// command layer must not read this as already handled.
+    as_listed: PathBuf,
+    size_bytes: u64,
+    /// Which module authorized this, carried into the audit note.
+    category: String,
+}
+
+impl PlannedMove {
+    /// The only way to build one, and the reason the fields above are private.
+    ///
+    /// `as_listed` carries the same safety weight as `path` — it is what
+    /// refuses a plist that was already a symlink — but unlike [`SafePath`] it
+    /// is an ordinary `PathBuf` and cannot be unforgeable by construction. With
+    /// public fields, a caller could back-fill it *from* the guarded path and
+    /// turn the equality check into a tautology, reinstating the exact defect
+    /// it exists to prevent, with every test still green.
+    ///
+    /// So the constructor does the guard itself, from the listed path. There is
+    /// no way to supply the two independently.
+    pub fn new(
+        as_listed: PathBuf,
+        home: &Path,
+        size_bytes: u64,
+        category: String,
+    ) -> Result<Self, safety::GuardError> {
+        let path = safety::guard(&as_listed, home)?;
+        Ok(Self {
+            path,
+            as_listed,
+            size_bytes,
+            category,
+        })
+    }
+
+    pub fn path(&self) -> &SafePath {
+        &self.path
+    }
+    pub fn as_listed(&self) -> &Path {
+        &self.as_listed
+    }
+    pub fn size_bytes(&self) -> u64 {
+        self.size_bytes
+    }
+    pub fn category(&self) -> &str {
+        &self.category
+    }
+}
+
+/// A set of files to move aside, or to put back.
+///
+/// It has no thresholds and no mass-delete gate, because it removes nothing:
+/// the confirmation those exist for is about how much would be *lost*, and the
+/// answer here is always none.
+#[derive(Debug, Clone, Default)]
+pub struct StashPlan {
+    pub moves: Vec<PlannedMove>,
+}
+
+impl StashPlan {
+    pub fn count(&self) -> usize {
+        self.moves.len()
     }
 }

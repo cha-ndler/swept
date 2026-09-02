@@ -28,6 +28,14 @@ pub enum Disposition {
     Permanent,
     /// Re-validation failed at execution time; left untouched.
     Refused,
+    /// **Moved aside, reversibly.** The file still exists — nothing was
+    /// removed. Only the name it was reachable under changed, and this app can
+    /// put it back. Distinct from `Trash` because the Trash is a destination
+    /// the *system* owns and empties; this one is a folder beside the original
+    /// that only ever holds what was deliberately set aside.
+    Stashed,
+    /// Put back under the name it had. The mirror of `Stashed`.
+    Restored,
 }
 
 #[derive(Serialize, Debug)]

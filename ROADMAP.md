@@ -410,8 +410,11 @@ instead.**
     `resolve_roots`. Worth writing down because the two are easy to conflate:
     the roots list says what may be *read*, and `resolve_roots` is a stricter
     filter that two specific walkers apply on top of it.
-- [ ] **M4 — Uninstaller (leftovers-only)** — *discovery is done — id-keyed
-  locations, containers and the human-name tier; disposal and the UI are open.*
+- [x] **M4 — Uninstaller (leftovers-only)** — *shipped: id-keyed discovery,
+  containers and the human-name tier, directory-aware disposal, and the
+  Applications screen (merged at the taste gate). The under-match note below
+  stays open as a known limit, and the design's open questions are still the
+  human's to answer.*
   **Removing the `.app` bundle itself stays out of scope** — `/Applications` is
   on `PROTECTED_ABS_ROOTS` and carving it out is a denylist amendment needing
   explicit sign-off. *Riskiest task in the plan.*
@@ -466,8 +469,8 @@ instead.**
     roots is no longer enough — `<container>/Data/Documents` is *inside* a
     location root. Disposal must intersect the selection with the `offerable`
     rows of a fresh scan, the way Large & Old re-walks before it acts.
-  - [ ] **Directory-aware disposal** — *the executor half is done; the
-    discovery flags and the command layer are open.*
+  - [x] **Directory-aware disposal** — the executor half, the discovery
+    honesty flags and the command layer.
     - [x] **The executor learns a second action shape.** `PlannedDirAction`
       carries a `SafeDir` — the tree walked in full by `guard_dir` — and
       deliberately **no `Disposal`**: a recursive irreversible removal is not
@@ -540,9 +543,8 @@ instead.**
       are individually disposable, on purpose and pinned. Two thin Tauri
       commands; `CleanSummary.entries_freed` says how many names a directory
       action stood for.
-  - [ ] **The module UI.** *Visual → taste gate; opened as a PR with
-    screenshots, never auto-merged.* Built as `UninstallerView` ("Applications"
-    in the sidebar, under Clean). **Identity comes from a bundle the app saw:**
+  - [x] **The module UI.** *(Merged at the human taste gate.)* Built as
+    `UninstallerView` ("Applications" in the sidebar, under Clean). **Identity comes from a bundle the app saw:**
     the picker lists installed applications (a new read-only
     `installed_apps` command, top-level bundles only), and choosing one records
     its identifier *before* the user removes it — the interim answer to open

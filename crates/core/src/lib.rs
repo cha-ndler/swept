@@ -15,4 +15,5 @@ pub mod plan;
 pub mod report;
 pub mod scanner;
 pub mod spacelens;
+pub mod treewalk;
 pub mod uninstall;

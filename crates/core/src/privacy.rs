@@ -1116,6 +1116,14 @@ fn collect(
         if meta.is_dir() != entry.is_dir {
             continue;
         }
+        // `is_dir` is a two-valued test against a filesystem that has more than
+        // two shapes. A socket, FIFO or device node is neither a directory nor
+        // a regular file, so without this it takes the file path and becomes an
+        // offerable row. The sidecar loop below already requires `is_file`;
+        // this is the same rule for the row's own name.
+        if !entry.is_dir && !meta.is_file() {
+            continue;
+        }
         // Everything emitted must already be its own canonical spelling — the
         // rule the disposal half re-checks byte for byte.
         if std::fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) {
@@ -1270,6 +1278,24 @@ mod tests {
             (Class::ProfileCache, Consequence::Regenerable),
         ] {
             assert_eq!(class.consequence(), expected);
+        }
+    }
+
+    /// A sidecar suffix is appended to a file *name*, so one containing a
+    /// separator would place a member in another directory — and every member
+    /// becomes a disposal target. The invariant that makes member expansion
+    /// safe is pinned here, beside the one it depends on.
+    #[test]
+    fn no_sidecar_suffix_can_move_a_member_to_another_directory() {
+        for suffix in SIDECARS {
+            assert!(!suffix.is_empty());
+            assert!(
+                !suffix.contains(std::path::MAIN_SEPARATOR),
+                "{suffix} would leave the database's own directory"
+            );
+            assert!(!suffix.contains(".."), "{suffix} can climb");
+            let built = sidecar_of(Path::new("/x/y/db.sqlite"), suffix);
+            assert_eq!(built.parent(), Some(Path::new("/x/y")));
         }
     }
 

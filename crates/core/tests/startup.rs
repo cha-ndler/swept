@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use macclean_core::loginitems::{
     scan, store_dir, Access, StartClass, StartupConfig, DEFERRED_SOURCES, STORE_DIR_NAME,
+    STORE_NOTE_NAME,
 };
 use safety::allowlist;
 
@@ -480,4 +481,64 @@ fn the_scan_mutates_nothing() {
     let _ = scan(&cfg(&home));
     assert_eq!(fs::read(&p).unwrap(), before);
     assert_eq!(fs::metadata(&p).unwrap().modified().unwrap(), modified);
+}
+
+/// The note this app writes into the store explains the folder; it is not
+/// something the user put there and it is not a login item. Listing it would
+/// put a row on screen saying "this is not a .plist" about a file we created.
+#[test]
+fn the_note_in_the_store_is_not_listed_as_something_that_was_moved_aside() {
+    let (_d, home) = fixture();
+    let store = store_dir(&home);
+    fs::create_dir_all(&store).unwrap();
+    fs::write(store.join(STORE_NOTE_NAME), b"how to put these back").unwrap();
+    fs::write(
+        store.join("com.acme.helper.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Label</key><string>com.acme.helper</string></dict></plist>"#,
+    )
+    .unwrap();
+
+    let report = scan(&cfg(&home));
+    assert_eq!(report.moved_aside.len(), 1);
+    assert_eq!(report.moved_aside[0].label, "com.acme.helper");
+}
+
+/// The note skip is exact and scoped, and both halves matter. A file named
+/// like the note in LaunchAgents proper is an ordinary row — skipping it there
+/// would hide something the user put there. And a name that merely *begins*
+/// with the note's name is a different file: this is the `.Trash`/`.Trashes`
+/// prefix class the contract calls out, and the failure would be an item the
+/// app moved aside and can then never show or put back.
+#[test]
+fn the_note_skip_is_exact_and_only_applies_inside_the_store() {
+    let (_d, home) = fixture();
+
+    // In LaunchAgents proper: listed, withheld for not being a plist.
+    fs::write(agents(&home).join(STORE_NOTE_NAME), b"the user's own file").unwrap();
+
+    let store = store_dir(&home);
+    fs::create_dir_all(&store).unwrap();
+    // In the store, a plist whose name merely starts with the note's.
+    let prefixed = store.join(format!("{STORE_NOTE_NAME}.plist"));
+    fs::write(
+        &prefixed,
+        br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Label</key><string>com.acme.oddly.named</string></dict></plist>"#,
+    )
+    .unwrap();
+
+    let report = scan(&cfg(&home));
+    assert_eq!(
+        report.items.len(),
+        1,
+        "the note-named file in LaunchAgents is a row"
+    );
+    assert!(!report.items[0].offerable);
+    assert_eq!(
+        report.moved_aside.len(),
+        1,
+        "and a name that only starts with the note's is not the note"
+    );
+    assert!(report.moved_aside[0].offerable);
 }

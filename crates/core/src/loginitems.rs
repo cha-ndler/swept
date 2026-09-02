@@ -202,7 +202,7 @@ pub fn store_dir(home: &Path) -> PathBuf {
 /// The narrow entry point [`scan`] is built on. Kept public because it is the
 /// honest unit to test: one directory in, rows out, nothing else consulted.
 pub fn scan_dir(dir: &Path) -> Vec<LoginItem> {
-    let (mut items, _) = read_agents(dir, false);
+    let (mut items, _, _) = read_agents(dir, false);
     mark_duplicate_labels(&mut items);
     items
 }
@@ -248,6 +248,17 @@ pub struct StartupReport {
     pub modern_store_present: bool,
     pub deferred: Vec<(String, String)>,
     pub caveats: Vec<String>,
+    /// Entries this module saw and could not name — a filename that is not
+    /// valid UTF-8. Never a row, and counted so a report that dropped one does
+    /// not read as complete.
+    ///
+    /// **Unreachable on APFS and HFS+**, which reject such a name with
+    /// `EILSEQ` when it is created, so no test here can produce one. It is
+    /// reachable on a mounted exFAT, SMB or NFS volume, and a LaunchAgents
+    /// directory can be one. Counted rather than dropped for that case, and
+    /// recorded here so the absence of a test is a known limit rather than an
+    /// oversight — the same position `privacy` reached for the same reason.
+    pub skipped_unrepresentable: usize,
     /// A source could not be read, so the picture is incomplete.
     pub partial: bool,
 }
@@ -271,7 +282,8 @@ pub fn scan(cfg: &StartupConfig) -> StartupReport {
     let mut report = StartupReport::default();
 
     let agents = default_dir(&cfg.home);
-    let (items, access) = read_agents(&agents, false);
+    let (items, access, unnameable) = read_agents(&agents, false);
+    report.skipped_unrepresentable += unnameable;
     report.sources.push(SourceState {
         path: agents.display().to_string(),
         access: access.clone(),
@@ -283,7 +295,8 @@ pub fn scan(cfg: &StartupConfig) -> StartupReport {
     // question would be writing to the user's Library to look at it.
     let store = store_dir(&cfg.home);
     if store.is_dir() {
-        let (moved, store_access) = read_agents(&store, true);
+        let (moved, store_access, unnameable) = read_agents(&store, true);
+        report.skipped_unrepresentable += unnameable;
         report.sources.push(SourceState {
             path: store.display().to_string(),
             access: store_access,
@@ -312,10 +325,11 @@ pub fn scan(cfg: &StartupConfig) -> StartupReport {
         .iter()
         .map(|(a, b)| (a.to_string(), b.to_string()))
         .collect();
-    report.partial = report
-        .sources
-        .iter()
-        .any(|s| !matches!(s.access, Access::Readable | Access::Absent));
+    report.partial = report.skipped_unrepresentable > 0
+        || report
+            .sources
+            .iter()
+            .any(|s| !matches!(s.access, Access::Readable | Access::Absent));
 
     report
 }
@@ -332,15 +346,16 @@ fn access_of(dir: &Path) -> Access {
     }
 }
 
-fn read_agents(dir: &Path, moved_aside: bool) -> (Vec<LoginItem>, Access) {
+fn read_agents(dir: &Path, moved_aside: bool) -> (Vec<LoginItem>, Access, usize) {
     let access = access_of(dir);
     if access != Access::Readable {
-        return (Vec::new(), access);
+        return (Vec::new(), access, 0);
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return (Vec::new(), access);
+        return (Vec::new(), access, 0);
     };
     let mut items = Vec::new();
+    let mut unnameable = 0usize;
     for entry in entries.flatten() {
         let path = dir.join(entry.file_name());
         // The store is a directory inside the directory it serves; it is not a
@@ -351,12 +366,23 @@ fn read_agents(dir: &Path, moved_aside: bool) -> (Vec<LoginItem>, Access) {
         if meta.is_dir() {
             continue;
         }
-        if let Some(item) = describe(&path, &meta, moved_aside) {
-            items.push(item);
+        // The note this app writes into the store is not something the user
+        // put there and is not a login item. Listing it would put a row on the
+        // screen saying "this is not a .plist" about a file we created to
+        // explain the folder.
+        if moved_aside && entry.file_name() == std::ffi::OsStr::new(STORE_NOTE_NAME) {
+            continue;
+        }
+        match describe(&path, &meta, moved_aside) {
+            Some(item) => items.push(item),
+            // A filename that is not valid UTF-8. It is here and it is not
+            // reported, which is the definition of a floor — so it is counted
+            // rather than silently skipped.
+            None => unnameable += 1,
         }
     }
     items.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.source.cmp(&b.source)));
-    (items, access)
+    (items, access, unnameable)
 }
 
 fn read_system(dir: &Path) -> (Vec<SystemItem>, Access) {

@@ -1105,8 +1105,13 @@ fn move_files(
             continue;
         }
 
-        if direction == Direction::Aside && !store.exists() {
-            if std::fs::create_dir_all(&store).is_err() {
+        if direction == Direction::Aside {
+            // Every run, not only the one that creates the folder. The note
+            // tells the user they may delete it, and once they did the folder
+            // was never explained again — which quietly erodes the recovery
+            // story this design rests on. `create_new` makes it idempotent, so
+            // re-offering it costs nothing and never touches one they edited.
+            if !store.exists() && std::fs::create_dir_all(&store).is_err() {
                 refuse_item(
                     &mut report,
                     audit,

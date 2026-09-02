@@ -9,7 +9,8 @@ use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
 use macclean_gui_core::{
     self as gui, Acknowledged, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto,
-    Permissions, PrivacyReportDto, SpaceLensReportDto, UninstallReportDto, UninstallTarget,
+    Permissions, PrivacyReportDto, SpaceLensReportDto, StartupReportDto, StartupSummary,
+    UninstallReportDto, UninstallTarget,
 };
 
 /// Event channel the frontend listens on for scan progress.
@@ -226,6 +227,42 @@ async fn dispose_privacy(
     .map_err(|e| format!("dispose-privacy task failed: {e}"))?
 }
 
+/// Read-only: what runs when you log in, plus what this app has set aside and
+/// what it can see but never change.
+#[tauri::command]
+async fn startup_report() -> Result<StartupReportDto, String> {
+    tauri::async_runtime::spawn_blocking(gui::startup_report)
+        .await
+        .map_err(|e| format!("startup task failed: {e}"))?
+}
+
+/// Take chosen items out of what starts at login — reversibly.
+///
+/// Nothing is removed: each plist is hard-linked into a folder beside it, the
+/// inode is checked, and only then is the original name removed. The ceiling is
+/// the rows of a scan run inside the call, so a system agent or a row the scan
+/// withheld cannot be acted on by naming it.
+#[tauri::command]
+async fn move_aside(
+    paths: Vec<String>,
+    expected: Option<Expected>,
+) -> Result<StartupSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || gui::move_aside(paths, expected))
+        .await
+        .map_err(|e| format!("move-aside task failed: {e}"))?
+}
+
+/// Put them back. The mirror of `move_aside`, with its own ceiling.
+#[tauri::command]
+async fn put_back(
+    paths: Vec<String>,
+    expected: Option<Expected>,
+) -> Result<StartupSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || gui::put_back(paths, expected))
+        .await
+        .map_err(|e| format!("put-back task failed: {e}"))?
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -261,6 +298,9 @@ fn main() {
             dispose_leftovers,
             privacy_report,
             dispose_privacy,
+            startup_report,
+            move_aside,
+            put_back,
             space_lens
         ])
         .run(tauri::generate_context!())

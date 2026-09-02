@@ -600,7 +600,8 @@ instead.**
     offerable?** It is where a sandboxed notes app keeps the notes, and also
     the largest thing an uninstalled sandboxed app leaves behind. Shown and
     never offered today; "offerable, never bulk" is the plausible loosening.
-- [ ] **M5 — Privacy** — *discovery is done; disposal and the UI are open.*
+- [x] **M5 — Privacy** — *shipped: discovery (#42), disposal (#43) and the
+  screen (#44, merged at the taste gate).*
   **Cookies sign the user out everywhere** — separately opt-in, never
   pre-selected, never in Smart Scan defaults, labelled with that consequence.
   - [x] **What browsers remember, read-only.** `core/src/privacy.rs` searches
@@ -677,8 +678,8 @@ instead.**
     as an uninstaller leftover. The note now carries the action's own
     category, so the log says which module, and which acknowledgement,
     authorized each line.
-  - [ ] **The module UI.** *Visual → taste gate; opened as a PR with
-    screenshots, never auto-merged.* Built as `PrivacyView` ("Privacy" in the
+  - [x] **The module UI.** *(Merged at the human taste gate.)* Built as
+    `PrivacyView` ("Privacy" in the
     sidebar, under **Protect** — the headings are about what a module is
     *for*, and this one is not about space). **The size is not the point**, so
     the stacked track is by consequence rather than location, every row wears
@@ -776,6 +777,21 @@ instead.**
     unreachable by construction, since `SafePath` cannot hold a protected path
     — stated in a comment rather than performed by a test built on a
     `#[cfg(test)]` bypass of the type system.
+  - [x] **The command layer.** `startup_report_in`, `move_aside_with_sink`,
+    `put_back_with_sink` and three thin Tauri commands. The ceiling is M4's
+    rule with one addition: **each verb has its own set of rows and they do
+    not overlap**, so asking to put back something still in `LaunchAgents` is
+    a refusal rather than a no-op — it means the frontend and the disk
+    disagree about where an item is. The review found a live falsehood rather
+    than a test gap: `skipped_unrepresentable` was copied from Privacy, where
+    the path is a `PathBuf` and the conversion can fail, but here the source
+    is already a `String` — so the counter was always zero and `partial` could
+    never learn anything, while the rows genuinely dropped for an unnameable
+    filename were counted nowhere. A login item could vanish from a report
+    that called itself complete. **No CLI subcommands, deliberately:** they
+    would need `macclean` to depend on the GUI's command layer, or a second
+    copy of the ceiling. The store being pinned to one folder is the better
+    recovery path, because it survives this app being removed.
   - [ ] **The screen.** *Visual → taste gate.*
 
   The store is `~/Library/LaunchAgents/Moved aside by mac-cleaner/` — inside

@@ -84,6 +84,18 @@ const SITE_STORAGE_REASON: &str = "this is website storage — where a site or a
 const SAFARI_CONTAINER_REASON: &str = "this is inside Safari's own sandbox container; no module \
      offers a path inside another app's container yet, so it is shown, not offered";
 
+/// `~/Library/Cookies` is **not** Safari's.
+///
+/// It is the shared CFNetwork / `NSHTTPCookieStorage` jar that every
+/// non-sandboxed application on the system writes to — updaters, helpers,
+/// developer tools, third-party apps. Offering it under a row labelled "Safari
+/// — cookies — signs you out" would take consent against a false description:
+/// the user would be signing out of a set of applications the row never named.
+/// Shown, with what it actually is, and not offered.
+const SHARED_COOKIE_JAR_REASON: &str = "this is not Safari's own jar — it is the cookie store \
+     every non-sandboxed app on this Mac shares, so removing it would sign you out of \
+     applications this row cannot name";
+
 const FIREFOX_HISTORY_NOTE: &str = "Firefox history is not offered: places.sqlite holds the \
      history and the bookmarks in one file, so removing it would take the bookmarks too";
 
@@ -527,9 +539,13 @@ static SAFARI_ENTRIES: &[Entry] = &[
         is_dir: false,
         label: "Recently closed tabs",
     },
+    // History, not Session — the same thing Chromium's `Top Sites` is. The two
+    // must agree, because the class picks the consequence sentence shown on the
+    // screen where consent is given, and "loses your open tabs" would be the
+    // wrong sentence for a list of most-visited sites.
     Entry {
         name: "TopSites.plist",
-        class: Class::Session,
+        class: Class::History,
         is_dir: false,
         label: "Top sites",
     },
@@ -562,16 +578,16 @@ static SAFARI_ENTRIES: &[Entry] = &[
 /// decision for a human, not a side effect of this one. The honest consequence:
 /// on recent macOS the container jar is the live one, so Safari cookies may
 /// have nothing offerable until that decision is taken.
-static SAFARI_ROOTS: &[(&str, bool)] = &[
-    ("Library/Safari", true),
-    ("Library/Cookies", true),
+static SAFARI_ROOTS: &[(&str, Option<&'static str>)] = &[
+    ("Library/Safari", None),
+    ("Library/Cookies", Some(SHARED_COOKIE_JAR_REASON)),
     (
         "Library/Containers/com.apple.Safari/Data/Library/Cookies",
-        false,
+        Some(SAFARI_CONTAINER_REASON),
     ),
     (
         "Library/Containers/com.apple.Safari/Data/Library/WebKit",
-        false,
+        Some(SAFARI_CONTAINER_REASON),
     ),
 ];
 
@@ -695,7 +711,14 @@ impl PrivacyReport {
         self.browsers
             .iter()
             .any(|b| !matches!(b.access, Access::Readable | Access::NotInstalled))
-            || self.rows.iter().any(|r| r.offerable && r.size_is_floor)
+            // A dropped symlink is something that was there and is not
+            // reported. The count existed before this and nothing read it,
+            // which is the same as not having it.
+            || self.skipped_symlink > 0
+            // Every floor counts, not only the offerable ones: a withheld row
+            // still shows a figure, and a figure that is a floor is a figure
+            // the user should not read as a total.
+            || self.rows.iter().any(|r| r.size_is_floor)
     }
 
     pub fn offerable_bytes(&self) -> u64 {
@@ -724,6 +747,16 @@ pub struct PrivacyConfig {
 
 impl PrivacyConfig {
     pub fn new(home: PathBuf) -> Self {
+        // A non-canonical home makes every row fail its own canonical-spelling
+        // check, so the scan comes back empty and complete — indistinguishable
+        // from "no browsers installed". Fail-safe in direction, silent in
+        // effect, so make the caller's mistake loud in development.
+        debug_assert!(
+            std::fs::canonicalize(&home)
+                .map(|c| c == home)
+                .unwrap_or(true),
+            "PrivacyConfig::new needs a canonical home (see safety::canonical_home)"
+        );
         Self {
             home,
             browsers: BROWSERS,
@@ -759,12 +792,11 @@ pub fn scan(cfg: &PrivacyConfig) -> PrivacyReport {
 
     for spec in cfg.browsers {
         let root = cfg.home.join(spec.root);
-        let access = access_of(&root);
         let mut state = BrowserState {
             id: spec.id,
             name: spec.name,
             family: spec.family,
-            access: access.clone(),
+            access: Access::NotInstalled,
             profiles: 0,
             may_be_live: false,
             notes: Vec::new(),
@@ -773,11 +805,22 @@ pub fn scan(cfg: &PrivacyConfig) -> PrivacyReport {
             state.notes.push(FIREFOX_HISTORY_NOTE);
         }
 
-        if access == Access::Readable {
-            match spec.family {
-                Family::Chromium => chromium(spec, &root, cfg, &mut state, &mut report),
-                Family::Firefox => firefox(spec, &root, cfg, &mut state, &mut report),
-                Family::Safari => safari(spec, cfg, &mut state, &mut report),
+        match spec.family {
+            // Safari's data is spread over four independently TCC-gated roots,
+            // so its state cannot be read off the first one: probing only
+            // `Library/Safari` meant that when it was absent — or denied, which
+            // is its resting state without Full Disk Access — the other three
+            // were never looked at at all. `safari` sets the state itself.
+            Family::Safari => safari(spec, cfg, &mut state, &mut report),
+            family => {
+                state.access = access_of(&root);
+                if state.access == Access::Readable {
+                    match family {
+                        Family::Chromium => chromium(spec, &root, cfg, &mut state, &mut report),
+                        Family::Firefox => firefox(spec, &root, cfg, &mut state, &mut report),
+                        Family::Safari => unreachable!("handled above"),
+                    }
+                }
             }
         }
 
@@ -902,8 +945,18 @@ fn chromium(
             continue;
         }
         // Corroboration: a directory the browser has actually opened.
-        if !path.join("Preferences").is_file() {
-            continue;
+        //
+        // `is_file()` answers false for both "absent" and "not permitted", and
+        // those mean opposite things — the second would silently turn a whole
+        // profile into "no profile this has ever opened".
+        match std::fs::metadata(path.join("Preferences")) {
+            Ok(m) if m.is_file() => {}
+            Ok(_) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                state.access = Access::NeedsFullDiskAccess;
+                continue;
+            }
+            Err(_) => continue,
         }
         profiles.push(path);
     }
@@ -919,7 +972,7 @@ fn chromium(
             spec,
             &profile,
             Some(display),
-            true,
+            None,
             live.as_deref(),
             cfg,
             report,
@@ -934,12 +987,23 @@ fn firefox(
     state: &mut BrowserState,
     report: &mut PrivacyReport,
 ) {
-    let Ok(entries) = std::fs::read_dir(root.join("Profiles")) else {
+    // Firefox's profiles live one level below the root the access probe
+    // opened, and TCC (or an ordinary mode bit) can deny that level on its own.
+    let profiles_dir = root.join("Profiles");
+    match access_of(&profiles_dir) {
+        Access::Readable => {}
+        Access::NotInstalled => return,
+        worse => {
+            state.access = worse;
+            return;
+        }
+    }
+    let Ok(entries) = std::fs::read_dir(&profiles_dir) else {
         return;
     };
     let mut profiles: Vec<PathBuf> = Vec::new();
     for entry in entries.flatten() {
-        let path = root.join("Profiles").join(entry.file_name());
+        let path = profiles_dir.join(entry.file_name());
         if !plain_dir(&path, &mut report.skipped_symlink) {
             continue;
         }
@@ -963,7 +1027,7 @@ fn firefox(
             spec,
             &profile,
             Some(display),
-            true,
+            None,
             live.as_deref(),
             cfg,
             report,
@@ -974,16 +1038,38 @@ fn firefox(
 fn safari(
     spec: &'static BrowserSpec,
     cfg: &PrivacyConfig,
-    _state: &mut BrowserState,
+    state: &mut BrowserState,
     report: &mut PrivacyReport,
 ) {
-    for (rel, offerable_root) in SAFARI_ROOTS {
+    let mut any_readable = false;
+    let mut denied: Option<Access> = None;
+
+    for (rel, withhold) in SAFARI_ROOTS {
         let root = cfg.home.join(rel);
-        if !root.is_dir() {
+        // Each root is gated on its own, and a denial must not be reported as
+        // "there is nothing here" — that is the conflation this module promises
+        // not to make.
+        match access_of(&root) {
+            Access::Readable => any_readable = true,
+            Access::NotInstalled => continue,
+            worse => {
+                denied.get_or_insert(worse);
+                continue;
+            }
+        }
+        if !plain_dir(&root, &mut report.skipped_symlink) {
             continue;
         }
-        collect(spec, &root, None, *offerable_root, None, cfg, report);
+        collect(spec, &root, None, *withhold, None, cfg, report);
     }
+
+    // A denial anywhere wins: the report is then a floor, and `is_partial`
+    // says so. Otherwise Safari is present if any of its roots was.
+    state.access = match denied {
+        Some(worse) => worse,
+        None if any_readable => Access::Readable,
+        None => Access::NotInstalled,
+    };
 }
 
 /// Look up every recognized name under one root. Nothing is listed and
@@ -993,7 +1079,8 @@ fn collect(
     spec: &'static BrowserSpec,
     profile_root: &Path,
     profile: Option<String>,
-    root_offerable: bool,
+    // Why every row under this root is withheld, if it is.
+    withhold_root: Option<&'static str>,
     live: Option<&Path>,
     cfg: &PrivacyConfig,
     report: &mut PrivacyReport,
@@ -1031,12 +1118,27 @@ fn collect(
             let mut size = meta.len();
             for suffix in SIDECARS {
                 let sidecar = sidecar_of(&path, suffix);
-                if let Ok(m) = std::fs::symlink_metadata(&sidecar) {
-                    if m.is_file() {
-                        size = size.saturating_add(m.len());
-                        members.push(sidecar);
-                    }
+                let Ok(m) = std::fs::symlink_metadata(&sidecar) else {
+                    continue;
+                };
+                // Must be a regular file. A symlink here would make a member —
+                // and so, in the disposal half, a target — of something the
+                // sidecar merely points at.
+                if m.file_type().is_symlink() {
+                    report.skipped_symlink += 1;
+                    continue;
                 }
+                if !m.is_file() {
+                    continue;
+                }
+                // A hard link named like a sidecar is accepted and its bytes
+                // counted here. Nothing is lost by that — unlinking one name
+                // leaves the other — but the bytes are attributed to this row
+                // rather than to whatever else shares the inode. Recorded as a
+                // known limit; closing it would mean carrying inode identity
+                // through to the UI, which `largeold` already declined to do.
+                size = size.saturating_add(m.len());
+                members.push(sidecar);
             }
             // The database last: a partial run must leave it present with its
             // sidecars gone, never a hot journal beside an empty database.
@@ -1050,9 +1152,9 @@ fn collect(
         if entry.class == Class::SiteStorage {
             offerable = false;
             withheld = Some(SITE_STORAGE_REASON.to_string());
-        } else if !root_offerable {
+        } else if let Some(reason) = withhold_root {
             offerable = false;
-            withheld = Some(SAFARI_CONTAINER_REASON.to_string());
+            withheld = Some(reason.to_string());
         } else if let Some(marker) = live {
             // A running browser holds these open and rewrites them on quit, so
             // "removed" would be visibly false a minute later. Caches are the

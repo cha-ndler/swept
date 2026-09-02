@@ -215,11 +215,13 @@ fn a_profile_name_never_comes_from_a_parsed_configuration_file() {
 
     let report = scan(&cfg(&home));
     for row in &report.rows {
-        assert!(
-            row.path.starts_with(&home),
-            "{} escaped the fixture home",
-            row.path.display()
-        );
+        for member in &row.members {
+            assert!(
+                member.starts_with(&home),
+                "{} escaped the fixture home",
+                member.display()
+            );
+        }
     }
     assert_eq!(report.browser("google-chrome").unwrap().profiles, 1);
     assert_eq!(report.browser("firefox").unwrap().profiles, 1);
@@ -472,13 +474,18 @@ fn a_neighbouring_profiles_cookie_jar_is_never_claimed_for_this_profile() {
     write(&two.join("Cookies"), 200);
 
     let report = scan(&cfg(&home));
+    // `members`, not `path`. The disposal half confines every member against
+    // `profile_root`, and `path` is only the last of them — asserting on `path`
+    // would leave the invariant that actually authorizes disposal unpinned.
     for row in &report.rows {
-        assert!(
-            row.path.starts_with(&row.profile_root),
-            "{} is not inside its own profile root {}",
-            row.path.display(),
-            row.profile_root.display()
-        );
+        for member in &row.members {
+            assert!(
+                member.starts_with(&row.profile_root),
+                "{} is not inside its own profile root {}",
+                member.display(),
+                row.profile_root.display()
+            );
+        }
     }
     assert_eq!(rows_at(&report, &one.join("Cookies")), 1);
     assert_eq!(rows_at(&report, &two.join("Cookies")), 1);
@@ -878,18 +885,95 @@ fn an_unreadable_browser_root_is_reported_as_needing_full_disk_access() {
     assert_eq!(access, Access::NeedsFullDiskAccess);
 }
 
-/// Safari being unreadable — which is its resting state without Full Disk
-/// Access — must not suppress everything else. M4's "an unreadable
-/// `/Applications` refuses the scan" does not apply: there is no authority
-/// question here, so an unreadable root can only under-report, never mis-offer.
+/// Deny a directory and restore it, whatever the assertions do.
+fn while_denied<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(dir).unwrap().permissions();
+    perms.set_mode(0o000);
+    fs::set_permissions(dir, perms).unwrap();
+    let out = f();
+    let mut perms = fs::metadata(dir).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(dir, perms).unwrap();
+    out
+}
+
+/// Safari being unreadable — its resting state without Full Disk Access — must
+/// not suppress everything else. M4's "an unreadable `/Applications` refuses
+/// the scan" does not apply: there is no authority question here, so an
+/// unreadable root can only under-report, never mis-offer.
+///
+/// Denied, not absent. Those are the two states this module must never
+/// conflate, so a test named "unreadable" that used an absent directory would
+/// be checking the opposite branch.
 #[test]
 fn an_unreadable_safari_does_not_suppress_the_chromium_rows() {
     let (_d, home) = fixture();
     let p = chromium_profile(&home, "Profile 1");
     write(&p.join("Cookies"), 100);
-    // Safari's roots simply absent, standing in for TCC denial.
-    let report = scan(&cfg(&home));
+    let safari = home.join("Library/Safari");
+    write(&safari.join("History.db"), 100);
+
+    let report = while_denied(&safari, || scan(&cfg(&home)));
+
+    assert_eq!(
+        report.browser("safari").unwrap().access,
+        Access::NeedsFullDiskAccess
+    );
     assert_eq!(rows_at(&report, &p.join("Cookies")), 1);
+    assert!(report.is_partial(), "a denied root is a floor, and says so");
+}
+
+/// The probe opens the browser's root, but the data is a level below it, and
+/// TCC gates each level on its own. A denial down there used to surface as
+/// "installed files, but no profile this has ever opened" — a confident
+/// falsehood, and exactly the conflation this module promises not to make.
+#[test]
+fn a_denial_below_the_probed_root_is_a_denial_not_an_absence() {
+    let (_d, home) = fixture();
+    let ff = firefox_profile(&home, "abc.default-release");
+    write(&ff.join("cookies.sqlite"), 100);
+    let profiles = firefox_root(&home).join("Profiles");
+
+    let report = while_denied(&profiles, || scan(&cfg(&home)));
+
+    assert_eq!(
+        report.browser("firefox").unwrap().access,
+        Access::NeedsFullDiskAccess
+    );
+    assert!(report.is_partial());
+}
+
+/// The Chromium half of the same shape: a profile directory that cannot be
+/// read is not a directory that holds no profile.
+#[test]
+fn a_denied_chromium_profile_is_a_denial_not_a_missing_profile() {
+    let (_d, home) = fixture();
+    let p = chromium_profile(&home, "Profile 1");
+    write(&p.join("Cookies"), 100);
+
+    let report = while_denied(&p, || scan(&cfg(&home)));
+
+    assert_eq!(
+        report.browser("google-chrome").unwrap().access,
+        Access::NeedsFullDiskAccess
+    );
+    assert!(report.is_partial());
+}
+
+/// A symlink that was dropped is something that was there and is not
+/// reported. The count existed before and nothing read it.
+#[test]
+fn a_dropped_symlink_makes_the_report_partial() {
+    let (_d, home) = fixture();
+    let p = chromium_profile(&home, "Profile 1");
+    let elsewhere = home.join("Documents/notes.txt");
+    write(&elsewhere, 100);
+    std::os::unix::fs::symlink(&elsewhere, p.join("Cookies")).unwrap();
+
+    let report = scan(&cfg(&home));
+    assert_eq!(report.skipped_symlink, 1);
+    assert!(report.is_partial());
 }
 
 #[test]
@@ -982,4 +1066,192 @@ fn both_chromium_cookie_layouts_are_searched_and_neither_is_called_the_old_one()
         assert_eq!(row.label, "Cookies");
         assert!(row.offerable);
     }
+}
+
+// --- the checks that had no deletion resistance ----------------------------
+
+/// The canonical-spelling re-check is the only thing standing between a
+/// symlinked *intermediate component* and a row that looks confined but is not.
+/// A row at `<profile>/Network/Cookies` is lexically inside its profile root,
+/// so the disposal half's byte-equality ceiling and its root confinement would
+/// both accept it — while the file it names lives wherever `Network` points.
+#[test]
+fn a_symlinked_path_component_inside_a_profile_is_refused() {
+    let (_d, home) = fixture();
+    let p = chromium_profile(&home, "Profile 1");
+    let elsewhere = home.join("Documents/private");
+    write(&elsewhere.join("Cookies"), 100);
+    std::os::unix::fs::symlink(&elsewhere, p.join("Network")).unwrap();
+
+    let report = scan(&cfg(&home));
+    assert!(report.rows.is_empty());
+    assert_eq!(report.skipped_symlink, 1);
+}
+
+/// The same rule one level higher: a profile reached through a symlinked
+/// ancestor is not this profile, however much it looks like one.
+#[test]
+fn a_profile_reached_through_a_symlinked_ancestor_is_refused() {
+    let (_d, home) = fixture();
+    let real = home.join("Documents/elsewhere/Chrome");
+    let inner = real.join("Profile 1");
+    write(&inner.join("Preferences"), 10);
+    write(&inner.join("Cookies"), 100);
+    let vendor = home.join("Library/Application Support/Google");
+    mkdir(&vendor);
+    std::os::unix::fs::symlink(&real, vendor.join("Chrome")).unwrap();
+
+    let report = scan(&cfg(&home));
+    assert!(report.rows.is_empty());
+}
+
+/// A recognized name of the wrong *type* is not the thing this module means.
+/// A directory called `Cookies` is not a cookie jar, and a file called
+/// `Sessions` is not a session directory — emitting either would give the row
+/// the wrong disposal shape, sending a tree through `guard` or a file through
+/// `guard_dir`.
+#[test]
+fn a_recognised_name_of_the_wrong_type_is_not_a_row() {
+    let (_d, home) = fixture();
+    let p = chromium_profile(&home, "Profile 1");
+    mkdir(&p.join("Cookies"));
+    write(&p.join("Sessions"), 100);
+
+    let report = scan(&cfg(&home));
+    assert!(report.rows.is_empty());
+}
+
+/// A sidecar must be a regular file. A symlink named `Cookies-wal` would
+/// otherwise become a member of the row, and so a disposal target pointing at
+/// whatever it names.
+#[test]
+fn a_symlinked_sidecar_is_never_a_member_of_a_row() {
+    let (_d, home) = fixture();
+    let ff = firefox_profile(&home, "abc.default-release");
+    write(&ff.join("cookies.sqlite"), 100);
+    let elsewhere = home.join("Documents/private.txt");
+    write(&elsewhere, 500);
+    std::os::unix::fs::symlink(&elsewhere, ff.join("cookies.sqlite-wal")).unwrap();
+
+    let report = scan(&cfg(&home));
+    let row = report
+        .rows
+        .iter()
+        .find(|r| r.path == ff.join("cookies.sqlite"))
+        .unwrap();
+    assert_eq!(row.members, vec![ff.join("cookies.sqlite")]);
+    assert_eq!(row.size_bytes, 100);
+    assert_eq!(report.skipped_symlink, 1);
+}
+
+/// A measurement that ran out of budget describes no tree truthfully. Offering
+/// it would put a figure in front of a human that is not the figure they are
+/// acting on — and an under-summed tree cannot trip the size threshold that
+/// would otherwise have withheld it.
+#[test]
+fn a_directory_whose_measurement_was_cut_short_is_shown_and_not_offered() {
+    let (_d, home) = fixture();
+    let p = chromium_profile(&home, "Profile 1");
+    for i in 0..40 {
+        write(&p.join("GPUCache").join(format!("f{i}.bin")), 100);
+    }
+
+    let mut c = cfg(&home);
+    c.max_examined = 5;
+    let report = scan(&c);
+    let row = report
+        .rows
+        .iter()
+        .find(|r| r.path == p.join("GPUCache"))
+        .unwrap();
+    assert!(row.size_is_floor);
+    assert!(!row.offerable, "a floor is not a figure anyone may act on");
+    assert!(!row.bulk_grantable);
+    assert!(report.is_partial());
+}
+
+// --- Safari ----------------------------------------------------------------
+
+/// Safari's own container was never exercised by anything, so both container
+/// tuples could be flipped to offerable with every test still passing.
+#[test]
+fn safaris_container_data_is_shown_and_never_offered() {
+    let (_d, home) = fixture();
+    let jar = home.join("Library/Containers/com.apple.Safari/Data/Library/Cookies");
+    write(&jar.join("Cookies.binarycookies"), 100);
+    let webkit = home.join("Library/Containers/com.apple.Safari/Data/Library/WebKit");
+    write(&webkit.join("WebsiteData/blob"), 100);
+
+    let report = scan(&cfg(&home));
+    assert_eq!(report.rows.len(), 2);
+    for row in &report.rows {
+        assert!(!row.offerable, "{} was offered", row.path.display());
+        assert!(row.withheld.is_some());
+    }
+    // The cookie jar is withheld *because* it is in the container — that is the
+    // only thing keeping this module out of another app's sandbox. (The
+    // `WebsiteData` row is withheld too, but as website storage, which is the
+    // more informative of the two reasons and is checked first.)
+    let jar = report
+        .rows
+        .iter()
+        .find(|r| r.class == Class::Cookies)
+        .unwrap();
+    assert!(jar.withheld.as_ref().unwrap().contains("container"));
+}
+
+/// `~/Library/Cookies` is not Safari's. It is the shared CFNetwork jar every
+/// non-sandboxed app writes to, so offering it under a row that says "Safari"
+/// would take consent against a false description.
+#[test]
+fn the_shared_cookie_jar_is_not_offered_as_safaris() {
+    let (_d, home) = fixture();
+    write(&home.join("Library/Cookies/Cookies.binarycookies"), 100);
+
+    let report = scan(&cfg(&home));
+    let row = report
+        .rows
+        .iter()
+        .find(|r| r.path == home.join("Library/Cookies/Cookies.binarycookies"))
+        .unwrap();
+    assert!(!row.offerable);
+    assert!(row
+        .withheld
+        .as_ref()
+        .unwrap()
+        .contains("every non-sandboxed app"));
+}
+
+#[test]
+fn safaris_own_history_and_session_files_are_found() {
+    let (_d, home) = fixture();
+    let safari = home.join("Library/Safari");
+    write(&safari.join("History.db"), 100);
+    write(&safari.join("History.db-wal"), 50);
+    write(&safari.join("Downloads.plist"), 10);
+    write(&safari.join("TopSites.plist"), 10);
+
+    let report = scan(&cfg(&home));
+    let history = report
+        .rows
+        .iter()
+        .find(|r| r.path == safari.join("History.db"))
+        .unwrap();
+    assert_eq!(history.members.len(), 2);
+    assert_eq!(*history.members.last().unwrap(), safari.join("History.db"));
+    assert!(history.offerable);
+
+    // Top Sites is history in both families, or the consequence sentence shown
+    // at the moment of consent would differ between two identical things.
+    let top = report
+        .rows
+        .iter()
+        .find(|r| r.path == safari.join("TopSites.plist"))
+        .unwrap();
+    assert_eq!(top.class, Class::History);
+    assert_eq!(top.consequence, Consequence::ErasesHistory);
+
+    // Safari leaves no marker saying whether it is running, so the report says
+    // so rather than implying it checked.
+    assert!(report.caveats.iter().any(|c| c.contains("no marker")));
 }

@@ -172,13 +172,34 @@ pub fn measure(path: &Path, bounds: &Bounds, examined: &mut usize) -> Measured {
     }
 }
 
-/// Whether a measured row may be offered at all. A tree `guard_dir` is certain
-/// to refuse is shown and withheld, never offered.
+/// A measurement that could not be completed says nothing trustworthy about
+/// what the tree holds.
+pub const INCOMPLETE_MEASURE: &str = "the tree could not be measured completely, so what it \
+     holds cannot be stated truthfully";
+
+/// Whether a measured row may be offered at all.
+///
+/// Two reasons to withhold, and the second is easy to miss. A tree `guard_dir`
+/// is certain to refuse is shown and never offered — that is what
+/// `undisposable` is for. But a tree whose *measurement* was cut short is just
+/// as unofferable, for a different reason: its `size_bytes` and `file_count`
+/// are floors, and offering it would put a figure in front of a human that is
+/// not the figure they would be acting on. It also defeats the `max_bytes` arm
+/// of `undisposable` — an under-summed tree cannot exceed a threshold — so a
+/// row `guard_dir` will refuse could otherwise be offered, which is exactly the
+/// drift this module exists to prevent. Contract item 5 wants the count and
+/// size shown for a recursive removal to be true, not conservative.
 pub fn offer(m: &Measured) -> (bool, Option<String>) {
-    match m.undisposable {
-        Some(why) => (false, Some(format!("{UNDISPOSABLE_REASON}{why}"))),
-        None => (true, None),
+    if let Some(why) = m.undisposable {
+        return (false, Some(format!("{UNDISPOSABLE_REASON}{why}")));
     }
+    if m.size_is_floor {
+        return (
+            false,
+            Some(format!("{UNDISPOSABLE_REASON}{INCOMPLETE_MEASURE}")),
+        );
+    }
+    (true, None)
 }
 
 #[cfg(test)]

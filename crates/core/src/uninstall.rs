@@ -538,7 +538,16 @@ impl LeftoverReport {
             || self.skipped_symlink > 0
             || self.skipped_case_variant > 0
             || self.skipped_unrepresentable > 0
-            || self.rows.iter().any(|r| r.offerable && r.size_is_floor)
+            // A floor that a deliberate withholding explains is the module
+            // working, and a caveat that fires on correct behaviour teaches
+            // people to ignore it. A floor with no such explanation is a gap,
+            // whether or not the row ended up offerable — which it no longer
+            // does, since `treewalk::offer` now withholds an incomplete
+            // measurement.
+            || self
+                .rows
+                .iter()
+                .any(|r| r.size_is_floor && r.undisposable.is_none())
     }
 
     pub fn total_bytes(&self) -> u64 {

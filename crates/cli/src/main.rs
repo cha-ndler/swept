@@ -355,6 +355,11 @@ fn print_plan(plan: &Plan) {
 fn print_privacy(report: &privacy::PrivacyReport) {
     for browser in &report.browsers {
         let state = match &browser.access {
+            // Safari has no profiles by construction, so a profile count would
+            // read as a finding rather than a fact about how Safari is shaped.
+            privacy::Access::Readable if browser.family == privacy::Family::Safari => {
+                "readable".to_string()
+            }
             privacy::Access::Readable if browser.profiles == 0 => {
                 // The measured case: a vendor directory another installer
                 // created, holding no profile the browser ever opened.
@@ -406,6 +411,13 @@ fn print_privacy(report: &privacy::PrivacyReport) {
         for covered in &report.covered_elsewhere {
             println!("  {} ({})", covered.path.display(), covered.category);
         }
+    }
+    if report.skipped_symlink > 0 {
+        println!(
+            "\n{} item(s) were symlinks and were not followed, so they are not \
+             counted above.",
+            report.skipped_symlink
+        );
     }
     for caveat in &report.caveats {
         println!("\nnote: {caveat}");

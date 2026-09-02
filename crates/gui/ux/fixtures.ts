@@ -91,6 +91,7 @@ export const SAMPLE_SUMMARY: CleanSummary = {
   executed: 4213,
   refused: 0,
   bytes_freed: Math.round(6.44 * GiB),
+  entries_freed: 0,
 };
 
 // A representative Large & Old result. Deliberately includes the "partial"
@@ -141,6 +142,7 @@ export const SAMPLE_DISPOSE_SUMMARY: CleanSummary = {
   executed: 2,
   refused: 0,
   bytes_freed: Math.round(26.3 * GiB),
+  entries_freed: 0,
 };
 
 // --- Space Lens ------------------------------------------------------------

@@ -10,6 +10,8 @@
 //! dry-run default, Trash-first disposal, mass-delete confirmation, and audit
 //! log all still apply exactly as in the CLI.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -19,10 +21,15 @@ use macclean_core::audit::AuditLog;
 use macclean_core::executor::{execute, Consent, Sink, SystemSink};
 use macclean_core::largeold;
 use macclean_core::loginitems::{self, LoginItem};
-use macclean_core::plan::{Disposal, Plan, PlannedAction};
+use macclean_core::plan::{Disposal, Plan, PlannedAction, PlannedDirAction};
 use macclean_core::report::ScanReport;
 use macclean_core::scanner::{scan, scan_with_progress, Progress, ScanConfig};
 use macclean_core::spacelens;
+use macclean_core::uninstall::{
+    self, BundleId, Candidate, DisplayName, Kind, LeftoverReport, MatchedVia, Residence,
+    UninstallConfig, UninstallError,
+};
+use safety::DirLimits;
 
 /// Scan/clean filters as the frontend sends them.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -72,6 +79,9 @@ pub struct CleanSummary {
     pub executed: usize,
     pub refused: usize,
     pub bytes_freed: u64,
+    /// Names removed by directory actions. `executed` counts a directory as
+    /// one action; this is how many files that one action stood for.
+    pub entries_freed: u64,
 }
 
 /// Resolve and canonicalize the real home directory for the running app.
@@ -188,6 +198,7 @@ pub fn clean_with_sink(
             executed: report.executed,
             refused: report.refused,
             bytes_freed: report.bytes_executed,
+            entries_freed: report.entries_executed,
         }),
         Err(e) => Err(e.to_string()),
     }
@@ -694,6 +705,7 @@ pub fn dispose_selected_with_sink(
             executed: report.executed,
             refused: report.refused,
             bytes_freed: report.bytes_executed,
+            entries_freed: report.entries_executed,
         }),
         Err(e) => Err(e.to_string()),
     }
@@ -710,6 +722,478 @@ pub fn dispose_selected(
     let mut audit = AuditLog::open(&audit_path).map_err(|e| e.to_string())?;
     dispose_selected_with_sink(
         &home,
+        &paths,
+        expected,
+        confirm_mass_delete,
+        &SystemSink,
+        &mut audit,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Uninstaller — leftover discovery, and the disposal whose ceiling is a scan
+//
+// The Large & Old disposal above confines a selection to the discovery roots.
+// That is not enough here: `<container>/Data/Documents` sits *inside* a
+// leftover location and must never be acted on. So this entry point's ceiling
+// is not a set of roots but the `offerable` rows of a scan run inside the
+// call — a path is accepted only if it is byte-equal to one of them.
+// ---------------------------------------------------------------------------
+
+/// What the frontend names when it asks about an application.
+///
+/// Both strings are validated by `macclean_core::uninstall` before they become
+/// match keys. Deliberately **only** these two: a command that could set the
+/// inventory roots or the home would let a frontend make an installed app look
+/// uninstalled, which is the one mistake that module must never make.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UninstallTarget {
+    pub id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+/// One leftover row, as the UI renders it. No `selected` field, for the same
+/// reason Large & Old has none: every grant is a human's individual choice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LeftoverRowDto {
+    pub path: String,
+    pub location: String,
+    pub matched_via: String,
+    pub kind: String,
+    /// Whether disposing of this row is a directory action — which always
+    /// asks for the mass-delete confirmation, however small the tree.
+    pub is_dir: bool,
+    pub size_bytes: u64,
+    pub file_count: u64,
+    pub size_is_floor: bool,
+    pub offerable: bool,
+    pub bulk_grantable: bool,
+    pub withheld: Option<String>,
+    pub undisposable: Option<String>,
+    pub license_suspected: bool,
+}
+
+/// Mirrors `uninstall::LeftoverReport`, with `is_partial()` flattened and the
+/// offerable totals computed from the rows actually emitted — so the header
+/// figure and the visible list cannot disagree when a row is dropped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UninstallReportDto {
+    pub target: String,
+    /// True when the app is still installed, in which case `rows` is empty:
+    /// an installed app has no leftovers, it has files.
+    pub installed: bool,
+    pub installed_at: Vec<String>,
+    pub rows: Vec<LeftoverRowDto>,
+    pub offerable_count: usize,
+    pub offerable_bytes: u64,
+    pub withheld_count: usize,
+    pub examined: usize,
+    pub truncated: bool,
+    pub skipped_unreadable: usize,
+    pub skipped_symlink: usize,
+    pub skipped_case_variant: usize,
+    pub skipped_unrepresentable: usize,
+    pub skipped_uncorroborated_name: usize,
+    /// Rows whose path is not valid UTF-8 and so cannot round-trip to the UI.
+    pub dropped_unrepresentable_rows: usize,
+    pub deferred: Vec<(String, String)>,
+    pub caveats: Vec<String>,
+    pub partial: bool,
+}
+
+const LEFTOVER_CATEGORY: &str = "uninstaller-leftovers";
+
+/// The most of a frontend string that is echoed into a refusal reason — and
+/// so into the append-only audit log, which is never rotated. Long enough to
+/// recognise a path, short enough that a webview cannot fill the disk one
+/// refusal at a time.
+const ECHO_LIMIT: usize = 160;
+
+fn clip(s: &str) -> String {
+    if s.chars().count() <= ECHO_LIMIT {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(ECHO_LIMIT).collect::<String>())
+    }
+}
+
+fn parse_target(target: &UninstallTarget) -> Result<(BundleId, Option<DisplayName>), String> {
+    let id = BundleId::parse(&target.id)
+        .ok_or_else(|| UninstallError::UnmatchableId(clip(&target.id)).to_string())?;
+    let name = match &target.display_name {
+        Some(raw) => Some(
+            DisplayName::parse(raw)
+                .ok_or_else(|| format!("refused: {:?} is not a usable display name", clip(raw)))?,
+        ),
+        None => None,
+    };
+    Ok((id, name))
+}
+
+fn row_dto(row: &Candidate) -> Option<LeftoverRowDto> {
+    // `to_str`, not `display()`: the disposal path identifies a selection by
+    // byte equality with the string emitted here, and a lossy conversion
+    // would break that identity in a way it could not detect.
+    let path = row.path.to_str()?.to_string();
+    let is_dir = std::fs::symlink_metadata(&row.path)
+        .map(|m| m.is_dir())
+        .unwrap_or(false);
+    let matched_via = match &row.matched_via {
+        MatchedVia::Id => "id".to_string(),
+        MatchedVia::IdWithSuffix(s) => format!("id{s}"),
+        MatchedVia::SiblingSegment(tail) => format!("sibling:{tail}"),
+        MatchedVia::IdWithPrefix(prefix) => format!("prefix:{prefix}"),
+        MatchedVia::DisplayName(name) => format!("name:{name}"),
+    };
+    let kind = match row.kind {
+        Kind::Leftover => "leftover",
+        Kind::UserData => "user_data",
+        Kind::Shared => "shared",
+    };
+    Some(LeftoverRowDto {
+        path,
+        location: row.location.as_str().to_string(),
+        matched_via,
+        kind: kind.to_string(),
+        is_dir,
+        size_bytes: row.size_bytes,
+        file_count: row.file_count,
+        size_is_floor: row.size_is_floor,
+        offerable: row.offerable,
+        bulk_grantable: row.bulk_grantable,
+        withheld: row.withheld.clone(),
+        undisposable: row.undisposable.map(str::to_string),
+        license_suspected: row.license_suspected,
+    })
+}
+
+fn report_dto(report: &LeftoverReport) -> UninstallReportDto {
+    let mut rows = Vec::with_capacity(report.rows.len());
+    let mut dropped = 0usize;
+    for row in &report.rows {
+        match row_dto(row) {
+            Some(dto) => rows.push(dto),
+            None => dropped += 1,
+        }
+    }
+    let offerable_count = rows.iter().filter(|r| r.offerable).count();
+    let offerable_bytes = rows
+        .iter()
+        .filter(|r| r.offerable)
+        .fold(0u64, |a, r| a.saturating_add(r.size_bytes));
+    let (installed, installed_at) = match &report.residence {
+        Residence::Installed(paths) => (
+            true,
+            paths.iter().map(|p| p.display().to_string()).collect(),
+        ),
+        Residence::NotFound { .. } => (false, Vec::new()),
+    };
+    UninstallReportDto {
+        target: report.target.to_string(),
+        installed,
+        installed_at,
+        rows,
+        offerable_count,
+        offerable_bytes,
+        withheld_count: report.withheld_count,
+        examined: report.examined,
+        truncated: report.truncated,
+        skipped_unreadable: report.skipped_unreadable,
+        skipped_symlink: report.skipped_symlink,
+        skipped_case_variant: report.skipped_case_variant,
+        skipped_unrepresentable: report.skipped_unrepresentable,
+        skipped_uncorroborated_name: report.skipped_uncorroborated_name,
+        dropped_unrepresentable_rows: dropped,
+        deferred: report
+            .deferred
+            .iter()
+            .map(|(p, why)| (p.to_string(), why.to_string()))
+            .collect(),
+        caveats: report.caveats.iter().map(|c| c.to_string()).collect(),
+        partial: report.is_partial() || dropped > 0,
+    }
+}
+
+/// Read-only: what `target` left behind. The testable seam — a function that
+/// resolves the real home can never be exercised by a fixture, which is how
+/// an earlier empty-selection fail-open survived.
+pub fn uninstall_leftovers_in(
+    cfg: &UninstallConfig,
+    target: &UninstallTarget,
+) -> Result<UninstallReportDto, String> {
+    let (id, name) = parse_target(target)?;
+    let report =
+        uninstall::leftovers_for_named(cfg, &id, name.as_ref()).map_err(|e| e.to_string())?;
+    Ok(report_dto(&report))
+}
+
+/// Read-only, against the real home.
+pub fn uninstall_leftovers(target: &UninstallTarget) -> Result<UninstallReportDto, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    uninstall_leftovers_in(&UninstallConfig::new(home), target)
+}
+
+/// Move individually-chosen leftover rows to the Trash.
+///
+/// Stricter than [`dispose_selected_with_sink`], because its ceiling has to be:
+///
+/// - **Discovery runs again, inside this call.** A path is accepted only if it
+///   is byte-equal (`OsStr`, not `Path` — `Path` equality is component-wise,
+///   so `/x/./y` would pass) to the `path` of a row with `offerable == true` in
+///   that fresh report. So a container root, a `Data/Documents` row, a group
+///   container, a withheld launch agent, a tree `guard_dir` would refuse, and
+///   anything the user never saw are all rejected in one place — and an app
+///   that was installed since the scan yields no rows at all, which rejects
+///   everything.
+/// - **A scan that could not complete refuses the whole request.** An
+///   unreadable application root means "is it still installed?" has no
+///   answer, and that must never become a disposal.
+/// - **Every path is re-guarded individually** — `guard` for a file,
+///   `guard_dir` for a directory — with the denylist first, and must already be
+///   its own canonical spelling.
+/// - **Any rejection refuses the whole request.** A partial run does not match
+///   the list the user confirmed.
+/// - **Trash only.** A directory action cannot express anything else.
+///
+/// `bulk_grantable == false` rows are accepted: that flag governs a select-all
+/// gesture in the UI, and enforcing it here would break the individual
+/// selection it exists to require.
+pub fn dispose_leftovers_with_sink(
+    cfg: &UninstallConfig,
+    target: &UninstallTarget,
+    paths: &[String],
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+    sink: &dyn Sink,
+    audit: &mut AuditLog,
+) -> Result<CleanSummary, String> {
+    if paths.is_empty() {
+        return refuse_and_record(audit, "refused: nothing was selected.".to_string());
+    }
+    // The denylist's home-relative rules — Keychains, Mail, the home root —
+    // compare component-wise against the home, so a non-canonical spelling
+    // would silently disable all three for the whole run. `largeold::find_in`
+    // and `uninstall::leftovers_in` canonicalize; this seam refuses instead,
+    // because the scan and `resolved_locations` read the same field and a
+    // substitution here would leave them disagreeing about the disk.
+    match safety::canonical_home(&cfg.home) {
+        Ok(canonical) if canonical == cfg.home => {}
+        _ => {
+            return refuse_and_record(
+                audit,
+                "refused: the home directory is not its canonical spelling, so the \
+                 denylist's home-relative rules could not be trusted for this run."
+                    .to_string(),
+            )
+        }
+    }
+    let (id, name) = match parse_target(target) {
+        Ok(t) => t,
+        Err(e) => return refuse_and_record(audit, e),
+    };
+    // Fresh, now. Fail closed on any error — `InventoryIncomplete` above all.
+    let report = match uninstall::leftovers_for_named(cfg, &id, name.as_ref()) {
+        Ok(r) => r,
+        Err(e) => return refuse_and_record(audit, format!("refused: {e}")),
+    };
+
+    // The ceiling: the offerable rows of *this* scan, keyed by bytes.
+    //
+    // Discovery guarantees that `offerable` already implies `Kind::Leftover`,
+    // no `undisposable` reason and no `withheld` reason. This is the last
+    // layer before a mutation, so that agreement is enforced here rather than
+    // trusted: a one-word regression in a row constructor over there must not
+    // be able to hand a container's `Data/Documents` to the Trash from here.
+    let offerable: BTreeMap<&OsStr, &Candidate> = report
+        .rows
+        .iter()
+        .filter(|r| {
+            r.offerable
+                && r.kind == Kind::Leftover
+                && r.undisposable.is_none()
+                && r.withheld.is_none()
+        })
+        .map(|r| (r.path.as_os_str(), r))
+        .collect();
+    // Defence in depth, and redundant by construction: every row is inside a
+    // resolved location root. Kept as the stated outer ceiling; it cannot
+    // replace the intersection above, because `Data/Documents` is inside a
+    // location root too.
+    let locations: Vec<PathBuf> = uninstall::resolved_locations(cfg)
+        .into_iter()
+        .map(|(_, p)| p)
+        .collect();
+
+    let mut actions = Vec::new();
+    let mut dirs = Vec::new();
+    let mut granted = Vec::new();
+    let mut granted_dirs = Vec::new();
+    let mut rejected: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<&OsStr> = BTreeSet::new();
+    // What the sheet showed: rows and their sizes, for the drift check.
+    let mut selected_rows = 0usize;
+    let mut selected_bytes = 0u64;
+
+    for raw in paths {
+        let key = OsStr::new(raw.as_str());
+        let shown = clip(raw);
+        let Some(row) = offerable.get(key) else {
+            rejected.push(format!("{shown}: not something this scan offers"));
+            continue;
+        };
+        // Two spellings cannot reach here (equality is byte-exact), but the
+        // same row twice must not count twice.
+        if !seen.insert(key) {
+            continue;
+        }
+        selected_rows += 1;
+        selected_bytes = selected_bytes.saturating_add(row.size_bytes);
+
+        let meta = match std::fs::symlink_metadata(&row.path) {
+            Ok(m) => m,
+            Err(e) => {
+                rejected.push(format!("{shown}: {e}"));
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            rejected.push(format!("{shown}: is now a symlink"));
+            continue;
+        }
+        // In each branch, in order: the denylist (through the guard), then the
+        // canonical spelling, then the outer ceiling. Each can only narrow.
+        if meta.is_dir() {
+            // The tree walked in full, denylist at every depth, bounded. Its
+            // canonical path must be the row's own spelling: anything that
+            // resolves elsewhere is not the directory that was listed.
+            let dir = match safety::guard_dir(&row.path, &cfg.home, DirLimits::default()) {
+                Ok(d) => d,
+                Err(e) => {
+                    rejected.push(format!("{shown}: {e}"));
+                    continue;
+                }
+            };
+            if dir.as_path().as_os_str() != key {
+                rejected.push(format!(
+                    "{shown}: resolves to {} — not the directory that was listed",
+                    dir.as_path().display()
+                ));
+                continue;
+            }
+            if !safety::allowlist::is_allowed(dir.as_path(), &locations) {
+                rejected.push(format!("{shown}: outside the leftover locations"));
+                continue;
+            }
+            granted_dirs.push(dir.clone());
+            dirs.push(PlannedDirAction {
+                dir,
+                category: LEFTOVER_CATEGORY.to_string(),
+            });
+        } else {
+            let safe = match safety::guard(&row.path, &cfg.home) {
+                Ok(s) => s,
+                Err(e) => {
+                    rejected.push(format!("{shown}: {e}"));
+                    continue;
+                }
+            };
+            if safe.as_path().as_os_str() != key {
+                rejected.push(format!(
+                    "{shown}: resolves to {safe} — not the file that was listed"
+                ));
+                continue;
+            }
+            if !safety::allowlist::is_allowed(safe.as_path(), &locations) {
+                rejected.push(format!("{shown}: outside the leftover locations"));
+                continue;
+            }
+            granted.push(safe.clone());
+            actions.push(PlannedAction {
+                path: safe,
+                size_bytes: meta.len(),
+                disposal: Disposal::Trash,
+                category: LEFTOVER_CATEGORY.to_string(),
+            });
+        }
+    }
+
+    if !rejected.is_empty() {
+        let shown: Vec<&str> = rejected.iter().take(3).map(|s| s.as_str()).collect();
+        let more = rejected.len().saturating_sub(shown.len());
+        let suffix = if more > 0 {
+            format!(" (and {more} more)")
+        } else {
+            String::new()
+        };
+        return refuse_and_record(
+            audit,
+            format!(
+                "refused: {} of {} selected items are not something this scan offers, so \
+                 nothing was touched. Scan again and review. First problems: {}{}",
+                rejected.len(),
+                paths.len(),
+                shown.join("; "),
+                suffix
+            ),
+        );
+    }
+
+    // Drift is measured against what the sheet showed — rows and their sizes
+    // from the fresh report — not against `SafeDir` figures, which answer a
+    // different question (names to unlink versus files shown).
+    if let Some(exp) = expected {
+        if let Some(why) = selection_drifted(selected_rows, selected_bytes, exp) {
+            return refuse_and_record(
+                audit,
+                format!(
+                    "refused: {why}, so nothing was touched. This would now act on {} rows \
+                     ({} bytes), but you confirmed {} rows ({} bytes). Scan again and review.",
+                    selected_rows, selected_bytes, exp.count, exp.bytes
+                ),
+            );
+        }
+    }
+
+    let plan = Plan {
+        actions,
+        dirs,
+        skipped_protected: 0,
+    };
+    let consent = Consent {
+        execute: true,
+        allow_permanent: false,
+        confirmed_mass_delete: confirm_mass_delete,
+        granted,
+        granted_dirs,
+    };
+
+    match execute(&plan, consent, &cfg.home, sink, audit) {
+        Ok(report) => Ok(CleanSummary {
+            dry_run: report.dry_run,
+            executed: report.executed,
+            refused: report.refused,
+            bytes_freed: report.bytes_executed,
+            entries_freed: report.entries_executed,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Dispose of leftover rows against the real home. See
+/// [`dispose_leftovers_with_sink`].
+pub fn dispose_leftovers(
+    target: &UninstallTarget,
+    paths: Vec<String>,
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+) -> Result<CleanSummary, String> {
+    let home = default_home().map_err(|e| e.to_string())?;
+    let audit_path = default_audit_path().map_err(|e| e.to_string())?;
+    let mut audit = AuditLog::open(&audit_path).map_err(|e| e.to_string())?;
+    dispose_leftovers_with_sink(
+        &UninstallConfig::new(home),
+        target,
         &paths,
         expected,
         confirm_mass_delete,

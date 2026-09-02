@@ -10,6 +10,11 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **Uninstaller commands** — `uninstall_leftovers` (read-only) and
+  `dispose_leftovers`, whose ceiling is not a set of roots but the offerable
+  rows of a scan run inside the call: a path is accepted only if it is
+  byte-equal to one of them, then re-guarded (`guard_dir` for a tree), and any
+  mismatch refuses the whole request. Trash only. No UI yet. (#40)
 - **Directory actions in the executor** — a plan can now carry a
   `PlannedDirAction`: a tree walked in full by `guard_dir`, moved to the Trash
   as one recoverable unit, by explicit per-path grant only (no allowlist route

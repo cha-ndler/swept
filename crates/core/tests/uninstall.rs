@@ -1642,3 +1642,37 @@ fn a_license_shaped_file_marks_its_row_and_keeps_it_out_of_bulk() {
         .iter()
         .any(|r| r.path == plain && r.bulk_grantable));
 }
+
+/// `is_partial` asks whether a floor is *unexplained*, not whether the row was
+/// offerable — and this is the case that distinguishes the two. An unreadable
+/// subtree floors the measurement and sets no other counter: `truncated` is
+/// false, `skipped_unreadable` counts locations rather than subtrees, and the
+/// row is withheld, so the old `offerable && size_is_floor` term would report
+/// the run as complete while a figure on screen was a floor.
+///
+/// The row is also correctly withheld: `guard_dir` refuses a tree it cannot
+/// read in full, so offering it would be a checkbox certain to fail.
+#[test]
+fn a_row_floored_by_an_unreadable_subtree_makes_the_report_partial() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_g, home, apps) = fixture();
+    let dir = leftover_dir(&home, Location::Caches, "com.acme.App", 4_000);
+    let inner = dir.join("inner");
+    write_file(&inner.join("blob.bin"), 100);
+
+    let mut perms = fs::metadata(&inner).unwrap().permissions();
+    perms.set_mode(0o000);
+    fs::set_permissions(&inner, perms).unwrap();
+    let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
+    let mut perms = fs::metadata(&inner).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&inner, perms).unwrap();
+
+    assert!(!report.truncated, "nothing hit the entry budget");
+    let row = &report.rows[0];
+    assert!(row.size_is_floor);
+    assert!(row.undisposable.is_none(), "no bound was exceeded");
+    assert!(!row.offerable, "a tree we could not measure is not offered");
+    assert!(report.is_partial());
+}

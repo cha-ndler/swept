@@ -520,30 +520,20 @@ pub struct LeftoverReport {
 }
 
 impl LeftoverReport {
-    /// True when the search saw less than it tried to see. The UI must present
-    /// the figures as a floor when this is set.
+    /// True when the figures are a floor rather than a total.
     ///
-    /// Withheld rows do **not** make a report partial: withholding is the
-    /// module working correctly, and a caveat that fires on correct behaviour
-    /// teaches people to ignore it.
-    ///
-    /// A floor counts only on an *offerable* row. A withheld row's figure is
-    /// informational — it is in no total a user can act on — and a tree
-    /// withheld *because* it holds a protected path is always a floor, since
-    /// the protected part is not measured. Counting that would make every
-    /// correctly-withheld `.git` tree a "partial" report.
+    /// A floor that a deliberate withholding explains is the module working,
+    /// and a caveat that fires on correct behaviour teaches people to ignore
+    /// it. A floor with no such explanation is a gap, whatever became of the
+    /// row — which is why this asks about `undisposable` rather than about
+    /// `offerable`: an incomplete measurement now withholds the row too, so
+    /// `offerable` no longer distinguishes the two cases.
     pub fn is_partial(&self) -> bool {
         self.truncated
             || self.skipped_unreadable > 0
             || self.skipped_symlink > 0
             || self.skipped_case_variant > 0
             || self.skipped_unrepresentable > 0
-            // A floor that a deliberate withholding explains is the module
-            // working, and a caveat that fires on correct behaviour teaches
-            // people to ignore it. A floor with no such explanation is a gap,
-            // whether or not the row ended up offerable — which it no longer
-            // does, since `treewalk::offer` now withholds an incomplete
-            // measurement.
             || self
                 .rows
                 .iter()

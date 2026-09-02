@@ -1103,6 +1103,10 @@ fn a_profile_reached_through_a_symlinked_ancestor_is_refused() {
 
     let report = scan(&cfg(&home));
     assert!(report.rows.is_empty());
+    // Not merely "no rows" — the directory is not a profile at all. Without
+    // this, the assertion above is satisfied by the per-entry canonical check
+    // one layer down, and the layer being tested here could be deleted unseen.
+    assert_eq!(report.browser("google-chrome").unwrap().profiles, 0);
 }
 
 /// A recognized name of the wrong *type* is not the thing this module means.
@@ -1254,4 +1258,62 @@ fn safaris_own_history_and_session_files_are_found() {
     // Safari leaves no marker saying whether it is running, so the report says
     // so rather than implying it checked.
     assert!(report.caveats.iter().any(|c| c.contains("no marker")));
+}
+
+/// Safari's four roots are gated independently, and the state must come from
+/// the worst of them. A mixed report — some roots readable, one denied — is the
+/// state a Mac without Full Disk Access is actually in, and it is the only
+/// state in which the precedence rule does any work.
+#[test]
+fn a_denial_among_safaris_roots_wins_over_the_roots_that_read_fine() {
+    let (_d, home) = fixture();
+    let safari = home.join("Library/Safari");
+    write(&safari.join("History.db"), 100);
+    write(&home.join("Library/Cookies/Cookies.binarycookies"), 100);
+
+    let report = while_denied(&safari, || scan(&cfg(&home)));
+
+    assert_eq!(
+        report.browser("safari").unwrap().access,
+        Access::NeedsFullDiskAccess,
+        "one readable root must not present a denied one as complete"
+    );
+    assert!(report.is_partial());
+    // The readable root was still read — a denial elsewhere hides nothing.
+    assert_eq!(
+        rows_at(&report, &home.join("Library/Cookies/Cookies.binarycookies")),
+        1
+    );
+}
+
+/// A root can be readable and not searchable: mode `r--` lets `read_dir`
+/// succeed, so every probe says "fine", and then every lookup inside it fails
+/// with `EACCES`. Safari has no deeper probe, so this is the only place the
+/// denial can be noticed at all — and reporting it as "holds nothing,
+/// completely" is the conflation this module exists to avoid.
+#[test]
+fn a_root_that_is_readable_but_not_searchable_is_a_denial_not_an_emptiness() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_d, home) = fixture();
+    let safari = home.join("Library/Safari");
+    write(&safari.join("History.db"), 100);
+    write(&safari.join("Downloads.plist"), 10);
+
+    let mut perms = fs::metadata(&safari).unwrap().permissions();
+    perms.set_mode(0o444);
+    fs::set_permissions(&safari, perms).unwrap();
+    let report = scan(&cfg(&home));
+    let mut perms = fs::metadata(&safari).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&safari, perms).unwrap();
+
+    assert!(report.rows.is_empty());
+    assert_eq!(
+        report.browser("safari").unwrap().access,
+        Access::NeedsFullDiskAccess
+    );
+    assert!(
+        report.is_partial(),
+        "an empty report from a denied root must never read as complete"
+    );
 }

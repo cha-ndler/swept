@@ -968,7 +968,7 @@ fn chromium(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        collect(
+        if collect(
             spec,
             &profile,
             Some(display),
@@ -976,7 +976,9 @@ fn chromium(
             live.as_deref(),
             cfg,
             report,
-        );
+        ) {
+            note_denial(&mut state.access);
+        }
     }
 }
 
@@ -1023,7 +1025,7 @@ fn firefox(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        collect(
+        if collect(
             spec,
             &profile,
             Some(display),
@@ -1031,7 +1033,9 @@ fn firefox(
             live.as_deref(),
             cfg,
             report,
-        );
+        ) {
+            note_denial(&mut state.access);
+        }
     }
 }
 
@@ -1060,7 +1064,9 @@ fn safari(
         if !plain_dir(&root, &mut report.skipped_symlink) {
             continue;
         }
-        collect(spec, &root, None, *withhold, None, cfg, report);
+        if collect(spec, &root, None, *withhold, None, cfg, report) {
+            denied.get_or_insert(Access::NeedsFullDiskAccess);
+        }
     }
 
     // A denial anywhere wins: the report is then a floor, and `is_partial`
@@ -1084,11 +1090,24 @@ fn collect(
     live: Option<&Path>,
     cfg: &PrivacyConfig,
     report: &mut PrivacyReport,
-) {
+) -> bool {
+    let mut denied = false;
     for entry in entries(spec.family) {
         let path = profile_root.join(entry.name);
-        let Ok(meta) = std::fs::symlink_metadata(&path) else {
-            continue;
+        // "Absent" and "not permitted" look the same through a failed lookup
+        // and mean opposite things. A root at mode `r--` is readable but not
+        // searchable: `read_dir` succeeds, so the access probe says Readable,
+        // and then every lookup below it fails with EACCES. Swallowing that
+        // would report a browser as holding nothing, completely — the exact
+        // conflation this module promises not to make, one level further down
+        // than the probes that already handle it.
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                denied = true;
+                continue;
+            }
+            Err(_) => continue,
         };
         if meta.file_type().is_symlink() {
             report.skipped_symlink += 1;
@@ -1205,6 +1224,15 @@ fn collect(
             withheld,
             undisposable,
         });
+    }
+    denied
+}
+
+/// A denial seen below an already-readable root. Never downgrades a state that
+/// is already worse.
+fn note_denial(current: &mut Access) {
+    if matches!(current, Access::Readable | Access::NotInstalled) {
+        *current = Access::NeedsFullDiskAccess;
     }
 }
 

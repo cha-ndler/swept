@@ -194,10 +194,14 @@ pub fn offer(m: &Measured) -> (bool, Option<String>) {
         return (false, Some(format!("{UNDISPOSABLE_REASON}{why}")));
     }
     if m.size_is_floor {
-        return (
-            false,
-            Some(format!("{UNDISPOSABLE_REASON}{INCOMPLETE_MEASURE}")),
-        );
+        // Deliberately *not* prefixed with `UNDISPOSABLE_REASON`. In the common
+        // case — a walk that ran out of budget — `guard_dir` would vouch for
+        // this tree happily, so "this tool cannot remove it" would be false.
+        // The tool can remove it; it cannot say what it holds, which is a
+        // different sentence and the one a user needs at the moment they ask
+        // why a row is greyed out. `undisposable` stays `None` here, and the
+        // two fields are surfaced separately, so they must not disagree.
+        return (false, Some(INCOMPLETE_MEASURE.to_string()));
     }
     (true, None)
 }

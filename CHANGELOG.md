@@ -23,8 +23,13 @@ first two modules that look outside the cleanup allowlist.
   `-journal`/`-shm`/`-wal` are one row, ordered so the database goes last. A
   browser that looks like it is running withholds its cookies, history and
   sessions; website storage, Safari's container paths and Firefox history are
-  shown and never offered. Nothing under `~/Library/Caches` is emitted, because
-  the ordinary cleaner already covers it. Nothing is removed and no `SafePath`
+  shown and never offered — and so is `~/Library/Cookies`, which is not
+  Safari's at all but the store every non-sandboxed app on the system shares,
+  so offering it under a row saying "Safari" would take consent against a false
+  description. Nothing under `~/Library/Caches` is emitted, because the
+  ordinary cleaner already covers it, and what it covers is named without a
+  size so no total can count it twice. A root that is denied is never reported
+  as a root that is empty, at any depth. Nothing is removed and no `SafePath`
   is minted. (#42)
 - **`macclean privacy`** — a read-only preview of the above. There is no
   `--execute`: acting on any of it takes a per-path grant that only the app can
@@ -118,6 +123,16 @@ first two modules that look outside the cleanup allowlist.
   what was confirmed. (#29)
 - Permanent removal is confined to the allowlist even when consented to, and the
   desktop app cannot request it at all. (#27)
+- **A tree whose measurement was cut short is no longer offered.** Both modules
+  that can offer a directory share one walk, and it judged a row only by
+  whether `guard_dir` would refuse it — never by whether the walk had finished.
+  A tree truncated by the shared entry budget therefore came out offerable with
+  a size of zero, which is both a figure no human should be asked to act on and
+  a defeat of the size threshold that would otherwise have withheld it: an
+  under-summed tree cannot exceed a limit. An incomplete measurement is now a
+  withholding in its own right, and "is this report partial?" now asks whether
+  a floor is explained by a deliberate withholding rather than approximating
+  that through whether the row was offerable. (#42)
 
 ## [0.2.0] — 2026-06-07
 

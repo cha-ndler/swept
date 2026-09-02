@@ -640,6 +640,21 @@ instead.**
     liveness on it would withhold every row forever while looking like it
     worked — the real markers are `lock` and Chromium's `SingletonLock`, and
     both fail *positive*, withholding a row we could have offered.
+    The safety review returned BLOCK with twelve findings, two of them found
+    by deleting a line and watching every test still pass. **A tree whose
+    measurement was cut short was offered as `0 B`** — the shared budget is
+    spent on the withheld site-storage trees before the cache rows are reached,
+    and `offer` judged rows only by `undisposable`, never by `size_is_floor`,
+    which also defeated the size threshold that would have withheld them
+    (an under-summed tree cannot exceed a limit). Fixed in `treewalk`, so M4 is
+    hardened by the same change. **The canonical-spelling re-check had no
+    test**, and without it a symlink named `Network` inside a profile emitted a
+    row that is lexically inside its own profile root while naming a file
+    somewhere else. And **Safari was exercised by nothing**, which hid a real
+    bug: the access probe opened only `Library/Safari`, so when that was absent
+    *or denied* — its resting state — the other three roots were never looked
+    at. Also found: `~/Library/Cookies` is not Safari's jar but the one every
+    non-sandboxed app shares, so it is now shown and never offered.
   - [ ] **The disposal half.** Per-path `Consent.granted` / `granted_dirs`
     grants, ceiling = the `offerable` rows of a scan run inside the call
     (M4's rule), confined to each row's own `profile_root` rather than to a

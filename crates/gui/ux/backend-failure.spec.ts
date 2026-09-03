@@ -139,6 +139,7 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
                 description: "d",
                 count: 120,
                 bytes: 1024,
+                smart_scan_default: true,
               },
             ],
           } satisfies ScanReport);

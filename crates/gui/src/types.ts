@@ -5,6 +5,15 @@ export interface CategorySummary {
   description: string;
   count: number;
   bytes: number;
+  /** May a Smart Scan tick this for you? Policy from the backend registry, so
+   *  the frontend cannot invent a default it did not sanction. False for the
+   *  Trash — it is the recovery mechanism for everything else this app does,
+   *  and emptying it by default would destroy the undo for the same gesture's
+   *  other modules. Also false for any category the registry does not know.
+   *
+   *  Not read yet: the Clean screen's selection is manual and stays that way.
+   *  Smart Scan is what consumes this. */
+  smart_scan_default: boolean;
 }
 
 export interface ScanReport {

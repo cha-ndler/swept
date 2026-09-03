@@ -691,6 +691,7 @@ pub fn dispose_selected_with_sink(
     let plan = Plan {
         actions,
         skipped_protected: 0,
+        skipped_unreadable: 0,
         dirs: Vec::new(),
     };
 
@@ -1226,6 +1227,7 @@ pub fn dispose_leftovers_with_sink(
         actions,
         dirs,
         skipped_protected: 0,
+        skipped_unreadable: 0,
     };
     let consent = Consent {
         execute: true,
@@ -1742,6 +1744,7 @@ pub fn dispose_privacy_with_sink(
         actions,
         dirs,
         skipped_protected: 0,
+        skipped_unreadable: 0,
     };
     let consent = Consent {
         execute: true,

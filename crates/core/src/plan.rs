@@ -44,7 +44,18 @@ pub struct Plan {
     /// each directory from an explicit per-row grant.
     pub dirs: Vec<PlannedDirAction>,
     /// Count of candidates skipped because they failed the safety guard.
+    ///
+    /// A deliberate refusal, not a gap: the scan saw the path and decided.
     pub skipped_protected: usize,
+    /// Count of places the walk could not see into at all.
+    ///
+    /// A directory it could not open, or an entry it could not measure. This
+    /// is the opposite of [`Plan::skipped_protected`] — not a decision but a
+    /// hole in what the scan knows — and it is what makes
+    /// [`crate::report::ScanReport::total_bytes`] a floor rather than a total.
+    /// On a Mac without Full Disk Access `~/.Trash` is exactly this case, so
+    /// it is the common one rather than the corner.
+    pub skipped_unreadable: usize,
 }
 
 /// A plan touching more than this many entries is treated as a mass delete and

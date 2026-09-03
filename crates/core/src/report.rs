@@ -1,7 +1,7 @@
 //! Stable, serializable view of a [`Plan`] for machine consumption.
 //!
-//! This is the JSON contract that the CLI's `--json` mode emits and that a
-//! future GUI (or an automated test) consumes. It is deliberately decoupled
+//! This is the JSON contract that the CLI's `--json` mode emits and that the
+//! GUI consumes. It is deliberately decoupled
 //! from the internal [`Plan`]/`PlannedAction` types so the wire format stays
 //! stable even as the engine evolves. Nothing here mutates the filesystem.
 
@@ -38,7 +38,27 @@ pub struct ScanReport {
     /// True if executing this plan would cross a mass-delete threshold.
     pub requires_confirmation: bool,
     /// Candidates dropped by the safety guard (denylist/allowlist).
+    ///
+    /// A decision, not a gap — these were seen and refused.
     pub skipped_protected: usize,
+    /// Places the walk could not see into: a directory it could not open, or an
+    /// entry it could not measure.
+    pub skipped_unreadable: usize,
+    /// True when the scan describes less than what is there.
+    ///
+    /// Derived rather than free-standing, so a caller cannot compute it wrongly
+    /// or forget to. When this is set, `total_bytes` and `total_count` are
+    /// **floors**: the common cause is a cleaner root behind Full Disk Access,
+    /// where the alternative is reporting an empty Trash to someone whose Trash
+    /// is full.
+    ///
+    /// Consumers, stated exactly rather than aspirationally: the CLI's
+    /// `plan_summary` acts on it today. **The Clean screen does not yet** — it
+    /// still renders the total unqualified and still says the Mac is tidy when
+    /// the plan is empty. Every other module's view already surfaces its own
+    /// `partial`, so Clean is the one screen presenting a floor as a total, and
+    /// the notice that closes it is a screenshot change behind the visual gate.
+    pub partial: bool,
     /// Per-category rollups, ordered by category name for stable output.
     pub by_category: Vec<CategorySummary>,
     /// One record per planned file.
@@ -102,6 +122,8 @@ impl ScanReport {
             total_bytes: plan.total_bytes(),
             requires_confirmation: plan.requires_confirmation(),
             skipped_protected: plan.skipped_protected,
+            skipped_unreadable: plan.skipped_unreadable,
+            partial: plan.skipped_unreadable > 0,
             by_category,
             items,
         }

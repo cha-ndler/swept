@@ -119,6 +119,20 @@ pub struct BrowserSpec {
     /// Home-relative cache root, when the ordinary `user-caches` cleaner
     /// already covers it. Named in the report, deliberately without a size.
     pub cache_root: Option<&'static str>,
+    /// Home-relative root of everything that is **this browser's**, when that
+    /// is wider than [`Self::root`]. Defaults to `root`.
+    ///
+    /// Nothing in this module reads it: the scan needs to know where the
+    /// profiles are, which is what `root` says. It exists because *refusing*
+    /// needs only recognition while *offering* needs corroboration, so the two
+    /// boundaries are allowed to differ — and for Arc they must. Its profiles
+    /// live under `Arc/User Data`, but `Arc/StorableSidebar.json` (every space,
+    /// pinned tab and folder) and `Arc/StorableArchiveItems.json` sit a level
+    /// above it and are nobody's cache.
+    ///
+    /// Naming a directory is not guessing a layout, which is why this is
+    /// admissible here while a root for an [`Unsupported`] browser is not.
+    pub data_root: Option<&'static str>,
 }
 
 /// Every browser this module knows. Ten of these are one table row each — the
@@ -132,6 +146,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Safari,
         root: "Library/Safari",
         cache_root: Some("Library/Caches/com.apple.Safari"),
+        data_root: None,
     },
     BrowserSpec {
         id: "google-chrome",
@@ -139,6 +154,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Chromium,
         root: "Library/Application Support/Google/Chrome",
         cache_root: Some("Library/Caches/Google/Chrome"),
+        data_root: None,
     },
     BrowserSpec {
         id: "google-chrome-beta",
@@ -146,6 +162,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Chromium,
         root: "Library/Application Support/Google/Chrome Beta",
         cache_root: Some("Library/Caches/Google/Chrome Beta"),
+        data_root: None,
     },
     BrowserSpec {
         id: "google-chrome-canary",
@@ -153,6 +170,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Chromium,
         root: "Library/Application Support/Google/Chrome Canary",
         cache_root: Some("Library/Caches/Google/Chrome Canary"),
+        data_root: None,
     },
     BrowserSpec {
         id: "chromium",
@@ -160,6 +178,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Chromium,
         root: "Library/Application Support/Chromium",
         cache_root: Some("Library/Caches/Chromium"),
+        data_root: None,
     },
     BrowserSpec {
         id: "microsoft-edge",
@@ -167,6 +186,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Chromium,
         root: "Library/Application Support/Microsoft Edge",
         cache_root: Some("Library/Caches/Microsoft Edge"),
+        data_root: None,
     },
     BrowserSpec {
         id: "brave",
@@ -174,6 +194,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Chromium,
         root: "Library/Application Support/BraveSoftware/Brave-Browser",
         cache_root: Some("Library/Caches/BraveSoftware/Brave-Browser"),
+        data_root: None,
     },
     BrowserSpec {
         id: "brave-beta",
@@ -181,6 +202,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Chromium,
         root: "Library/Application Support/BraveSoftware/Brave-Browser-Beta",
         cache_root: Some("Library/Caches/BraveSoftware/Brave-Browser-Beta"),
+        data_root: None,
     },
     BrowserSpec {
         id: "brave-nightly",
@@ -188,6 +210,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Chromium,
         root: "Library/Application Support/BraveSoftware/Brave-Browser-Nightly",
         cache_root: Some("Library/Caches/BraveSoftware/Brave-Browser-Nightly"),
+        data_root: None,
     },
     BrowserSpec {
         id: "vivaldi",
@@ -195,6 +218,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Chromium,
         root: "Library/Application Support/Vivaldi",
         cache_root: Some("Library/Caches/Vivaldi"),
+        data_root: None,
     },
     BrowserSpec {
         id: "arc",
@@ -204,6 +228,8 @@ pub static BROWSERS: &[BrowserSpec] = &[
         // not in a branch.
         root: "Library/Application Support/Arc/User Data",
         cache_root: Some("Library/Caches/company.thebrowser.Browser"),
+        // Its profiles are one level down; its own data files are not.
+        data_root: Some("Library/Application Support/Arc"),
     },
     BrowserSpec {
         id: "firefox",
@@ -211,6 +237,7 @@ pub static BROWSERS: &[BrowserSpec] = &[
         family: Family::Firefox,
         root: "Library/Application Support/Firefox",
         cache_root: Some("Library/Caches/Firefox"),
+        data_root: None,
     },
 ];
 

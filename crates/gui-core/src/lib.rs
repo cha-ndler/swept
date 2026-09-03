@@ -532,6 +532,123 @@ fn space_node(node: &spacelens::Node) -> SpaceNodeDto {
     }
 }
 
+/// Every place this app knows to be a browser's own data.
+///
+/// Refusing needs far less knowledge than offering. `privacy.rs` will not
+/// *offer* a row it cannot corroborate — an inclusion list consulted by lookup,
+/// because "an exclusion list would fail open the next time a vendor adds a
+/// file". Reusing those rows as a prohibition oracle inherits the fail-open
+/// without the inclusion list's protection: a name no row happens to enumerate
+/// is waved through, and `Login Data`, `key4.db` and `places.sqlite` are all
+/// such names. Losing any of them is worse than losing the cookie jar.
+///
+/// So the boundary here is the browser root, and inside one **only a
+/// `Regenerable` row grants passage**. Not knowing what a file is stops meaning
+/// permission to remove it.
+///
+/// # What this does not cover, stated rather than left looking like an oversight
+///
+/// The boundary is "browsers this app can name", and two things fall outside
+/// it. `privacy::UNSUPPORTED` names Opera, Orion and Tor Browser but records no
+/// root for them, deliberately — the module will not guess a layout it has not
+/// measured — so their profiles are not recognized here either. And
+/// `~/Library/Application Support` holds far more application-private data than
+/// browsers: a password manager's vault and a messaging database sit in it with
+/// no row and no root to match on.
+///
+/// Both are the same larger question, which is whether that directory belongs in
+/// a *disposal-grantable* discovery scope at all rather than only a readable
+/// one. That is a scope decision for a human, not something to settle by adding
+/// guessed paths to a list. Tracked in `ROADMAP.md`.
+fn browser_root_for<'a>(home: &Path, path: &Path) -> Option<&'a privacy::BrowserSpec> {
+    privacy::BROWSERS.iter().find(|b| {
+        let root = home.join(b.root);
+        path == root || path.starts_with(&root)
+    })
+}
+
+/// Why this path is not the Large & Old screen's to act on, if it is not.
+///
+/// `report` is `None` only when no selected path was under any browser root, in
+/// which case this is never asked about one — but the absence is treated as a
+/// refusal rather than a pass, so a later edit to that short-circuit cannot
+/// quietly turn "we did not look" into "go ahead".
+///
+/// Comparison is byte-exact, and its case-safety is borrowed: the identity
+/// check above refuses anything that is not already its own canonical spelling,
+/// and `fs::canonicalize` case-normalizes on APFS. Pinned by
+/// `a_differently_cased_spelling_never_reaches_the_predicate`, because borrowed
+/// safety that nothing records is safety a later edit removes by accident.
+fn consequence_of(
+    report: Option<&privacy::PrivacyReport>,
+    home: &Path,
+    path: &Path,
+) -> Option<String> {
+    let spec = browser_root_for(home, path)?;
+    let Some(report) = report else {
+        return Some(format!(
+            "this is inside {}'s own data and no scan was taken, so nothing here \
+             can say what removing it would cost",
+            spec.name
+        ));
+    };
+
+    if let Some(row) = report
+        .rows
+        .iter()
+        .find(|r| r.members.iter().any(|m| path == m || path.starts_with(m)))
+    {
+        // The only thing that grants passage: a row whose whole point is that
+        // the browser rebuilds it.
+        if row.consequence == Consequence::Regenerable {
+            return None;
+        }
+        let cost = match row.consequence {
+            Consequence::SignsYouOut => {
+                "removing it signs you out of every site this browser remembers"
+            }
+            Consequence::ErasesHistory => {
+                "removing it erases browsing history, which cannot be brought back"
+            }
+            Consequence::LosesOpenTabs => "removing it loses the open tabs and the saved session",
+            Consequence::LosesSiteData => "removing it loses site data",
+            // Filtered out above. Stated rather than `unreachable!()`, because a
+            // panic in a disposal path is a worse outcome than a refusal.
+            Consequence::Regenerable => "it carries a consequence",
+        };
+        // Route to Privacy only where Privacy would actually ask. Website
+        // storage is never offerable there, so sending someone to it would be a
+        // dead end dressed as a route.
+        let route = if row.offerable {
+            "use Privacy, which asks about that"
+        } else {
+            "and no screen here will remove it — you would have to do it yourself"
+        };
+        return Some(format!(
+            "this is {} that {} keeps, and {cost}. This screen shows sizes and \
+             dates, so it cannot ask about that — {route}",
+            row.label.to_lowercase(),
+            row.browser_name,
+        ));
+    }
+
+    // Inside a browser's root, and nothing corroborated it. That is a reason to
+    // stop, not a reason to proceed — the commonest causes are a profile whose
+    // `Preferences` is missing, a directory the scan skips on purpose, and a
+    // root the scan could not enumerate at all.
+    let why = match report.browsers.iter().find(|b| b.id == spec.id) {
+        Some(state) if state.access != privacy::Access::Readable => {
+            "and that browser's data could not be read, so nothing here knows what this is"
+        }
+        _ => "and nothing here could confirm what this file is",
+    };
+    Some(format!(
+        "this is inside {}'s own data, {why}. This screen shows sizes and dates, \
+         so it will not act on it",
+        spec.name
+    ))
+}
+
 /// Act on individually-chosen paths, using per-path grants.
 ///
 /// This is the only caller that populates `Consent::granted`, and it is
@@ -550,6 +667,14 @@ fn space_node(node: &spacelens::Node) -> SpaceNodeDto {
 /// - The executor still applies every other bound: exact-match grants, the
 ///   `MAX_GRANTS` cap, the directory refusal, Trash-not-unlink, and the audit
 ///   note marking each action as user-granted.
+/// - **A path that carries a privacy consequence is refused outright.**
+///   `~/Library/Application Support` is a discovery root and a browser profile
+///   lives inside it, so a cookie jar or a history database reaches this
+///   function looking like any other large file. M5 built a second consent axis
+///   for exactly those, and this verb has none — the screen it serves shows
+///   sizes and dates, which is the wrong vocabulary for "you will be signed out
+///   everywhere". So it refuses and names the screen that does ask, rather than
+///   acting on consent it never obtained.
 pub fn dispose_selected_with_sink(
     home: &Path,
     paths: &[String],
@@ -561,6 +686,44 @@ pub fn dispose_selected_with_sink(
     if paths.is_empty() {
         return refuse_and_record(audit, "refused: nothing was selected.".to_string());
     }
+
+    // The assertion the other three disposal verbs make and this one did not.
+    // `is_protected` builds its home-relative rules with `home.join(...)`, so a
+    // non-canonical home silently disables Keychains, Mail and the home root for
+    // the whole run. Not reachable through `dispose_selected`, which
+    // canonicalizes — but this function is public, and the reason the other
+    // three assert it is that "not reachable today" is not a property of a
+    // public seam.
+    match safety::canonical_home(home) {
+        Ok(canonical) if canonical == home => {}
+        _ => {
+            return refuse_and_record(
+                audit,
+                "refused: the home directory is not its canonical spelling, so the \
+                 denylist's home-relative rules could not be trusted for this run."
+                    .to_string(),
+            )
+        }
+    }
+
+    // What a browser remembers, as of *now* — the same posture every other
+    // ceiling in this layer takes, because a report the frontend is holding may
+    // describe a disk that has since changed.
+    //
+    // This verb has no acknowledgement axis and cannot grow one: the Large & Old
+    // screen shows sizes and dates, which is the wrong vocabulary for "you will
+    // be signed out of every site". So a path inside a browser's own data is
+    // refused, and the refusal names the screen that does ask.
+    //
+    // Taken only when the selection actually reaches a browser, so disposing of
+    // one file in ~/Downloads does not pay for a full browser scan. The check is
+    // lexical and on the *raw* spelling, which is sound because a path that is
+    // not already its own canonical spelling is refused above regardless.
+    let touches_a_browser = paths
+        .iter()
+        .any(|raw| browser_root_for(home, Path::new(raw)).is_some());
+    let private =
+        touches_a_browser.then(|| privacy::scan(&privacy::PrivacyConfig::new(home.to_path_buf())));
 
     let mut actions = Vec::with_capacity(paths.len());
     let mut granted = Vec::with_capacity(paths.len());
@@ -631,6 +794,17 @@ pub fn dispose_selected_with_sink(
         // reason the ceiling is stated as the ceiling.
         if !safety::allowlist::is_allowed(safe.as_path(), &discoverable) {
             rejected.push(format!("{raw}: outside the discovery scope"));
+            continue;
+        }
+        // `~/Library/Application Support` is a discovery root, and a browser
+        // profile lives inside it — so a cookie jar is a regular file, its own
+        // canonical spelling, in scope, and not a directory. It passed every
+        // check above.
+        //
+        // Containment, not equality: a single leveldb file inside `Local
+        // Storage` carries that row's consequence just as the directory does.
+        if let Some(why) = consequence_of(private.as_ref(), home, safe.as_path()) {
+            rejected.push(format!("{raw}: {why}"));
             continue;
         }
         // Re-read the size from disk. The frontend's number is a display value;

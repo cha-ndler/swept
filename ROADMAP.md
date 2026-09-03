@@ -350,6 +350,22 @@ instead.**
     holding hex — tokens are now RGB channels), and **every confirmation-sheet
     screenshot since the clean flow shipped was a mid-animation frame**
     (`page.screenshot` does not disable animations; `toHaveScreenshot` does).
+  - [ ] **Is `~/Library/Application Support` a *grantable* scope, or only a
+    readable one?** It is a discovery root, so Large & Old lists what is in it
+    and `dispose_selected_with_sink` will act on a selection from that list.
+    That directory is application-private data by definition. The browser case
+    was a live hole and is closed — a path inside a browser's own root is
+    refused unless a `Regenerable` row covers it, because this screen shows
+    sizes and dates and cannot obtain consent for "you will be signed out
+    everywhere". But the boundary is "browsers this app can name", and two
+    things sit outside it: `privacy::UNSUPPORTED` names Opera, Orion and Tor
+    without recording a root, since the module will not guess an unmeasured
+    layout; and a password manager's vault or a messaging database has no row
+    and no root to match on at all. **Closing those by listing more paths is the
+    exclusion-list posture `privacy.rs` argues against**, so the real question
+    is the scope: keep the directory readable for Space Lens and Large & Old's
+    *picture*, and stop it being grantable. That narrows a shipped feature, so
+    it needs the human's word.
   - [ ] **The scope line under-states the scope.** `LargeOldView` prints
     "Documents · Downloads · Desktop · Movies · Music · Pictures", but
     `discovery_roots` also includes `~/Library/Application Support` — which the

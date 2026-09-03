@@ -48,6 +48,11 @@ fn scan_report_serializes_a_stable_shape() {
     assert_eq!(v["total_bytes"], 9);
     assert_eq!(v["requires_confirmation"], false);
     assert_eq!(v["items"].as_array().unwrap().len(), 2);
+    // The completeness pair travels on the wire, not just in the struct.
+    // Without this the field could be renamed or `#[serde(skip)]`ed and every
+    // other test would stay green while the GUI silently lost it.
+    assert_eq!(v["skipped_unreadable"], 0);
+    assert_eq!(v["partial"], false);
 
     let cats = v["by_category"].as_array().unwrap();
     let cache = cats
@@ -404,19 +409,40 @@ fn scan_with_progress_reports_monotonic_counts_and_matches_plain_scan() {
 // of five things invites the reader to conclude their Mac is clean" — in the
 // oldest module in the tree.
 
-/// Make `path` unreadable for the duration of `f`, then restore it.
-///
-/// Restoring matters: a tempdir whose subdirectory is mode 0 cannot be cleaned
-/// up, so an early `assert!` would leave the fixture behind.
-fn while_unreadable<T>(path: &Path, f: impl FnOnce() -> T) -> T {
+/// Restores `path`'s permissions when dropped, so an assertion that panics
+/// inside the scope still leaves a tempdir that can be cleaned up. Without it,
+/// a mode-000 directory survives `TempDir::drop`, whose error is discarded.
+struct Restore(PathBuf, fs::Permissions);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        // The one place a discarded error is right: the alternative is a
+        // second panic while unwinding from the first.
+        let _ = fs::set_permissions(&self.0, self.1.clone());
+    }
+}
+
+/// Make `path` unopenable (mode 000) until the returned guard is dropped.
+#[must_use]
+fn unreadable(path: &Path) -> Restore {
     use std::os::unix::fs::PermissionsExt;
     let original = fs::metadata(path).unwrap().permissions();
     let mut locked = original.clone();
     locked.set_mode(0o000);
     fs::set_permissions(path, locked).unwrap();
-    let out = f();
-    fs::set_permissions(path, original).unwrap();
-    out
+    Restore(path.to_path_buf(), original)
+}
+
+/// Make `path` listable but not searchable (mode 444) until the guard drops:
+/// `read_dir` returns its entries, and `stat` on any of them fails.
+#[must_use]
+fn unsearchable(path: &Path) -> Restore {
+    use std::os::unix::fs::PermissionsExt;
+    let original = fs::metadata(path).unwrap().permissions();
+    let mut ro = original.clone();
+    ro.set_mode(0o444);
+    fs::set_permissions(path, ro).unwrap();
+    Restore(path.to_path_buf(), original)
 }
 
 /// A directory inside a cleaner root that cannot be opened is *counted*, not
@@ -429,7 +455,8 @@ fn a_directory_the_scan_cannot_read_is_counted() {
     write(&locked.join("unseen.bin"), b"0123456789");
 
     let cfg = ScanConfig::with_default_roots(home.clone());
-    let plan = while_unreadable(&locked, || scan(&cfg));
+    let _shut = unreadable(&locked);
+    let plan = scan(&cfg);
 
     assert_eq!(plan.count(), 1, "only the readable file is planned");
     assert_eq!(plan.total_bytes(), 5);
@@ -496,7 +523,8 @@ fn the_report_presents_an_incomplete_total_as_partial() {
     write(&locked.join("unseen.log"), b"0123456789");
 
     let cfg = ScanConfig::with_default_roots(home.clone());
-    let plan = while_unreadable(&locked, || scan(&cfg));
+    let _shut = unreadable(&locked);
+    let plan = scan(&cfg);
     let report = ScanReport::from_plan(&plan);
 
     assert_eq!(report.skipped_unreadable, 1);
@@ -520,12 +548,99 @@ fn a_root_that_cannot_be_opened_at_all_is_a_gap_not_a_zero() {
     write(&home.join(".Trash/big.bin"), b"0123456789");
 
     let cfg = ScanConfig::with_default_roots(home.clone());
-    let trash = home.join(".Trash");
-    let plan = while_unreadable(&trash, || scan(&cfg));
+    let _shut = unreadable(&home.join(".Trash"));
+    let plan = scan(&cfg);
 
     assert_eq!(plan.count(), 0, "nothing in it could be seen");
     assert!(
         plan.skipped_unreadable >= 1,
         "so the root itself is the gap, not an empty Trash"
     );
+}
+
+/// `Path::exists()` is `metadata().is_ok()`, so it answers `false` to *any*
+/// error — including "you may not look". Routing that into the branch meaning
+/// "this root is not there" skips the walk entirely, so the error counter never
+/// sees it, and the scan reports a complete nothing over a hole bigger than any
+/// single unreadable subtree.
+#[test]
+fn a_root_that_cannot_be_stat_ed_is_a_gap_not_an_absence() {
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/a.bin"), b"12345");
+
+    // Non-searchable `Library` — every root beneath it fails to stat, while
+    // `~/.Trash` (a sibling) is unaffected and simply does not exist.
+    let cfg = ScanConfig::with_default_roots(home.clone());
+    let _shut = unreadable(&home.join("Library"));
+    let plan = scan(&cfg);
+
+    assert_eq!(plan.count(), 0, "nothing could be reached");
+    assert!(
+        plan.skipped_unreadable >= 1,
+        "a root it could not even stat is a gap, not an empty machine"
+    );
+}
+
+/// A root that genuinely is not there is *knowledge*, not a gap. `~/.Trash`
+/// absent means nothing was missed, and setting the flag for it would fire on
+/// every ordinary fixture — which is how a flag stops being read.
+#[test]
+fn a_root_that_is_really_absent_is_not_a_gap() {
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/a.bin"), b"12345");
+    assert!(!home.join(".Trash").exists());
+
+    let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+
+    assert_eq!(plan.count(), 1);
+    assert_eq!(plan.skipped_unreadable, 0);
+}
+
+/// `guard` fails for three different reasons and only two of them are
+/// decisions. `Unresolvable` wraps an `io::Error`, so an `EACCES` from
+/// `canonicalize` is a hole in what the scan knows — filing it under
+/// `skipped_protected` is worse than silence, because the UI renders that
+/// counter as "N protected items skipped": a decision claimed over a gap.
+#[test]
+fn a_path_that_cannot_be_resolved_is_a_gap_not_a_refusal() {
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/seen.bin"), b"12345");
+    let dir = home.join("Library/Caches/opaque");
+    write(&dir.join("one.bin"), b"0123456789");
+    write(&dir.join("two.bin"), b"0123456789");
+
+    // Readable, so `read_dir` lists both names; not searchable, so
+    // `canonicalize` on either of them fails.
+    let cfg = ScanConfig::with_default_roots(home.clone());
+    let _ro = unsearchable(&dir);
+    let plan = scan(&cfg);
+
+    assert_eq!(plan.count(), 1, "only the file outside it is planned");
+    assert_eq!(
+        plan.skipped_protected, 0,
+        "nothing here was refused — the scan simply could not resolve it"
+    );
+    assert!(
+        plan.skipped_unreadable >= 2,
+        "both unresolvable names are gaps, got {}",
+        plan.skipped_unreadable
+    );
+}
+
+/// A denylist refusal stays a decision. The point of splitting the counters is
+/// lost if everything drifts into the gap bucket instead.
+#[test]
+fn a_denylist_refusal_is_still_counted_as_a_decision() {
+    let (_g, home) = fake_home();
+    // Keychains is protected, and a root pointed at it walks real files that
+    // `guard` refuses by name rather than failing to resolve.
+    write(&home.join("Library/Keychains/login.keychain-db"), b"secret");
+
+    let mut cfg = ScanConfig::with_default_roots(home.clone());
+    cfg.roots = vec![home.join("Library/Keychains")];
+    let plan = scan(&cfg);
+
+    assert_eq!(plan.count(), 0);
+    assert_eq!(plan.skipped_protected, 1, "refused by name, and understood");
+    assert_eq!(plan.skipped_unreadable, 0);
 }

@@ -11,7 +11,20 @@ export interface ScanReport {
   total_count: number;
   total_bytes: number;
   requires_confirmation: boolean;
+  /** Candidates the scan saw, guarded and refused. A decision, not a gap. */
   skipped_protected: number;
+  /** Places the scan could not look into: a root it could not stat, a
+   *  directory it could not open, a path it could not resolve. */
+  skipped_unreadable: number;
+  /** True when the scan describes less than what is there, so `total_bytes`
+   *  and `total_count` are floors. The commonest cause is a cleaner root
+   *  behind Full Disk Access — `~/.Trash` is both.
+   *
+   *  NOT YET RENDERED on the Clean screen, which still shows the total
+   *  unqualified and its empty state still says the Mac is tidy. That is the
+   *  one screen in the app that presents a floor as a total; the notice is a
+   *  screenshot change and goes through the visual gate. */
+  partial: boolean;
   by_category: CategorySummary[];
   /** Omitted from the GUI payload — the app renders rollups only. */
   items?: unknown[];

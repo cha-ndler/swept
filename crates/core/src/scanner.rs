@@ -5,23 +5,35 @@
 //! within the scoped allowlist. Anything that fails either check is counted in
 //! `skipped_protected` and dropped from the plan.
 //!
-//! # Two ways a file can be absent from a plan, and they are not the same
+//! # Decisions and gaps, and why they are two counters
 //!
 //! `skipped_protected` is a *decision*: the scan saw the path, guarded it, and
-//! refused it. `skipped_unreadable` is a *gap*: a directory it could not open
-//! or an entry it could not measure, so it does not know what was there.
+//! refused it — by the denylist, by a `..` traversal, or by the allowlist. It
+//! knows exactly what it did.
 //!
-//! Only the second changes what the resulting total means. It used to be
-//! discarded — the walk ran under `filter_map(Result::ok)` — which made an
-//! unreadable tree indistinguishable from an empty one. That is not a corner
-//! case here: `~/.Trash` is both a disposal root and TCC-gated, so on a Mac
+//! `skipped_unreadable` is a *gap*: a root it could not stat, a directory it
+//! could not open, a path it could not canonicalize, an entry it could not
+//! measure. It does not know what was there.
+//!
+//! Only the second changes what the resulting total *means*, which is why these
+//! are the two counters. Files are also dropped for reasons that are neither —
+//! a symlink (the walk never follows one), an age or size filter — but each of
+//! those is a decision taken with the facts in hand, so none of them makes the
+//! total a floor.
+//!
+//! The gaps used to be discarded entirely: the walk ran under
+//! `filter_map(Result::ok)`, an unresolvable path was filed as *protected*, and
+//! a root that could not be stat'd was treated as absent. That is not a corner
+//! case here — `~/.Trash` is both a disposal root and TCC-gated — so on a Mac
 //! without Full Disk Access the whole of it was missing from a figure that
-//! presented itself as complete.
+//! presented itself as complete, and two of the three routes to that never even
+//! reached a counter.
 
 use std::fs::Metadata;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
+use safety::path_guard::GuardError;
 use safety::{allowlist, guard};
 use walkdir::WalkDir;
 
@@ -102,8 +114,21 @@ pub fn scan_with_progress(cfg: &ScanConfig, on_progress: &mut dyn FnMut(Progress
     let now = SystemTime::now();
 
     for root in &cfg.roots {
-        if !root.exists() {
-            continue;
+        // `Path::exists()` is `metadata().is_ok()`, so it answers `false` to
+        // *any* error — "you may not look" included. Treating that as "not
+        // there" would `continue` before the walk, so the error arm below never
+        // sees it, and the scan would report a complete nothing over a hole
+        // larger than any single unreadable subtree. `try_exists` is the whole
+        // fix: it tells absence and refusal apart.
+        match root.try_exists() {
+            Ok(true) => {}
+            // Genuinely absent. That is knowledge, not a gap: a `~/.Trash` that
+            // does not exist means nothing was missed.
+            Ok(false) => continue,
+            Err(_) => {
+                plan.skipped_unreadable += 1;
+                continue;
+            }
         }
         // Do not follow symlinks while walking; `guard` will canonicalize each
         // candidate and reject anything that escapes the allowlist.
@@ -125,6 +150,16 @@ pub fn scan_with_progress(cfg: &ScanConfig, on_progress: &mut dyn FnMut(Progress
             }
             let safe = match guard(entry.path(), &cfg.home) {
                 Ok(s) => s,
+                // `Unresolvable` wraps an `io::Error`. A denylist refusal or a
+                // `..` traversal is a decision the scan understands; a path it
+                // could not canonicalize is one it could not look at — most
+                // often a non-searchable parent, and also where the
+                // `readdir`-then-`stat` race actually lands, since `guard`
+                // canonicalizes before `entry.metadata()` is ever reached.
+                Err(GuardError::Unresolvable(..)) => {
+                    plan.skipped_unreadable += 1;
+                    continue;
+                }
                 Err(_) => {
                     plan.skipped_protected += 1;
                     continue;
@@ -135,9 +170,9 @@ pub fn scan_with_progress(cfg: &ScanConfig, on_progress: &mut dyn FnMut(Progress
                 continue;
             }
             // A file we cannot stat is one we cannot assess — never plan it,
-            // and never pretend we knew what was there. (Reachable as a race:
-            // the name came back from `readdir`, and by the time it is measured
-            // it is gone.)
+            // and never pretend we knew what was there. The `guard` above
+            // canonicalizes first, so most of this class is already counted
+            // there; this is the backstop, not the main door.
             let Ok(meta) = entry.metadata() else {
                 plan.skipped_unreadable += 1;
                 continue;

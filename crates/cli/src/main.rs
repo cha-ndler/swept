@@ -338,7 +338,10 @@ fn plan_summary(plan: &Plan) -> String {
     let mut out = String::new();
     let gap = plan.skipped_unreadable;
 
-    if plan.actions.is_empty() {
+    // `count()`, not `actions.is_empty()`: one directory action is not one
+    // item, and this is now a general function over any `Plan` rather than only
+    // over what the scanner emits.
+    if plan.count() == 0 {
         if gap > 0 {
             out.push_str("Nothing found in the locations that could be read.\n");
             out.push_str(&format!(

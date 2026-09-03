@@ -46,11 +46,18 @@ pub struct ScanReport {
     pub skipped_unreadable: usize,
     /// True when the scan describes less than what is there.
     ///
-    /// Derived rather than free-standing, so a caller cannot render the total
-    /// while forgetting the counter that qualifies it. When this is set,
-    /// `total_bytes` and `total_count` are **floors**, and the UI must say so:
-    /// the common cause is a cleaner root behind Full Disk Access, where the
-    /// alternative is reporting an empty Trash to someone whose Trash is full.
+    /// Derived rather than free-standing, so a caller cannot compute it wrongly
+    /// or forget to. When this is set, `total_bytes` and `total_count` are
+    /// **floors**: the common cause is a cleaner root behind Full Disk Access,
+    /// where the alternative is reporting an empty Trash to someone whose Trash
+    /// is full.
+    ///
+    /// Consumers, stated exactly rather than aspirationally: the CLI's
+    /// `plan_summary` acts on it today. **The Clean screen does not yet** — it
+    /// still renders the total unqualified and still says the Mac is tidy when
+    /// the plan is empty. Every other module's view already surfaces its own
+    /// `partial`, so Clean is the one screen presenting a floor as a total, and
+    /// the notice that closes it is a screenshot change behind the visual gate.
     pub partial: bool,
     /// Per-category rollups, ordered by category name for stable output.
     pub by_category: Vec<CategorySummary>,

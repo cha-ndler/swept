@@ -28,6 +28,10 @@ export const SAMPLE_REPORT: ScanReport = {
   total_bytes: Math.round(6.44 * GiB),
   requires_confirmation: true,
   skipped_protected: 17,
+  // A complete scan, so the screenshots keep showing an unqualified total.
+  // A partial fixture is what the visual PR for the floor notice will add.
+  skipped_unreadable: 0,
+  partial: false,
   items: [],
   by_category: [
     {

@@ -792,7 +792,21 @@ instead.**
     would need `macclean` to depend on the GUI's command layer, or a second
     copy of the ceiling. The store being pinned to one folder is the better
     recovery path, because it survives this app being removed.
-  - [ ] **The screen.** *Visual → taste gate.*
+  - [ ] **The screen.** *Visual → taste gate; opened as a PR with screenshots,
+    never auto-merged.* `StartupView` grows the verb, and its shape is one
+    measurement: the app can act on **5 of 31** launchd jobs on the reference
+    machine, so the disclosure that most login items live in a store macOS
+    keeps to itself sits *above* the count, and what it can never change is a
+    collapsed table with no controls near it — a row with a dead control reads
+    as a refusal, and these outnumber the actionable ones five to one. The
+    sheet asks once rather than per-consequence, because the action is
+    reversible and ceremony on a safe action teaches click-through; what it
+    carries instead is the timing. Three critic passes: the refused sheet
+    asserted the success outcome; the ratio was never a *quantity* and the
+    fixture had never rendered the design at its own design point (3 system
+    jobs where a real machine has 26); and then the chart added to fix that
+    shipped with **no colour key**, invisible to every gate. Final scores 4, 4,
+    5, 5, 5, 5, 5, 5, 5, 4.
 
   The store is `~/Library/LaunchAgents/Moved aside by mac-cleaner/` — inside
   the folder the user already opens, because launchd does not recurse so the

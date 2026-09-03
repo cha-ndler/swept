@@ -13,6 +13,9 @@ import {
   SAMPLE_PRIVACY_SUMMARY,
   SAMPLE_REPORT,
   SAMPLE_SPACE_LENS,
+  SAMPLE_STARTUP,
+  SAMPLE_STARTUP_EMPTY,
+  SAMPLE_STARTUP_SUMMARY,
   SAMPLE_SPACE_LENS_COMPLETE,
   SAMPLE_SPACE_LENS_EMPTY,
   SAMPLE_SUMMARY,
@@ -63,6 +66,11 @@ async function installBackend(
     privacyReject?: string;
     /** Hang only the privacy scan, for the loading state. */
     hangPrivacy?: boolean;
+    startup?: unknown;
+    startupSummary?: unknown;
+    /** When set, the startup verbs reject with this message. */
+    startupReject?: string;
+    hangStartup?: boolean;
   } = {},
 ) {
   const payload = {
@@ -75,6 +83,10 @@ async function installBackend(
     privacySummary: opts.privacySummary ?? SAMPLE_PRIVACY_SUMMARY,
     privacyReject: opts.privacyReject ?? null,
     hangPrivacy: opts.hangPrivacy ?? false,
+    startup: opts.startup ?? SAMPLE_STARTUP,
+    startupSummary: opts.startupSummary ?? SAMPLE_STARTUP_SUMMARY,
+    startupReject: opts.startupReject ?? null,
+    hangStartup: opts.hangStartup ?? false,
     report: opts.report ?? SAMPLE_REPORT,
     items: opts.items ?? SAMPLE_LOGIN_ITEMS,
     summary: opts.summary ?? SAMPLE_SUMMARY,
@@ -153,6 +165,15 @@ async function installBackend(
         // The one URL the app will ever open; the screen only needs it not to
         // throw.
         if (cmd === "open_privacy_settings") return Promise.resolve(null);
+        if (cmd === "open_login_items_settings") return Promise.resolve(null);
+        if (cmd === "startup_report")
+          return p.hangStartup
+            ? new Promise(() => {})
+            : Promise.resolve(p.startup);
+        if (cmd === "move_aside" || cmd === "put_back")
+          return p.startupReject
+            ? Promise.reject(p.startupReject)
+            : Promise.resolve(p.startupSummary);
         return Promise.reject(new Error(`unstubbed command: ${cmd}`));
       },
       transformCallback: (cb: unknown) => cb,
@@ -1013,4 +1034,132 @@ test("privacy done with several consequences", async ({ page }, testInfo) => {
     }),
   ).toBeVisible();
   await capture(page, "privacy-done-multi", testInfo.project.name);
+});
+
+// --- Startup ---------------------------------------------------------------
+
+async function openStartup(page: Page) {
+  await page.goto("/?tab=startup");
+  await expect(
+    page.getByRole("heading", { name: /when you log in/ }),
+  ).toBeVisible();
+}
+
+test("startup results", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openStartup(page);
+  await capture(page, "startup-results", testInfo.project.name);
+});
+
+/**
+ * The ratio this screen is built around: on a real machine the jobs it cannot
+ * touch outnumber the ones it can. They are a collapsed table with no controls,
+ * because a row with a dead control reads as a refusal.
+ */
+test("what macOS manages is a table with no controls", async ({ page }) => {
+  await installBackend(page);
+  await openStartup(page);
+
+  const boxes = page.getByRole("checkbox");
+  await expect(boxes).toHaveCount(5); // 4 offerable + 1 set aside; never the 3 system jobs
+  for (const b of await boxes.all()) await expect(b).not.toBeChecked();
+
+  await expect(page.getByText("com.vendor1.driver")).toHaveCount(0);
+  await page.getByRole("button", { name: /more macOS manages/ }).click();
+  await expect(page.getByText("com.vendor1.driver")).toBeVisible();
+});
+
+/** The disclosure that reframes the count sits above it, with its route. */
+test("the login items macOS keeps to itself are named first", async ({
+  page,
+}) => {
+  await installBackend(page);
+  await openStartup(page);
+  await expect(
+    page.getByText(/register their login items with macOS directly/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Open Login Items & Extensions" }),
+  ).toBeVisible();
+});
+
+test("startup confirm", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openStartup(page);
+  await page
+    .getByRole("checkbox", { name: /Set aside com.acme.notes.helper/ })
+    .check();
+  await page.getByRole("button", { name: /Set 1 aside…/ }).click();
+  // The sentence people would otherwise report as a bug.
+  await expect(page.getByText(/takes effect at your/)).toBeVisible();
+  await capture(page, "startup-confirm", testInfo.project.name);
+});
+
+test("startup done", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await openStartup(page);
+  await page
+    .getByRole("checkbox", { name: /Set aside com.acme.notes.helper/ })
+    .check();
+  await page.getByRole("button", { name: /Set 1 aside…/ }).click();
+  await page.getByRole("button", { name: "Set aside", exact: true }).click();
+  // The figure is its own mono line above the heading, as the house does it.
+  await expect(page.getByRole("heading", { name: "set aside" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Put it back" }),
+  ).toBeVisible();
+  await capture(page, "startup-done", testInfo.project.name);
+});
+
+/** A selection belongs to one verb; picking the other starts a new one. */
+test("choosing a set-aside item switches the verb", async ({ page }) => {
+  await installBackend(page);
+  await openStartup(page);
+  await page
+    .getByRole("checkbox", { name: /Set aside com.acme.notes.helper/ })
+    .check();
+  await expect(page.getByRole("button", { name: /Set 1 aside…/ })).toBeVisible();
+
+  await page
+    .getByRole("checkbox", { name: /Put back com.example.reader.autostart/ })
+    .check();
+  await expect(page.getByRole("button", { name: /Put 1 back…/ })).toBeVisible();
+});
+
+test("a refused startup change says so and offers to look again", async ({
+  page,
+}, testInfo) => {
+  await installBackend(page, {
+    startupReject:
+      "refused: 1 of 1 selected items could not be acted on, so nothing was changed.",
+  });
+  await openStartup(page);
+  await page
+    .getByRole("checkbox", { name: /Set aside com.acme.notes.helper/ })
+    .check();
+  await page.getByRole("button", { name: /Set 1 aside…/ }).click();
+  await page.getByRole("button", { name: "Set aside", exact: true }).click();
+  // The sheet's own title, not the refusal sentence that also contains the
+  // phrase — the point is that the dialog stops being a pending question.
+  await expect(
+    page.getByRole("heading", { name: "Nothing was changed" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "Look again" }),
+  ).toBeVisible();
+  await capture(page, "startup-refused", testInfo.project.name);
+});
+
+test("startup empty", async ({ page }, testInfo) => {
+  await installBackend(page, { startup: SAMPLE_STARTUP_EMPTY });
+  await page.goto("/?tab=startup");
+  await expect(page.getByText(/Nothing is kept as a file/)).toBeVisible();
+  await capture(page, "startup-empty", testInfo.project.name);
+});
+
+test("startup loading", async ({ page }, testInfo) => {
+  await installBackend(page, { hangStartup: true });
+  await page.goto("/?tab=startup");
+  await expect(page.getByText(/Looking at what starts/)).toBeVisible();
+  await capture(page, "startup-loading", testInfo.project.name);
 });

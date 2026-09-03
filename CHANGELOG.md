@@ -10,6 +10,14 @@ Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
 first two modules that look outside the cleanup allowlist.
 
 ### Added
+- **Startup grows a verb** — the screen that reviewed login items can now set
+  one aside and put it back. Nothing is removed: the file moves to a folder
+  inside your LaunchAgents directory, so undoing it works by hand and without
+  this app. The shape is driven by a measurement — it can act on 5 of 31
+  launchd jobs — so the note that most login items live in a store macOS keeps
+  to itself comes before the count, what it can never change is a table with no
+  controls, and the sheet says the change takes effect at your next login. It
+  also says what it will not do, with the one-line command for each. (#50)
 - **A login item can be set aside, and put back** — the first mutation here
   that is neither a disposal nor a move to the recoverable bin. It is a hard
   link, an inode check, then the removal of the original name, so the only name

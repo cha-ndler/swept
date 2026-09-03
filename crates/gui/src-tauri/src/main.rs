@@ -23,6 +23,15 @@ const SCAN_PROGRESS: &str = "scan://progress";
 const FULL_DISK_ACCESS_PANE: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
 
+/// The second, and last, URL this app will ever open.
+///
+/// Verified on a reference machine rather than guessed: the identifier is the
+/// `CFBundleIdentifier` of `/System/Library/ExtensionKit/Extensions/
+/// LoginItems.appex`. It matters because most login items on a current Mac live
+/// in a store this app can neither read nor change, and sending someone to the
+/// wrong pane would be worse than not offering the route at all.
+const LOGIN_ITEMS_PANE: &str = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension";
+
 /// Scanning a real home walks ~165k files and is I/O-bound: ~8s warm, ~37s cold.
 /// Run it on the blocking pool. A `#[tauri::command]` that is not `async` runs
 /// inline on the webview's message loop, which freezes the window — no repaint,
@@ -227,6 +236,24 @@ async fn dispose_privacy(
     .map_err(|e| format!("dispose-privacy task failed: {e}"))?
 }
 
+/// Open the pane that holds the login items this app cannot see.
+#[tauri::command]
+async fn open_login_items_settings() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg(LOGIN_ITEMS_PANE)
+            .status()
+            .map_err(|e| format!("couldn't open System Settings: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("System Settings didn't open".to_string())
+        }
+    })
+    .await
+    .map_err(|e| format!("open task failed: {e}"))?
+}
+
 /// Read-only: what runs when you log in, plus what this app has set aside and
 /// what it can see but never change.
 #[tauri::command]
@@ -299,6 +326,7 @@ fn main() {
             privacy_report,
             dispose_privacy,
             startup_report,
+            open_login_items_settings,
             move_aside,
             put_back,
             space_lens

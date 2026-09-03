@@ -174,6 +174,16 @@ into a fresh session. Hard-won conventions baked into them:
 - **Visual tasks pause for the human.** Anything a user SEES is built + critiqued
   by the UX oracle, then opened as a PR with screenshots and a `needs input:` —
   never auto-merged. Backend/harness/packaging tasks auto-merge on confirmed green.
+- **A commit that introduces a component AND regenerates its baseline makes the
+  visual gate useless for that component.** There is nothing to diff against, so
+  a green snapshot only says the render matches itself. Found the hard way: a
+  new chart's colour key rendered at 0×0 — every swatch was a sized `<span>`
+  inside a wrapper, so it was an inline non-replaced box and ignored width and
+  height — and it passed `tsc`, the build, axe and the snapshot gate. Markup
+  review missed it too, because the markup was correct in every respect except
+  that one. Only measuring pixels caught it. So for a *new* component, treat the
+  gate as recording the render rather than checking it, and have `ux-critic`
+  measure rather than read.
 - **The UX oracle is how "pleasant" is made verifiable:** `cd crates/gui && npm
   run ux` renders each screen headlessly → PNGs (`ux/screenshots/`) + axe a11y +
   visual-regression. Critique the PNGs with `ux-critic` (or the Read tool — you

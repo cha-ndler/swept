@@ -288,3 +288,70 @@ export interface Acknowledged {
   erases_history: boolean;
   loses_open_tabs: boolean;
 }
+
+// Mirrors macclean_gui_core::StartupItemDto.
+//
+// Distinct from `LoginItem`, which is the core's own shape: this one carries
+// `path` (the identity a selection is matched against) and `describes` (the
+// sentence the class means), and it is what the Startup screen renders.
+export interface StartupItem {
+  label: string;
+  program: string | null;
+  class: "starts_at_login" | "starts_on_demand" | "broken" | "unknown";
+  /** What the class means, in the words the backend chose. */
+  describes: string;
+  run_at_load: boolean;
+  /** A key in a file, not launchd's answer. See `LoginItem`. */
+  plist_says_disabled: boolean;
+  moved_aside: boolean;
+  duplicate_label: boolean;
+  offerable: boolean;
+  withheld: string | null;
+  path: string;
+}
+
+// A launchd job in a directory this app can never write to.
+//
+// Note what is absent: no `offerable`, no `withheld`, no path to act on. A
+// control it could never honour is not expressible here rather than
+// expressible and false.
+export interface SystemItem {
+  label: string;
+  program: string | null;
+  path: string;
+  directory: string;
+}
+
+export interface SourceState {
+  path: string;
+  access: "readable" | "absent" | "needs_permission" | "unreadable";
+  count: number;
+}
+
+// Mirrors macclean_gui_core::StartupReportDto.
+export interface StartupReport {
+  items: StartupItem[];
+  /** What this app has set aside, and can put back. */
+  moved_aside: StartupItem[];
+  system: SystemItem[];
+  sources: SourceState[];
+  /** How many things will actually start at your next login. */
+  starts_at_login: number;
+  /** The modern SMAppService store exists. Its contents are never read. */
+  modern_store_present: boolean;
+  /** Where set-aside items live, shown so it is findable without this app. */
+  store: string;
+  deferred: [string, string][];
+  caveats: string[];
+  skipped_unrepresentable: number;
+  partial: boolean;
+}
+
+// Mirrors macclean_gui_core::StartupSummary.
+//
+// No bytes-freed figure, because nothing is freed — the field does not exist
+// rather than existing and reading zero.
+export interface StartupSummary {
+  moved: number;
+  refused: number;
+}

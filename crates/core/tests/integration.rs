@@ -401,9 +401,9 @@ fn scan_with_progress_reports_monotonic_counts_and_matches_plain_scan() {
 
 // --- what the scan could not see -------------------------------------------
 //
-// The scan walks with `filter_map(Result::ok)`, so a directory it cannot read
-// contributes nothing and says nothing. On a stock Mac that is not a corner
-// case: `~/.Trash` is a disposal root *and* TCC-gated, so without Full Disk
+// The scan used to walk under `filter_map(Result::ok)`, so a directory it could
+// not read contributed nothing and said nothing. On a stock Mac that is not a
+// corner case: `~/.Trash` is a disposal root *and* TCC-gated, so without Full Disk
 // Access the whole of it is missing from a total that presents itself as
 // complete. This is the failure the project has already hit twice — "a report
 // of five things invites the reader to conclude their Mac is clean" — in the
@@ -643,4 +643,63 @@ fn a_denylist_refusal_is_still_counted_as_a_decision() {
     assert_eq!(plan.count(), 0);
     assert_eq!(plan.skipped_protected, 1, "refused by name, and understood");
     assert_eq!(plan.skipped_unreadable, 0);
+}
+
+/// A file that went away between `readdir` and resolving it is **not** a place
+/// the scan could not see. It ceased to exist, so nothing was missed and there
+/// is nothing there to clean.
+///
+/// This is the commonest event on a live Mac — `~/Library/Caches` churns
+/// constantly while a browser runs — and counting it would set `partial` on
+/// almost every real scan. A qualifier that is always on is one nobody reads,
+/// which is what `a_complete_scan_says_total_plainly` exists to protect.
+///
+/// The decisive argument is internal: `try_exists` already answers "absent" with
+/// `Ok(false) => continue` for a *root*. The identical fact about an entry has
+/// to get the identical answer, in the same function.
+///
+/// Constructing the race deterministically is the hard part. The progress
+/// callback fires from inside the walk, so discarding entries there hits the
+/// window between the directory's `readdir` and each name being resolved.
+#[test]
+fn a_file_that_goes_away_mid_walk_is_not_a_gap() {
+    use macclean_core::scanner::scan_with_progress;
+
+    let (_g, home) = fake_home();
+    let churn = home.join("Library/Caches/churn");
+    fs::create_dir_all(&churn).unwrap();
+    // Enough names that the first progress callback lands well inside a single
+    // directory listing, with plenty still buffered behind it.
+    for i in 0..5_000 {
+        fs::write(churn.join(format!("f{i:05}.bin")), b"x").unwrap();
+    }
+
+    let cfg = ScanConfig::with_default_roots(home.clone());
+    let mut fired = false;
+    let mut last = macclean_core::scanner::Progress::default();
+    let plan = scan_with_progress(&cfg, &mut |p| {
+        last = p;
+        if !fired {
+            fired = true;
+            // Discard the back half — names `read_dir` has already handed out
+            // but the walk has not reached yet.
+            for i in 2_500..5_000 {
+                let _ = fs::remove_file(churn.join(format!("f{i:05}.bin")));
+            }
+        }
+    });
+
+    assert!(fired, "the walk never reported progress");
+    assert!(
+        last.examined > plan.count(),
+        "the race window was never hit, so this test proved nothing: \
+         examined {} == planned {}",
+        last.examined,
+        plan.count()
+    );
+    assert_eq!(
+        plan.skipped_unreadable, 0,
+        "files that removed themselves are not places the scan could not see"
+    );
+    assert_eq!(plan.skipped_protected, 0);
 }

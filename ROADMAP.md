@@ -272,7 +272,24 @@ and PAUSES for the human taste gate. Never auto-merged.**
   already present at 0x0 for the same reason. Needs a human's eye on a machine
   with menu-bar room.
 
-**v0.4 complete.**
+- [ ] **U7 — The Clean screen still presents a floor as a total.** *Visual →
+  taste gate.* `ScanReport` now carries `skipped_unreadable` and `partial`,
+  because the scan could not previously tell an unreadable directory from an
+  empty one — a root it cannot stat, a directory it cannot open, a path it
+  cannot resolve. The CLI acts on that today; `CleanView` does not. It renders
+  `total_bytes` unqualified, feeds the same unqualified figure to the sidebar
+  badge and the menu-bar item, and its empty state shows a green shield reading
+  *"Nothing to clean — your Mac is tidy"* even when the scan could not see
+  `~/.Trash`, which is TCC-gated and a disposal root on every Mac without Full
+  Disk Access. **Every other module's view already surfaces its own `partial`,
+  so this is the one screen in the app making a claim it has not earned.** The
+  idiom to copy exists: `LargeOldView` appends *"or more"* to the figure and
+  renders a `CoverageNotice` listing each reason. Open questions for the critic:
+  whether the menu-bar string can carry the caveat at all, and whether an
+  unreadable-Trash empty state should route to Full Disk Access, which
+  `probe_permissions` and `open_privacy_settings` already support.
+
+**v0.4 complete apart from U7, which the scanner fix created the need for.**
 
 ## v0.5 — Modules
 

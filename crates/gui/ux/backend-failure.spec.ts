@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import type { ScanReport } from "../src/types";
 
 // Regression gate for the trust bug: when the Rust backend returns an error,
 // the app must SAY SO. It must never silently substitute fixture data — the
@@ -119,11 +120,17 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
         if (cmd === "scan") {
           scans += 1;
           if (scans > 1) return Promise.reject("permission denied");
+          // `satisfies`, so the compiler keeps this mock honest: an untyped
+          // literal silently kept modelling a payload the backend had stopped
+          // sending, which is exactly how a screen gets tested against a shape
+          // that no longer exists.
           return Promise.resolve({
             total_count: 120,
             total_bytes: 1024,
             requires_confirmation: true,
             skipped_protected: 0,
+            skipped_unreadable: 0,
+            partial: false,
             items: [],
             by_category: [
               {
@@ -134,7 +141,7 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
                 bytes: 1024,
               },
             ],
-          });
+          } satisfies ScanReport);
         }
         if (cmd === "clean") {
           ((w as Record<string, unknown>).__cleanCalls as unknown[]).push(args);

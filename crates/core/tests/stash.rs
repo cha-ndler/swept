@@ -721,6 +721,7 @@ fn a_grant_to_move_a_plist_aside_cannot_dispose_of_it() {
         }],
         dirs: Vec::new(),
         skipped_protected: 0,
+        skipped_unreadable: 0,
     };
     let report = execute(
         &plan,

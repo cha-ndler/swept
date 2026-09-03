@@ -76,6 +76,7 @@ fn dir_plan(dir: &SafeDir) -> Plan {
             category: "uninstaller-leftovers".to_string(),
         }],
         skipped_protected: 0,
+        skipped_unreadable: 0,
     }
 }
 
@@ -220,6 +221,7 @@ fn a_directory_grant_does_not_authorize_a_file_action_on_the_same_path() {
         }],
         dirs: Vec::new(),
         skipped_protected: 0,
+        skipped_unreadable: 0,
     };
     let (audit_path, mut audit) = audit_at(&home);
 
@@ -764,6 +766,7 @@ fn a_file_record_serializes_exactly_as_before() {
         }],
         dirs: Vec::new(),
         skipped_protected: 0,
+        skipped_unreadable: 0,
     };
     let (audit_path, mut audit) = audit_at(&home);
 

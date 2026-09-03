@@ -393,3 +393,139 @@ fn scan_with_progress_reports_monotonic_counts_and_matches_plain_scan() {
     assert_eq!(plan.total_bytes(), plain.total_bytes());
     assert_eq!(plan.skipped_protected, plain.skipped_protected);
 }
+
+// --- what the scan could not see -------------------------------------------
+//
+// The scan walks with `filter_map(Result::ok)`, so a directory it cannot read
+// contributes nothing and says nothing. On a stock Mac that is not a corner
+// case: `~/.Trash` is a disposal root *and* TCC-gated, so without Full Disk
+// Access the whole of it is missing from a total that presents itself as
+// complete. This is the failure the project has already hit twice — "a report
+// of five things invites the reader to conclude their Mac is clean" — in the
+// oldest module in the tree.
+
+/// Make `path` unreadable for the duration of `f`, then restore it.
+///
+/// Restoring matters: a tempdir whose subdirectory is mode 0 cannot be cleaned
+/// up, so an early `assert!` would leave the fixture behind.
+fn while_unreadable<T>(path: &Path, f: impl FnOnce() -> T) -> T {
+    use std::os::unix::fs::PermissionsExt;
+    let original = fs::metadata(path).unwrap().permissions();
+    let mut locked = original.clone();
+    locked.set_mode(0o000);
+    fs::set_permissions(path, locked).unwrap();
+    let out = f();
+    fs::set_permissions(path, original).unwrap();
+    out
+}
+
+/// A directory inside a cleaner root that cannot be opened is *counted*, not
+/// dropped. Without this the bytes behind it are simply absent.
+#[test]
+fn a_directory_the_scan_cannot_read_is_counted() {
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/seen.bin"), b"12345");
+    let locked = home.join("Library/Caches/locked");
+    write(&locked.join("unseen.bin"), b"0123456789");
+
+    let cfg = ScanConfig::with_default_roots(home.clone());
+    let plan = while_unreadable(&locked, || scan(&cfg));
+
+    assert_eq!(plan.count(), 1, "only the readable file is planned");
+    assert_eq!(plan.total_bytes(), 5);
+    assert_eq!(
+        plan.skipped_unreadable, 1,
+        "the directory it could not open is counted"
+    );
+    assert_eq!(
+        plan.skipped_protected, 0,
+        "and it is not conflated with a deliberate refusal"
+    );
+}
+
+/// `skipped_unreadable` and `skipped_protected` answer different questions.
+/// A protected path is one the scan *chose* not to plan and knows all about; an
+/// unreadable one is a hole in what it knows. Only the second makes a total a
+/// floor, so conflating them would either hide real gaps or cry wolf on every
+/// ordinary scan.
+#[test]
+fn a_path_refused_by_the_allowlist_is_not_reported_as_unreadable() {
+    let (_g, home) = fake_home();
+    write(&home.join("Documents/keep.txt"), b"private");
+
+    // A root outside the disposal allowlist: every file under it is walked,
+    // guarded, and then refused by `is_allowed` — seen in full, planned never.
+    let mut cfg = ScanConfig::with_default_roots(home.clone());
+    cfg.roots = vec![home.join("Documents")];
+    let plan = scan(&cfg);
+
+    assert_eq!(plan.count(), 0);
+    assert_eq!(plan.skipped_protected, 1, "refused, and understood");
+    assert_eq!(
+        plan.skipped_unreadable, 0,
+        "nothing here was invisible to the scan"
+    );
+}
+
+/// A scan that saw everything says so. The flag has to be able to be *false*,
+/// or the UI learns to ignore it.
+#[test]
+fn a_complete_scan_reports_no_gap() {
+    use macclean_core::report::ScanReport;
+
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/a.bin"), b"12345");
+
+    let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+    let report = ScanReport::from_plan(&plan);
+
+    assert_eq!(plan.skipped_unreadable, 0);
+    assert!(!report.partial, "nothing was missed, so nothing is claimed");
+}
+
+/// The gap has to survive the trip to the UI, and it has to arrive as a
+/// *statement about the total* rather than a raw counter the frontend may or
+/// may not think to render.
+#[test]
+fn the_report_presents_an_incomplete_total_as_partial() {
+    use macclean_core::report::ScanReport;
+
+    let (_g, home) = fake_home();
+    write(&home.join("Library/Caches/app/seen.bin"), b"12345");
+    let locked = home.join("Library/Logs/locked");
+    write(&locked.join("unseen.log"), b"0123456789");
+
+    let cfg = ScanConfig::with_default_roots(home.clone());
+    let plan = while_unreadable(&locked, || scan(&cfg));
+    let report = ScanReport::from_plan(&plan);
+
+    assert_eq!(report.skipped_unreadable, 1);
+    assert!(
+        report.partial,
+        "a total missing a directory is a floor, and must say so"
+    );
+    assert_eq!(
+        report.total_bytes, 5,
+        "the figure itself is unchanged — it is the claim about it that changes"
+    );
+}
+
+/// A cleaner root that is entirely unreadable is the real-world case: on a Mac
+/// without Full Disk Access, `~/.Trash` is exactly this. Reporting zero from it
+/// while claiming completeness is the worst available answer.
+#[test]
+fn a_root_that_cannot_be_opened_at_all_is_a_gap_not_a_zero() {
+    let (_g, home) = fake_home();
+    fs::create_dir_all(home.join(".Trash")).unwrap();
+    write(&home.join(".Trash/big.bin"), b"0123456789");
+
+    let cfg = ScanConfig::with_default_roots(home.clone());
+    let trash = home.join(".Trash");
+    let plan = while_unreadable(&trash, || scan(&cfg));
+
+    assert_eq!(plan.count(), 0, "nothing in it could be seen");
+    assert!(
+        plan.skipped_unreadable >= 1,
+        "so the root itself is the gap, not an empty Trash"
+    );
+}

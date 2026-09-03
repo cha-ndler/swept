@@ -4,6 +4,19 @@
 //! [`guard`] (which canonicalizes and denylist-checks) and then verified to lie
 //! within the scoped allowlist. Anything that fails either check is counted in
 //! `skipped_protected` and dropped from the plan.
+//!
+//! # Two ways a file can be absent from a plan, and they are not the same
+//!
+//! `skipped_protected` is a *decision*: the scan saw the path, guarded it, and
+//! refused it. `skipped_unreadable` is a *gap*: a directory it could not open
+//! or an entry it could not measure, so it does not know what was there.
+//!
+//! Only the second changes what the resulting total means. It used to be
+//! discarded — the walk ran under `filter_map(Result::ok)` — which made an
+//! unreadable tree indistinguishable from an empty one. That is not a corner
+//! case here: `~/.Trash` is both a disposal root and TCC-gated, so on a Mac
+//! without Full Disk Access the whole of it was missing from a figure that
+//! presented itself as complete.
 
 use std::fs::Metadata;
 use std::path::PathBuf;
@@ -94,11 +107,15 @@ pub fn scan_with_progress(cfg: &ScanConfig, on_progress: &mut dyn FnMut(Progress
         }
         // Do not follow symlinks while walking; `guard` will canonicalize each
         // candidate and reject anything that escapes the allowlist.
-        for entry in WalkDir::new(root)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
+        for entry in WalkDir::new(root).follow_links(false) {
+            // A directory that could not be opened, or an entry that could not
+            // be read. Either way the walk did not see what is behind it, and a
+            // total that quietly omits it is a completeness claim the scan
+            // cannot support.
+            let Ok(entry) = entry else {
+                plan.skipped_unreadable += 1;
+                continue;
+            };
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -117,8 +134,12 @@ pub fn scan_with_progress(cfg: &ScanConfig, on_progress: &mut dyn FnMut(Progress
                 plan.skipped_protected += 1;
                 continue;
             }
-            // A file we cannot stat is one we cannot assess — never plan it.
+            // A file we cannot stat is one we cannot assess — never plan it,
+            // and never pretend we knew what was there. (Reachable as a race:
+            // the name came back from `readdir`, and by the time it is measured
+            // it is gone.)
             let Ok(meta) = entry.metadata() else {
+                plan.skipped_unreadable += 1;
                 continue;
             };
             // Age filter: skip files that aren't old enough to be considered junk.

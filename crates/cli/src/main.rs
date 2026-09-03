@@ -319,37 +319,78 @@ fn resolve_audit_path(
 }
 
 fn print_plan(plan: &Plan) {
+    print!("{}", plan_summary(plan));
+}
+
+/// How many places the walk could not see into, phrased for a human.
+fn gap_phrase(n: usize) -> String {
+    format!("{n} place{}", if n == 1 { "" } else { "s" })
+}
+
+/// The plan as text. Pure, so what it claims can be tested.
+///
+/// The claim it must not make is the interesting one. `skipped_unreadable`
+/// counts directories the walk could not open, and on a Mac without Full Disk
+/// Access `~/.Trash` is one of them — a cleaner root, silently contributing
+/// zero. Printing "Nothing to clean" over that is a conclusion the scan has
+/// not earned, and printing a bare TOTAL over it is a completeness claim.
+fn plan_summary(plan: &Plan) -> String {
+    let mut out = String::new();
+    let gap = plan.skipped_unreadable;
+
     if plan.actions.is_empty() {
-        println!(
-            "Nothing to clean. ({} candidates skipped by safety guard)",
+        if gap > 0 {
+            out.push_str("Nothing found in the locations that could be read.\n");
+            out.push_str(&format!(
+                "  ! the scan could not look inside {} — usually a location\n    \
+                 behind Full Disk Access, so this is not an empty result.\n",
+                gap_phrase(gap)
+            ));
+        } else {
+            out.push_str("Nothing to clean.\n");
+        }
+        out.push_str(&format!(
+            "  ({} candidates skipped by safety guard)\n",
             plan.skipped_protected
-        );
-        return;
+        ));
+        return out;
     }
+
     let mut by_cat: BTreeMap<&str, (usize, u64)> = BTreeMap::new();
     for a in &plan.actions {
         let e = by_cat.entry(a.category.as_str()).or_insert((0, 0));
         e.0 += 1;
         e.1 += a.size_bytes;
     }
-    println!("Cleanup plan:");
+    out.push_str("Cleanup plan:\n");
     for (cat, (count, bytes)) in &by_cat {
-        println!("  {cat:<20} {count:>6} items  {:>10}", human_bytes(*bytes));
+        out.push_str(&format!(
+            "  {cat:<20} {count:>6} items  {:>10}\n",
+            human_bytes(*bytes)
+        ));
     }
-    println!("  {:-<20} {:->6} ------  {:->10}", "", "", "");
-    println!(
-        "  {:<20} {:>6} items  {:>10}",
-        "TOTAL",
+    out.push_str(&format!("  {:-<20} {:->6} ------  {:->10}\n", "", "", ""));
+    // The number is the same either way; only the claim about it changes.
+    out.push_str(&format!(
+        "  {:<20} {:>6} items  {:>10}\n",
+        if gap > 0 { "AT LEAST" } else { "TOTAL" },
         plan.count(),
         human_bytes(plan.total_bytes())
-    );
+    ));
+    if gap > 0 {
+        out.push_str(&format!(
+            "\n  ! a floor, not a total: the scan could not look inside {}.\n",
+            gap_phrase(gap)
+        ));
+    }
     if plan.requires_confirmation() {
-        println!(
-            "\n  ! mass delete: exceeds {} items or {} — needs --yes to execute.",
+        out.push_str(&format!(
+            "\n  ! mass delete: exceeds {} items or {} — needs --yes to execute.\n",
             MASS_DELETE_COUNT,
             human_bytes(MASS_DELETE_BYTES)
-        );
+        ));
     }
+    out
 }
 
 /// Read-only preview of what browsers remember.
@@ -529,5 +570,89 @@ mod tests {
             !home.join("Library/Keychains/deep").exists(),
             "must not create a directory inside a protected location"
         );
+    }
+
+    // --- what the summary says about what it could not see -----------------
+
+    use macclean_core::scanner::{scan, ScanConfig};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+
+    fn fake_home() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(home.join("Library/Caches/app")).unwrap();
+        (dir, home)
+    }
+
+    fn put(path: &Path, bytes: &[u8]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    /// Scan `home` with `locked` unopenable, restoring it afterwards so the
+    /// tempdir can still be cleaned up.
+    fn scan_with_locked(home: &Path, locked: &Path) -> macclean_core::plan::Plan {
+        let original = std::fs::metadata(locked).unwrap().permissions();
+        let mut shut = original.clone();
+        shut.set_mode(0o000);
+        std::fs::set_permissions(locked, shut).unwrap();
+        let plan = scan(&ScanConfig::with_default_roots(home.to_path_buf()));
+        std::fs::set_permissions(locked, original).unwrap();
+        plan
+    }
+
+    /// "Nothing to clean" is a conclusion. A scan that could not open a
+    /// directory has not earned it — and on a Mac without Full Disk Access the
+    /// directory it could not open is the Trash.
+    #[test]
+    fn an_empty_plan_with_a_gap_does_not_claim_nothing_to_clean() {
+        let (_g, home) = fake_home();
+        let locked = home.join("Library/Caches/locked");
+        put(&locked.join("unseen.bin"), b"0123456789");
+
+        let plan = scan_with_locked(&home, &locked);
+        let out = super::plan_summary(&plan);
+
+        assert!(plan.actions.is_empty());
+        assert!(
+            !out.contains("Nothing to clean"),
+            "claimed a clean machine over a gap:\n{out}"
+        );
+        assert!(
+            out.contains("could not"),
+            "must say what it could not see:\n{out}"
+        );
+    }
+
+    /// With a gap, the total is a floor and the wording has to carry that —
+    /// the number itself is unchanged, so the number cannot say it.
+    #[test]
+    fn a_total_over_an_incomplete_scan_is_labelled_a_floor() {
+        let (_g, home) = fake_home();
+        put(&home.join("Library/Caches/app/seen.bin"), b"12345");
+        let locked = home.join("Library/Caches/locked");
+        put(&locked.join("unseen.bin"), b"0123456789");
+
+        let plan = scan_with_locked(&home, &locked);
+        let out = super::plan_summary(&plan);
+
+        assert_eq!(plan.count(), 1);
+        assert!(out.contains("AT LEAST"), "expected a floor label:\n{out}");
+        assert!(out.contains("1 place"), "and the size of the gap:\n{out}");
+    }
+
+    /// The qualifier has to be able to be absent, or it stops meaning anything.
+    #[test]
+    fn a_complete_scan_says_total_plainly() {
+        let (_g, home) = fake_home();
+        put(&home.join("Library/Caches/app/seen.bin"), b"12345");
+
+        let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+        let out = super::plan_summary(&plan);
+
+        assert!(out.contains("TOTAL"), "{out}");
+        assert!(!out.contains("AT LEAST"), "{out}");
+        assert!(!out.contains("could not"), "{out}");
     }
 }

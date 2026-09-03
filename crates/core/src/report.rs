@@ -1,7 +1,7 @@
 //! Stable, serializable view of a [`Plan`] for machine consumption.
 //!
-//! This is the JSON contract that the CLI's `--json` mode emits and that a
-//! future GUI (or an automated test) consumes. It is deliberately decoupled
+//! This is the JSON contract that the CLI's `--json` mode emits and that the
+//! GUI consumes. It is deliberately decoupled
 //! from the internal [`Plan`]/`PlannedAction` types so the wire format stays
 //! stable even as the engine evolves. Nothing here mutates the filesystem.
 
@@ -38,7 +38,20 @@ pub struct ScanReport {
     /// True if executing this plan would cross a mass-delete threshold.
     pub requires_confirmation: bool,
     /// Candidates dropped by the safety guard (denylist/allowlist).
+    ///
+    /// A decision, not a gap — these were seen and refused.
     pub skipped_protected: usize,
+    /// Places the walk could not see into: a directory it could not open, or an
+    /// entry it could not measure.
+    pub skipped_unreadable: usize,
+    /// True when the scan describes less than what is there.
+    ///
+    /// Derived rather than free-standing, so a caller cannot render the total
+    /// while forgetting the counter that qualifies it. When this is set,
+    /// `total_bytes` and `total_count` are **floors**, and the UI must say so:
+    /// the common cause is a cleaner root behind Full Disk Access, where the
+    /// alternative is reporting an empty Trash to someone whose Trash is full.
+    pub partial: bool,
     /// Per-category rollups, ordered by category name for stable output.
     pub by_category: Vec<CategorySummary>,
     /// One record per planned file.
@@ -102,6 +115,8 @@ impl ScanReport {
             total_bytes: plan.total_bytes(),
             requires_confirmation: plan.requires_confirmation(),
             skipped_protected: plan.skipped_protected,
+            skipped_unreadable: plan.skipped_unreadable,
+            partial: plan.skipped_unreadable > 0,
             by_category,
             items,
         }

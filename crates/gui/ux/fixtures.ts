@@ -36,6 +36,7 @@ export const SAMPLE_REPORT: ScanReport = {
   by_category: [
     {
       category: "homebrew-downloads",
+      smart_scan_default: true,
       name: "Homebrew downloads",
       description: "Cached package downloads; re-downloaded on demand.",
       count: 96,
@@ -43,6 +44,7 @@ export const SAMPLE_REPORT: ScanReport = {
     },
     {
       category: "user-caches",
+      smart_scan_default: true,
       name: "Application caches",
       description: "Per-user app caches; apps recreate what they need.",
       count: 3580,
@@ -50,6 +52,7 @@ export const SAMPLE_REPORT: ScanReport = {
     },
     {
       category: "user-logs",
+      smart_scan_default: true,
       name: "Logs",
       description: "Per-user application and system logs.",
       count: 225,
@@ -57,6 +60,7 @@ export const SAMPLE_REPORT: ScanReport = {
     },
     {
       category: "xcode-derived-data",
+      smart_scan_default: true,
       name: "Xcode derived data",
       description: "Build intermediates and indexes; rebuilt automatically.",
       count: 312,

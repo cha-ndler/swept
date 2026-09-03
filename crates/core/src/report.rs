@@ -20,6 +20,13 @@ pub struct CategorySummary {
     pub description: String,
     pub count: usize,
     pub bytes: u64,
+    /// May a Smart Scan tick this for you? Copied from the registry, so the
+    /// frontend cannot invent a default the backend did not sanction.
+    ///
+    /// **False for a category the registry does not know**, which is the safe
+    /// direction: an unrecognized id is exactly the case where nothing should be
+    /// pre-selected on the user's behalf.
+    pub smart_scan_default: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -113,6 +120,7 @@ impl ScanReport {
                     description: meta.map(|c| c.description).unwrap_or("").to_string(),
                     count,
                     bytes,
+                    smart_scan_default: meta.is_some_and(|c| c.smart_scan_default),
                 }
             })
             .collect();

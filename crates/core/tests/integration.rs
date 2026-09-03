@@ -61,6 +61,9 @@ fn scan_report_serializes_a_stable_shape() {
         .expect("user-caches category present");
     assert_eq!(cache["count"], 1);
     assert_eq!(cache["bytes"], 5);
+    // Policy travels with the row it describes, so a frontend cannot invent a
+    // default the registry did not sanction.
+    assert_eq!(cache["smart_scan_default"], true);
     // Categories carry human-facing metadata for the GUI.
     assert!(!cache["name"].as_str().unwrap().is_empty());
     assert!(!cache["description"].as_str().unwrap().is_empty());

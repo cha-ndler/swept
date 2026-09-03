@@ -20,6 +20,18 @@ pub struct Category {
     pub description: &'static str,
     /// Path relative to the home directory that this category covers.
     pub subpath: &'static str,
+    /// May Smart Scan tick this for you, without you choosing it?
+    ///
+    /// Policy, and deliberately a field rather than a list somewhere else. Two
+    /// modules already answer this question — `privacy::Row::smart_scan_eligible`
+    /// is derived next to the rows it describes — and a second answer kept in
+    /// the aggregator would drift from this one silently. Sitting in the same
+    /// struct literal as `id` and `subpath` means adding a category cannot
+    /// inherit an answer; it has to give one.
+    ///
+    /// Pinned by [`tests::the_smart_scan_default_set_is_pinned`], so widening
+    /// the set is an edit to that assertion rather than a side effect.
+    pub smart_scan_default: bool,
 }
 
 /// All known categories. More specific (deeper) subpaths are matched ahead of
@@ -31,30 +43,43 @@ static CATEGORIES: &[Category] = &[
         name: "Homebrew downloads",
         description: "Cached Homebrew package downloads; re-downloaded on demand.",
         subpath: "Library/Caches/Homebrew",
+        smart_scan_default: true,
     },
     Category {
         id: "xcode-derived-data",
         name: "Xcode derived data",
         description: "Xcode build intermediates and indexes; rebuilt automatically.",
         subpath: "Library/Developer/Xcode/DerivedData",
+        smart_scan_default: true,
     },
     Category {
         id: "user-caches",
         name: "Application caches",
         description: "Per-user application caches; apps recreate what they need.",
         subpath: "Library/Caches",
+        smart_scan_default: true,
     },
     Category {
         id: "user-logs",
         name: "Logs",
         description: "Per-user application and system log files.",
         subpath: "Library/Logs",
+        smart_scan_default: true,
     },
     Category {
         id: "trash",
         name: "Trash",
         description: "Files already sitting in the user Trash.",
         subpath: ".Trash",
+        // **Not a default, and the reason is not caution.** The Trash is the
+        // recovery mechanism for everything else this app does — every other
+        // module disposes *into* it. A Smart Scan that empties it by default
+        // destroys the undo for its own other modules in the same click.
+        //
+        // There is a mechanical objection too: moving something already in
+        // `~/.Trash` to the Trash is a rename, so the bytes reported as freed
+        // would not have been freed.
+        smart_scan_default: false,
     },
 ];
 
@@ -111,5 +136,55 @@ mod tests {
         assert!(registry()
             .iter()
             .all(|c| !c.name.is_empty() && !c.description.is_empty()));
+    }
+
+    // --- what Smart Scan may tick for you -----------------------------------
+
+    /// The default set is pinned, in the shape `allowlist::the_disposal_scope_is_pinned`
+    /// uses: widening it must be a deliberate edit to this assertion rather than
+    /// a side effect of adding a category.
+    #[test]
+    fn the_smart_scan_default_set_is_pinned() {
+        let defaults: Vec<&str> = registry()
+            .iter()
+            .filter(|c| c.smart_scan_default)
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(
+            defaults,
+            vec![
+                "homebrew-downloads",
+                "xcode-derived-data",
+                "user-caches",
+                "user-logs"
+            ]
+        );
+    }
+
+    /// **The Trash is not in it**, and this is the assertion that says why.
+    ///
+    /// It is the recovery mechanism for everything else the same gesture does:
+    /// a Smart Scan that empties it by default destroys the undo for its own
+    /// other modules, in one click. There is a mechanical oddity too — moving
+    /// something already in `~/.Trash` to the Trash is a rename, so the bytes
+    /// reported as freed would not be freed.
+    #[test]
+    fn the_trash_is_never_ticked_for_you() {
+        let trash = by_id("trash").expect("the trash category exists");
+        assert!(!trash.smart_scan_default);
+    }
+
+    /// A category cannot exist without answering the question. The field has no
+    /// default and sits in the same struct literal as `id` and `subpath`, so
+    /// adding a fifth allowlist root forces an explicit answer rather than
+    /// inheriting one.
+    #[test]
+    fn every_category_states_whether_smart_scan_defaults_it() {
+        assert_eq!(
+            registry().len(),
+            5,
+            "the registry changed — re-read the pin above"
+        );
+        assert!(registry().iter().filter(|c| c.smart_scan_default).count() < registry().len());
     }
 }

@@ -721,18 +721,20 @@ instead.**
     proof of a running process. Verifying the pid would put the first
     `unsafe` FFI into `macclean-core`; M4 answered "no subprocess" for
     `codesign` and this holds the line.
-- [ ] **M6 — Startup grows a verb** *(was "Maintenance")* — reversible
-  login-item management. **The milestone changed shape, and that is a decision
-  for the human to confirm.** A Maintenance *screen* would have been four
-  disabled buttons beside one working list: the manageable surface is 5 items
-  on the reference machine, and the honest answer to most of the maintenance
-  checklist is "this needs a privileged helper we do not install". Putting the
-  "say so" on its own screen is the same mistake wearing a label. So the
-  existing **Startup** screen learns to act instead, and the out-of-scope half
-  becomes one short card at the foot of it — naming the one-line Terminal
-  command for each, because telling someone the line is more useful than a
-  button, and retiring "repair disk permissions", which has not existed since
-  OS X El Capitan.
+- [x] **M6 — Startup grows a verb** *(was "Maintenance")* — *shipped: the
+  read-only report (#45, #46), the move primitive (#47), the command layer
+  (#48) and the screen (#50, merged at the taste gate).* Reversible
+  login-item management. **The milestone changed shape, and the human
+  confirmed that shape by merging it.** A Maintenance *screen* would have been
+  four disabled buttons beside one working list: the manageable surface is 5
+  items on the reference machine, and the honest answer to most of the
+  maintenance checklist is "this needs a privileged helper we do not install".
+  Putting the "say so" on its own screen is the same mistake wearing a label.
+  So the existing **Startup** screen learns to act instead, and the
+  out-of-scope half becomes one short card at the foot of it — naming the
+  one-line Terminal command for each, because telling someone the line is more
+  useful than a button, and retiring "repair disk permissions", which has not
+  existed since OS X El Capitan.
   - [x] **What runs at login, read-only.** `loginitems::scan` reports the
     user's LaunchAgents as rows, the moved-aside store, `/Library/Launch*` as
     controlless inventory, and the modern `SMAppService` store's *existence* —
@@ -792,7 +794,7 @@ instead.**
     would need `macclean` to depend on the GUI's command layer, or a second
     copy of the ceiling. The store being pinned to one folder is the better
     recovery path, because it survives this app being removed.
-  - [ ] **The screen.** *Visual → taste gate; opened as a PR with screenshots,
+  - [x] **The screen.** *Visual → taste gate; opened as a PR with screenshots,
     never auto-merged.* `StartupView` grows the verb, and its shape is one
     measurement: the app can act on **5 of 31** launchd jobs on the reference
     machine, so the disclosure that most login items live in a store macOS

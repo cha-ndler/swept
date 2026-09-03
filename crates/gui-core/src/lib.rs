@@ -560,9 +560,19 @@ fn space_node(node: &spacelens::Node) -> SpaceNodeDto {
 /// a *disposal-grantable* discovery scope at all rather than only a readable
 /// one. That is a scope decision for a human, not something to settle by adding
 /// guessed paths to a list. Tracked in `ROADMAP.md`.
-fn browser_root_for<'a>(home: &Path, path: &Path) -> Option<&'a privacy::BrowserSpec> {
+fn browser_root_for(home: &Path, path: &Path) -> Option<&'static privacy::BrowserSpec> {
     privacy::BROWSERS.iter().find(|b| {
-        let root = home.join(b.root);
+        // `data_root` where the browser's own files sit above its profiles, and
+        // `root` otherwise. The scan's root answers "where are the profiles",
+        // which is the question for *offering*; this one is "whose data is
+        // this", which is the question for refusing.
+        let declared = home.join(b.data_root.unwrap_or(b.root));
+        // Resolved, because the declared spelling is the one place a user
+        // plausibly puts a symlink — a profile moved off the internal disk.
+        // Everywhere else in this function canonicalization is a TOCTOU
+        // defence; here, comparing a canonical path against an unresolved root
+        // is what would let the whole boundary be stepped around.
+        let root = std::fs::canonicalize(&declared).unwrap_or(declared);
         path == root || path.starts_with(&root)
     })
 }
@@ -574,11 +584,17 @@ fn browser_root_for<'a>(home: &Path, path: &Path) -> Option<&'a privacy::Browser
 /// refusal rather than a pass, so a later edit to that short-circuit cannot
 /// quietly turn "we did not look" into "go ahead".
 ///
-/// Comparison is byte-exact, and its case-safety is borrowed: the identity
+/// Comparison is byte-exact, and its case-safety is borrowed — by this function
+/// and by [`browser_root_for`], which is now load-bearing too: the identity
 /// check above refuses anything that is not already its own canonical spelling,
 /// and `fs::canonicalize` case-normalizes on APFS. Pinned by
 /// `a_differently_cased_spelling_never_reaches_the_predicate`, because borrowed
 /// safety that nothing records is safety a later edit removes by accident.
+///
+/// The row search is over **every** row rather than only the matched browser's,
+/// which is safe exactly while no browser's boundary contains another's —
+/// otherwise an inner browser's `Regenerable` row could grant passage to an
+/// outer browser's private data. Pinned by `no_browser_boundary_contains_another`.
 fn consequence_of(
     report: Option<&privacy::PrivacyReport>,
     home: &Path,

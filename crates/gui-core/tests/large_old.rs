@@ -938,3 +938,98 @@ fn a_differently_cased_spelling_never_reaches_the_predicate() {
         "the identity check must be what refuses this: {err}"
     );
 }
+
+/// **F9.** The boundary is a prefix test on the *canonical* path, and the
+/// browser root is the one place a user plausibly puts a symlink — a profile
+/// relocated off the internal SSD. Canonicalization is a TOCTOU defence
+/// everywhere else in this verb; here it was what defeated the protection, and
+/// the blast radius was not one file but everything the boundary covers.
+#[test]
+fn a_symlinked_browser_root_is_still_that_browsers_data() {
+    let (_g, home) = fixture_home();
+    let real = home.join("Documents/ChromeData");
+    let profile = real.join("Default");
+    write_sized(&profile.join("Preferences"), 10);
+    let cookies = profile.join("Cookies");
+    write_sized(&cookies, 4096);
+
+    let link = home.join("Library/Application Support/Google/Chrome");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    // The walk lists the canonical spelling, which is what the user selects.
+    let err = refusal(&home, &cookies);
+    assert!(err.contains("Chrome"), "{err}");
+    assert!(cookies.exists());
+}
+
+/// **F10.** `BrowserSpec::root` means "where the profiles are" — it was chosen
+/// for *offering*, and Arc's is deliberately one level down. Reusing it as the
+/// *refusal* boundary drew that boundary too narrowly and left Arc's own data
+/// files outside it. `StorableSidebar.json` holds every space, pinned tab and
+/// folder; `StorableArchiveItems.json` accumulates archived tabs and is the one
+/// that actually grows into this screen's range. Neither is a cache.
+///
+/// Naming a directory is not guessing a layout, so the refusal boundary is
+/// allowed to be coarser than the scan root.
+#[test]
+fn a_browsers_own_data_above_its_profile_root_is_refused() {
+    let (_g, home) = fixture_home();
+    let arc = home.join("Library/Application Support/Arc");
+    for name in ["StorableSidebar.json", "StorableArchiveItems.json"] {
+        let p = arc.join(name);
+        write_sized(&p, 4096);
+        let err = refusal(&home, &p);
+        assert!(err.contains("Arc"), "{name}: {err}");
+        assert!(p.exists(), "{name} was disposed of");
+    }
+}
+
+/// The coarser boundary must not become a vendor-wide one. `Google` holds
+/// `GoogleSoftwareUpdate`, which is a genuine disposable and nobody's private
+/// data.
+#[test]
+fn the_refusal_boundary_does_not_widen_to_the_vendor_directory() {
+    let (_g, home) = fixture_home();
+    let p = home.join("Library/Application Support/Google/GoogleSoftwareUpdate/blob.bin");
+    write_sized(&p, 4096);
+
+    let (_a, mut log) = audit_at(&home);
+    let summary =
+        dispose_selected_with_sink(&home, &[s(&p)], None, false, &sink(&home), &mut log).unwrap();
+
+    assert_eq!(summary.executed, 1);
+    assert!(!p.exists());
+}
+
+/// A canary, because the property is currently an accident of the table rather
+/// than something anyone stated.
+///
+/// `consequence_of` searches every row of the scan, not only the rows belonging
+/// to the browser whose root matched. That is safe *only* while no browser's
+/// boundary contains another's: if one did, a `Regenerable` row in the inner
+/// browser could grant passage to a consequence-carrying file in the outer one.
+/// Adding a root spelled `.../Google` would create exactly that nesting.
+#[test]
+fn no_browser_boundary_contains_another() {
+    use macclean_core::privacy::BROWSERS;
+
+    let home = Path::new("/Users/fixture");
+    let bounds: Vec<_> = BROWSERS
+        .iter()
+        .map(|b| (b.id, home.join(b.data_root.unwrap_or(b.root))))
+        .collect();
+
+    for (id, outer) in &bounds {
+        for (other, inner) in &bounds {
+            if id == other {
+                continue;
+            }
+            assert!(
+                !inner.starts_with(outer),
+                "{other}'s boundary is inside {id}'s, so one browser's cache row \
+                 could authorize the other's private data"
+            );
+        }
+    }
+}

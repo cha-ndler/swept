@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter};
 
 use macclean_core::loginitems::LoginItem;
 use macclean_core::report::ScanReport;
+use macclean_gui_core::smartscan::SmartScanReportDto;
 use macclean_gui_core::{
     self as gui, Acknowledged, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto,
     Permissions, PrivacyReportDto, SpaceLensReportDto, StartupReportDto, StartupSummary,
@@ -127,6 +128,27 @@ async fn large_and_old(
     })
     .await
     .map_err(|e| format!("large-and-old task failed: {e}"))?
+}
+
+/// Read-only: every source Smart Scan can act on, in one call.
+///
+/// Four scans, so it is the slowest command here — on the blocking pool like
+/// the rest. It authorizes nothing: the report it returns is a picture, and
+/// acting on any part of it still goes through that module's own verb.
+///
+/// `filters` are the *cleaner* filters. Large & Old's threshold is deliberately
+/// not exposed: it is pinned to `DEFAULT_MIN_SIZE`, because lowering it widens
+/// what `dispose_paths` will accept.
+#[tauri::command]
+async fn smart_scan(filters: Filters) -> Result<SmartScanReportDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = gui::default_home().map_err(|e| e.to_string())?;
+        Ok(gui::smartscan::smart_scan_in(
+            &gui::smartscan::SmartScanConfig::new(home).with_filters(filters),
+        ))
+    })
+    .await
+    .map_err(|e| format!("smart-scan task failed: {e}"))?
 }
 
 /// Read-only: the size of everything in the discovery scope, as a tree.
@@ -329,7 +351,8 @@ fn main() {
             open_login_items_settings,
             move_aside,
             put_back,
-            space_lens
+            space_lens,
+            smart_scan
         ])
         .run(tauri::generate_context!())
         .expect("error while running mac-cleaner");

@@ -849,10 +849,78 @@ instead.**
   nothing: putting an item back is dragging a file up one level. It is also
   what lets restore need **no recorded state at all** — the destination is the
   store's own parent — so no manifest ever names a path.
-- [ ] **M7 — Smart Scan** — orchestration over M2–M6 plus the existing cleaners:
-  one button, one combined result, one total. Defaults include only the
-  conservatively-safe categories; Large & Old, Privacy cookies and Uninstaller
-  leftovers are opt-in and shown separately.
+- [ ] **M7 — Smart Scan** — one button, one combined result, one total.
+  **The milestone is narrower than "over M2–M6" as originally written, and that
+  is a decision for the human to confirm** — the same class of change as M6's
+  own reshape. Three sources are dispatchable and the rest are findings.
+  - [x] **The default set is the registry's answer** (#54).
+    `Category::smart_scan_default` lives beside `id` and `subpath`, because
+    `privacy::Row::smart_scan_eligible` is already derived beside the rows it
+    describes and a second answer kept in the aggregator would drift
+    invisibly — both would still compile. `false` for the Trash, and not out of
+    caution: it is the recovery mechanism for everything else this app does, so
+    a gesture that empties it by default destroys its own undo in the same
+    click. Also `false` for a category the registry does not know, which is the
+    safe direction.
+  - [x] **The read-only aggregator.** `gui-core/src/smartscan.rs` runs the
+    sources and adds them up. It mints no `SafePath`, holds no `Consent` and
+    calls nothing that mutates — Smart Scan is not a second disposal path, and
+    what keeps that true is having no disposal code at all.
+    **Two figures, and no bare byte count at the top level:** every one lives
+    inside a `Total { bytes, from, incomplete }`, so a frontend cannot render
+    the number without holding its completeness — the idiom `CoveredDto` and
+    `StartupSummary` already set by omitting a size field on purpose.
+    Incompleteness is attributed *per source* in that module's own words,
+    because one boolean saying "some figure somewhere is short" is not
+    something a notice on screen can be written from.
+    **The invariant, and it is one test:** compute the headline, dispatch it
+    immediately against a `DirSink`, assert the bytes freed are the bytes
+    promised. It cannot pass while the total counts anything the verbs would
+    refuse, and it needs no dry-run knob to say so.
+    **No overlap-folding machinery, because there is no overlap** — and the
+    earlier design assumed there was. `default_roots` and `discovery_roots` are
+    disjoint, so cleanup and Large & Old cannot double-count; every path inside
+    a browser root is refused by `dispose_selected_with_sink` since #53, so a
+    Large & Old row there is not something the total may count either, and the
+    aggregator filters on that same predicate rather than a copy of it; and
+    Privacy's caches under `~/Library/Caches` are already reported without a
+    size because `user-caches` covers them. Pinned, because "the scopes are
+    disjoint" is a property of two lists someone may widen.
+    Found while writing its own tests: letting the *cleaner's*
+    `min_size_bytes` drive Large & Old's threshold would let the frontend widen
+    what `dispose_paths` accepts through a control that appears to be about
+    something else. Two knobs that share a name are still two knobs, so
+    `SmartScanConfig` keeps them apart and pins the Large & Old floor to
+    `DEFAULT_MIN_SIZE`.
+  - [ ] **The dispatch half.** Sequential, fail-fast, ledgered. It cannot be
+    atomic — `trash::delete` has no rollback — and pre-flighting every module in
+    dry-run was considered and rejected, because each verb's drift check
+    compares against a scan run *inside* the call, so a green pre-flight says
+    nothing about the real run at double the cost. One order,
+    `cleanup → privacy → large-old`, chosen so the loosest drift tolerance
+    (cleanup's ±10 %/64 MiB cache-churn allowance) runs first and the module
+    most likely to refuse runs last, where its refusal strands nothing. **The
+    exact claim is "no step begins after a step refused"**, not "the run is
+    atomic": `executor::execute` already continues past a failed action inside
+    step 1. Three outcomes per step, and the third is the point — `Executed`,
+    `Refused`, `NotAttempted` — because *we did not try* must not serialize
+    like *we tried and there was nothing*. Plus a backend-stamped
+    `scanned_at_ms` freshness check, honestly a staleness guard against our own
+    UI rather than authentication, and additive: deleting it should leave every
+    existing safety test green.
+  - [ ] **The screen.** *Visual → taste gate.* Artboard 05 and `ScanRing.tsx`
+    already exist.
+  - **Not sources, and each for its own reason.** The **Uninstaller** takes a
+    bundle id; including it means building the orphan sweep the M4 entry left
+    as an open question, and it inverts the predicate that module exists to get
+    right — from *prove this app is gone* to *enumerate everything and withhold
+    what looks owned* — in the one module where over-reporting is catastrophic.
+    **Startup** is a finding: `StartupSummary` has no bytes field, and a field
+    that cannot exist cannot be summed into a total later. **Space Lens**
+    contributes no bytes, and the first reason is overlap rather than units — it
+    measures the same scope Large & Old does and does not measure the cleaner
+    roots the default comes from at all, so it would double-count two sources
+    and miss the one that matters.
 
 ## v0.6 — Distribution
 

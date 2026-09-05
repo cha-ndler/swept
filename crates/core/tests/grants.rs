@@ -17,10 +17,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::{execute, Consent, DirSink, ExecError, Sink, MAX_GRANTS};
-use macclean_core::plan::{Disposal, Plan, PlannedAction};
 use safety::guard;
+use swept_core::audit::AuditLog;
+use swept_core::executor::{execute, Consent, DirSink, ExecError, Sink, MAX_GRANTS};
+use swept_core::plan::{Disposal, Plan, PlannedAction};
 
 fn fake_home() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -522,7 +522,7 @@ fn grants_do_not_bypass_mass_delete_confirmation() {
     let (_g, home) = fake_home();
     let mut plan = Plan::default();
     let mut grants = Vec::new();
-    for i in 0..(macclean_core::plan::MASS_DELETE_COUNT + 1) {
+    for i in 0..(swept_core::plan::MASS_DELETE_COUNT + 1) {
         let f = home.join(format!("Documents/f{i}.bin"));
         write(&f, b"data");
         let safe = guard(&f, &home).unwrap();
@@ -700,7 +700,7 @@ fn a_wholesale_refusal_is_recorded_in_the_audit_log() {
 fn a_refused_mass_delete_is_recorded_too() {
     let (_g, home) = fake_home();
     let mut plan = Plan::default();
-    for i in 0..(macclean_core::plan::MASS_DELETE_COUNT + 1) {
+    for i in 0..(swept_core::plan::MASS_DELETE_COUNT + 1) {
         let f = home.join(format!("Library/Caches/app/f{i}.bin"));
         write(&f, b"data");
         plan.actions.push(PlannedAction {

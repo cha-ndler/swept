@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use macclean_core::loginitems::scan_dir;
+use swept_core::loginitems::scan_dir;
 
 fn write_plist(dir: &Path, name: &str, body: &str) {
     fs::write(dir.join(name), body).unwrap();

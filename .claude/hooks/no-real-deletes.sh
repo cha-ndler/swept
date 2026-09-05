@@ -26,7 +26,7 @@ if printf '%s' "$cmd" | grep -qE '(\brm\b|\bunlink\b|\btrash\b|\bsrm\b|find[^|]*
   if printf '%s' "$cmd" | grep -qiE '(/var/folders/|\$TMPDIR|/tmp/|fixture|/target/|/build/|\.test-)'; then
     exit 0
   fi
-  echo "GUARD: refusing a real filesystem deletion during development. mac-cleaner is a data-destroying tool — exercise deletion logic only against a throwaway fixture/temp dir (\$TMPDIR, /var/folders, a path containing 'fixture'). Run it yourself if you truly mean it." >&2
+  echo "GUARD: refusing a real filesystem deletion during development. Swept is a data-destroying tool — exercise deletion logic only against a throwaway fixture/temp dir (\$TMPDIR, /var/folders, a path containing 'fixture'). Run it yourself if you truly mean it." >&2
   exit 2
 fi
 exit 0

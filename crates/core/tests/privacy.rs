@@ -18,10 +18,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::privacy::{
-    scan, Access, Class, Consequence, PrivacyConfig, BROWSERS, UNSUPPORTED,
-};
 use safety::allowlist;
+use swept_core::privacy::{scan, Access, Class, Consequence, PrivacyConfig, BROWSERS, UNSUPPORTED};
 
 // --- fixtures --------------------------------------------------------------
 
@@ -70,11 +68,11 @@ fn firefox_profile(home: &Path, name: &str) -> PathBuf {
     p
 }
 
-fn rows_at(report: &macclean_core::privacy::PrivacyReport, path: &Path) -> usize {
+fn rows_at(report: &swept_core::privacy::PrivacyReport, path: &Path) -> usize {
     report.rows.iter().filter(|r| r.path == path).count()
 }
 
-fn has_row_named(report: &macclean_core::privacy::PrivacyReport, file_name: &str) -> bool {
+fn has_row_named(report: &swept_core::privacy::PrivacyReport, file_name: &str) -> bool {
     report
         .rows
         .iter()
@@ -368,7 +366,7 @@ fn chromium_download_history_has_no_row_of_its_own() {
 /// lists must be a deliberate edit to this assertion, reviewed as such.
 #[test]
 fn the_recognised_names_are_pinned() {
-    use macclean_core::privacy::{recognized_names, Family};
+    use swept_core::privacy::{recognized_names, Family};
 
     let mut chromium = recognized_names(Family::Chromium);
     chromium.sort_unstable();

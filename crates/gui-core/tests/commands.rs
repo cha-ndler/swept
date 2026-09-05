@@ -4,9 +4,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::{Consent, DirSink};
-use macclean_gui_core::{
+use swept_core::audit::AuditLog;
+use swept_core::executor::{Consent, DirSink};
+use swept_gui_core::{
     clean_with_sink, gui_consent, list_login_items, probe_permissions, scan_report, Filters,
 };
 
@@ -120,7 +120,7 @@ fn clean_with_consent_disposes_via_injected_sink() {
 #[test]
 fn clean_surfaces_mass_delete_refusal_as_err() {
     let (_g, home) = fake_home();
-    for i in 0..(macclean_core::plan::MASS_DELETE_COUNT + 1) {
+    for i in 0..(swept_core::plan::MASS_DELETE_COUNT + 1) {
         write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"x");
     }
     let mut audit = AuditLog::open(&home.join("audit.jsonl")).unwrap();
@@ -202,7 +202,7 @@ fn an_empty_selection_disposes_nothing() {
     fs::create_dir_all(home.join("Library/Logs")).unwrap();
     write(&home.join("Library/Logs/x.log"), b"log");
 
-    let summary = macclean_gui_core::clean_at(
+    let summary = swept_gui_core::clean_at(
         &home,
         &home.join("audit.jsonl"),
         &Filters::default(),
@@ -232,12 +232,12 @@ fn a_plan_that_grew_past_the_preview_is_refused() {
         write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"data");
     }
 
-    let err = macclean_gui_core::clean_at(
+    let err = swept_gui_core::clean_at(
         &home,
         &home.join("audit.jsonl"),
         &Filters::default(),
         vec!["user-caches".to_string()],
-        Some(macclean_gui_core::Expected { count: 1, bytes: 4 }),
+        Some(swept_gui_core::Expected { count: 1, bytes: 4 }),
         true,
         &DirSink {
             trash_dir: home.join("bin"),
@@ -261,12 +261,12 @@ fn ordinary_churn_between_preview_and_execute_is_allowed() {
         write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"data");
     }
 
-    let summary = macclean_gui_core::clean_at(
+    let summary = swept_gui_core::clean_at(
         &home,
         &home.join("audit.jsonl"),
         &Filters::default(),
         vec!["user-caches".to_string()],
-        Some(macclean_gui_core::Expected { count: 2, bytes: 8 }),
+        Some(swept_gui_core::Expected { count: 2, bytes: 8 }),
         true,
         &DirSink {
             trash_dir: home.join("bin"),
@@ -288,7 +288,7 @@ fn the_gui_scan_report_omits_the_per_file_item_list() {
         write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"data");
     }
 
-    let report = macclean_gui_core::scan_report(&home, &Filters::default());
+    let report = swept_gui_core::scan_report(&home, &Filters::default());
     assert_eq!(
         report.total_count, 5,
         "the rollup still describes every file"
@@ -305,13 +305,11 @@ fn the_gui_scan_report_omits_the_per_file_item_list() {
     );
 
     // The CLI path is unchanged and still carries them.
-    let plan = macclean_core::scanner::scan(
-        &macclean_core::scanner::ScanConfig::with_default_roots(home.clone()),
-    );
+    let plan = swept_core::scanner::scan(&swept_core::scanner::ScanConfig::with_default_roots(
+        home.clone(),
+    ));
     assert_eq!(
-        macclean_core::report::ScanReport::from_plan(&plan)
-            .items
-            .len(),
+        swept_core::report::ScanReport::from_plan(&plan).items.len(),
         5
     );
 }
@@ -325,12 +323,10 @@ fn scan_report_with_progress_reports_and_matches_the_plain_report() {
 
     let mut seen = 0usize;
     let report =
-        macclean_gui_core::scan_report_with_progress(&home, &Filters::default(), &mut |_| {
-            seen += 1
-        });
+        swept_gui_core::scan_report_with_progress(&home, &Filters::default(), &mut |_| seen += 1);
 
     assert!(seen >= 1, "progress must be reported at least once");
-    let plain = macclean_gui_core::scan_report(&home, &Filters::default());
+    let plain = swept_gui_core::scan_report(&home, &Filters::default());
     assert_eq!(report.total_count, plain.total_count);
     assert_eq!(report.total_bytes, plain.total_bytes);
     assert!(report.items.is_empty(), "still no per-file items over IPC");

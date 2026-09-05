@@ -17,7 +17,7 @@ Add a new cleaner category: **$ARGUMENTS**
    watch them fail, implement, make them pass.
 4. **Review.** Because this touches the safety substrate, invoke
    `deletion-safety-reviewer` and resolve to `VERDICT: PASS`.
-5. **Verify.** Invoke `verifier`. Then show a sample `cargo run -p macclean -- scan`
+5. **Verify.** Invoke `verifier`. Then show a sample `cargo run -p swept -- scan`
    preview against a fixture HOME proving the new category is detected and
    nothing outside the allowlist is.
 

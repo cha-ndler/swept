@@ -12,13 +12,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::DirSink;
-use macclean_core::plan::MASS_DELETE_COUNT;
-use macclean_core::uninstall::{
+use swept_core::audit::AuditLog;
+use swept_core::executor::DirSink;
+use swept_core::plan::MASS_DELETE_COUNT;
+use swept_core::uninstall::{
     Location, UninstallConfig, CONTAINER_STATE_PARTS, CONTAINER_USER_DATA_PARTS, SEARCHED_LOCATIONS,
 };
-use macclean_gui_core::{
+use swept_gui_core::{
     dispose_leftovers_with_sink, installed_apps_in, uninstall_leftovers_in, CleanSummary, Expected,
     UninstallTarget,
 };

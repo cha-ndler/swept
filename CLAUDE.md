@@ -1,4 +1,4 @@
-# mac-cleaner
+# Swept
 
 A free, open-source CleanMyMac alternative: finds junk to clean, recommends
 performance tweaks, scans for app updates, assists with clutter removal. It acts
@@ -21,8 +21,8 @@ refuse and preview.
 | Test (the oracle) | `cargo test --workspace` |
 | Lint (must be clean) | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Format | `cargo fmt --all` (check: `cargo fmt --all --check`) |
-| Safety-kernel tests only | `cargo test -p macclean-safety` |
-| Preview a scan (read-only) | `cargo run -p macclean -- scan` |
+| Safety-kernel tests only | `cargo test -p swept-safety` |
+| Preview a scan (read-only) | `cargo run -p swept -- scan` |
 | Build release | `cargo build --release` |
 
 **A change is not done until `./scripts/verify.sh` passes.** It runs the same nine
@@ -106,7 +106,7 @@ crates/
             Pure: never deletes. Everything destructive must pass through it.
   core/     Engine — scanner (read-only) → plan (dry-run data) → executor
             (consent-gated, the ONLY mutator) → audit (append-only JSONL).
-  cli/      `macclean` front-end. `scan` previews; `clean` previews unless
+  cli/      `swept` front-end. `scan` previews; `clean` previews unless
             --execute; --permanent and --yes gate the dangerous paths.
 ```
 
@@ -184,6 +184,15 @@ into a fresh session. Hard-won conventions baked into them:
   that one. Only measuring pixels caught it. So for a *new* component, treat the
   gate as recording the render rather than checking it, and have `ux-critic`
   measure rather than read.
+- **The visual gate has a 1% pixel tolerance, so small copy changes pass
+  invisibly.** `playwright.config.ts` sets `maxDiffPixelRatio: 0.01`, which on a
+  full-page capture is thousands of pixels — enough to hide a re-worded caption
+  entirely. Measured during the Swept rename: renaming the app changed user-facing
+  copy in five views and moved **two** of 132 baselines, both of them the ones
+  showing a long path. The tolerance is right (font rendering is not
+  deterministic), but it means a green visual gate is evidence about *layout*,
+  not about *words*. Verify copy at the source, and never read a green snapshot
+  run as "the text is correct".
 - **The UX oracle is how "pleasant" is made verifiable:** `cd crates/gui && npm
   run ux` renders each screen headlessly → PNGs (`ux/screenshots/`) + axe a11y +
   visual-regression. Critique the PNGs with `ux-critic` (or the Read tool — you

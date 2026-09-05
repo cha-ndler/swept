@@ -1,4 +1,4 @@
-//! Trust kernel for mac-cleaner.
+//! Trust kernel for Swept.
 //!
 //! This crate is the single chokepoint that every destructive operation must
 //! pass through. It performs three jobs, in this order of authority:

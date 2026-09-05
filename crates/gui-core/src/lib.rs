@@ -1,12 +1,12 @@
-//! Frontend-facing command layer for the mac-cleaner GUI.
+//! Frontend-facing command layer for the Swept GUI.
 //!
-//! Thin, **tested** wrappers over `macclean-core` that take serde-friendly
+//! Thin, **tested** wrappers over `swept-core` that take serde-friendly
 //! inputs from the UI and return serializable DTOs. The Tauri shell's
 //! `#[tauri::command]` functions delegate straight to these, so all GUI
 //! behaviour is covered by ordinary `cargo test` (no webview needed).
 //!
 //! Crucially, this layer adds **no new deletion logic** — `clean_with_sink`
-//! routes through `macclean-core`'s consent-gated `executor::execute`, so the
+//! routes through `swept-core`'s consent-gated `executor::execute`, so the
 //! dry-run default, Trash-first disposal, mass-delete confirmation, and audit
 //! log all still apply exactly as in the CLI.
 
@@ -17,24 +17,22 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::{
+use safety::DirLimits;
+use swept_core::audit::AuditLog;
+use swept_core::executor::{
     execute, restore, stash, Consent, Sink, StashConsent, StashSink, SystemSink, SystemStashSink,
 };
-use macclean_core::largeold;
-use macclean_core::loginitems::{self, LoginItem};
-use macclean_core::plan::{
-    Disposal, Plan, PlannedAction, PlannedDirAction, PlannedMove, StashPlan,
-};
-use macclean_core::privacy::{self, Class, Consequence};
-use macclean_core::report::ScanReport;
-use macclean_core::scanner::{scan, scan_with_progress, Progress, ScanConfig};
-use macclean_core::spacelens;
-use macclean_core::uninstall::{
+use swept_core::largeold;
+use swept_core::loginitems::{self, LoginItem};
+use swept_core::plan::{Disposal, Plan, PlannedAction, PlannedDirAction, PlannedMove, StashPlan};
+use swept_core::privacy::{self, Class, Consequence};
+use swept_core::report::ScanReport;
+use swept_core::scanner::{scan, scan_with_progress, Progress, ScanConfig};
+use swept_core::spacelens;
+use swept_core::uninstall::{
     self, BundleId, Candidate, DisplayName, Kind, LeftoverReport, MatchedVia, Residence,
     UninstallConfig, UninstallError,
 };
-use safety::DirLimits;
 
 pub mod smartscan;
 
@@ -159,7 +157,7 @@ pub fn gui_consent(confirm_mass_delete: bool) -> Consent {
 
 /// Default audit-log path for the app (parent created if missing).
 pub fn default_audit_path() -> std::io::Result<PathBuf> {
-    let dir = default_home()?.join("Library/Application Support/macclean");
+    let dir = default_home()?.join("Library/Application Support/swept");
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("audit.jsonl"))
 }
@@ -341,7 +339,7 @@ fn is_readable(dir: &Path) -> bool {
 /// sending a protected or foreign path is exactly the signal worth having in
 /// the log, and it was the one thing the log never mentioned.
 fn refuse_and_record(audit: &mut AuditLog, reason: String) -> Result<CleanSummary, String> {
-    match macclean_core::executor::record_run_refusal(audit, &reason) {
+    match swept_core::executor::record_run_refusal(audit, &reason) {
         Ok(()) => Err(reason),
         // Still refusing either way; say that the record failed too rather than
         // reporting a clean refusal that left no trace.
@@ -954,7 +952,7 @@ pub fn dispose_selected(
 
 /// What the frontend names when it asks about an application.
 ///
-/// Both strings are validated by `macclean_core::uninstall` before they become
+/// Both strings are validated by `swept_core::uninstall` before they become
 /// match keys. Deliberately **only** these two: a command that could set the
 /// inventory roots or the home would let a frontend make an installed app look
 /// uninstalled, which is the one mistake that module must never make.
@@ -2505,7 +2503,7 @@ const STARTUP_CATEGORY: &str = "startup";
 
 /// Refuse, and leave a record of having refused.
 fn refuse_startup(audit: &mut AuditLog, reason: String) -> Result<StartupSummary, String> {
-    match macclean_core::executor::record_run_refusal(audit, &reason) {
+    match swept_core::executor::record_run_refusal(audit, &reason) {
         Ok(()) => Err(reason),
         Err(e) => Err(format!(
             "{reason} (and the audit log could not be written: {e})"

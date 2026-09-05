@@ -19,7 +19,7 @@ type Phase = "none" | "confirm" | "cleaning" | "done";
 
 /**
  * One hue per cleaner, stable across every view (design/rubric.md § Hard specs).
- * Ids come from `macclean_core::categories`. An unknown id deliberately falls
+ * Ids come from `swept_core::categories`. An unknown id deliberately falls
  * back to grey rather than borrowing another category's colour — a wrong hue
  * would claim a relationship that isn't there.
  */
@@ -630,16 +630,16 @@ function ErrorState({
         <InfoIcon size={24} />
       </StatusIcon>
       <p className="mt-4 text-title font-semibold">
-        {inApp ? "Scan couldn’t finish" : "mac-cleaner runs as a desktop app"}
+        {inApp ? "Scan couldn’t finish" : "Swept runs as a desktop app"}
       </p>
       <p className="text-muted mx-auto mt-1.5 max-w-md text-body">
         {inApp
           ? message
-          : "This page is a preview shell with no access to your disk. Open the mac-cleaner app to scan."}
+          : "This page is a preview shell with no access to your disk. Open the Swept app to scan."}
       </p>
       <p className="text-subtle mx-auto mt-3 max-w-md text-caption">
         Nothing was scanned and nothing was changed. No results are shown
-        because there are none — mac-cleaner never shows sample figures in place
+        because there are none — Swept never shows sample figures in place
         of your real disk.
       </p>
       {inApp && (

@@ -1,4 +1,4 @@
-# mac-cleaner roadmap
+# Swept roadmap
 
 This is the autonomous development loop's compass. Each iteration: pick the first
 unchecked item, complete it to its **verifiable goal** via the `/loop` workflow
@@ -6,7 +6,7 @@ unchecked item, complete it to its **verifiable goal** via the `/loop` workflow
 verifier → PR → CI green → merge), check it off here, then start the next.
 
 **v0.1.0 (shipped) = a complete, safe CLI.** **v0.2 = a pleasant GUI** (Tauri),
-reusing the UI-agnostic `macclean-core` crate and its `--json`/`ScanReport`
+reusing the UI-agnostic `swept-core` crate and its `--json`/`ScanReport`
 contract. The CLI was the foundation; the GUI is a second front-end, not a rewrite.
 
 ## Done
@@ -15,7 +15,7 @@ contract. The CLI was the foundation; the GUI is a second front-end, not a rewri
 - [x] `--json` structured scan output (PR #3)
 - [x] Cleaner-category registry + Homebrew downloads (PR #4)
 - [x] Large-old-files finder (`--min-size`) (PR #5)
-- [x] Startup/login-items inspector (`macclean login-items`) (PR #6)
+- [x] Startup/login-items inspector (`swept login-items`) (PR #6)
 - [x] Property tests for the safety kernel (proptest) (PR #7)
 - [x] CI/release hardening (checkout@v5, release artifact, badge) (PR #8)
 - [x] Docs + v0.1.0 (README, CHANGELOG, tag) (PR #9)
@@ -33,7 +33,7 @@ _All complete — v0.1.0 shipped. 🎉_
 ## v0.2 — Pleasant GUI (Tauri)
 
 Framework: **Tauri** (Rust backend + web frontend), chosen so the GUI calls
-`macclean-core` directly (no shelling out) and stays a thin front-end over the
+`swept-core` directly (no shelling out) and stays a thin front-end over the
 same safety substrate. Node 26/npm present; macOS uses the system WKWebView.
 
 **UX verification model (oracle-first).** "Pleasant" has no oracle by default, so
@@ -50,7 +50,7 @@ destructive action in the GUI must route through the consent-gated `executor`
 (dry-run default, Trash-first, mass-delete confirmation, audit log).
 
 - [x] **GUI command layer** (`crates/gui-core`) — tested wrappers over
-  `macclean-core` returning serde DTOs (`scan_report`, `list_login_items`,
+  `swept-core` returning serde DTOs (`scan_report`, `list_login_items`,
   `clean_with_sink`); no new deletion logic. (PR #12)
 - [x] **Tauri shell + frontend toolchain + design system** (PR #13) — Tauri v2
   app (`crates/gui`, excluded from the core workspace) with Vite + React + TS +
@@ -122,7 +122,7 @@ Logs clean verified via the audit log). Run via the `.claude/loops/` prompts.
 - [ ] **Refuse to run as root** — `Sink::delete` relies on `unlink(2)` returning
   `EPERM` for a directory, which `unlink(2)` documents as conditional on the
   effective user not being the super-user. Nothing checks `geteuid`, and
-  `sudo macclean clean --execute --permanent --yes` is reachable. The exposure
+  `sudo swept clean --execute --permanent --yes` is reachable. The exposure
   is small (a stray directory-entry removal, not a recursive unlink) but the
   guarantee should not be conditional on something unenforced.
 - [x] **Directory disposal needs `guard_dir`** — `safety::dir_guard` walks the
@@ -752,7 +752,7 @@ instead.**
     this tool does not have.
   - **No subprocess and no `libc`**, so liveness is marker *presence*, never
     proof of a running process. Verifying the pid would put the first
-    `unsafe` FFI into `macclean-core`; M4 answered "no subprocess" for
+    `unsafe` FFI into `swept-core`; M4 answered "no subprocess" for
     `codesign` and this holds the line.
 - [x] **M6 — Startup grows a verb** *(was "Maintenance")* — *shipped: the
   read-only report (#45, #46), the move primitive (#47), the command layer
@@ -824,7 +824,7 @@ instead.**
     never learn anything, while the rows genuinely dropped for an unnameable
     filename were counted nowhere. A login item could vanish from a report
     that called itself complete. **No CLI subcommands, deliberately:** they
-    would need `macclean` to depend on the GUI's command layer, or a second
+    would need `swept` to depend on the GUI's command layer, or a second
     copy of the ceiling. The store being pinned to one folder is the better
     recovery path, because it survives this app being removed.
   - [x] **The screen.** *Visual → taste gate; opened as a PR with screenshots,
@@ -843,7 +843,7 @@ instead.**
     shipped with **no colour key**, invisible to every gate. Final scores 4, 4,
     5, 5, 5, 5, 5, 5, 5, 4.
 
-  The store is `~/Library/LaunchAgents/Moved aside by mac-cleaner/` — inside
+  The store is `~/Library/LaunchAgents/Moved aside by Swept/` — inside
   the folder the user already opens, because launchd does not recurse so the
   job is genuinely not loaded, and because uninstalling this app then strands
   nothing: putting an item back is dragging a file up one level. It is also

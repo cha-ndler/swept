@@ -19,11 +19,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::{execute, Consent, DirSink, ExecError, MAX_GRANTS};
-use macclean_core::plan::{Disposal, Plan, PlannedAction, PlannedDirAction, MASS_DELETE_COUNT};
-use macclean_core::scanner::{scan, ScanConfig};
 use safety::{guard, guard_dir, DirLimits, SafeDir};
+use swept_core::audit::AuditLog;
+use swept_core::executor::{execute, Consent, DirSink, ExecError, MAX_GRANTS};
+use swept_core::plan::{Disposal, Plan, PlannedAction, PlannedDirAction, MASS_DELETE_COUNT};
+use swept_core::scanner::{scan, ScanConfig};
 
 // --- fixtures --------------------------------------------------------------
 

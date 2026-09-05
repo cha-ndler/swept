@@ -2,7 +2,7 @@
 description: Run the full safety gate over the current diff (tests, clippy, fmt, deletion-safety review).
 ---
 
-Run mac-cleaner's complete safety gate on the current working changes and report
+Run Swept's complete safety gate on the current working changes and report
 a single go/no-go.
 
 1. `git diff --stat` and `git diff` to see what changed.

@@ -47,7 +47,7 @@ import type {
 
 type Phase = "none" | "confirm" | "working" | "done";
 
-/** Mirrors `macclean_core::plan`'s thresholds, only to *disclose* them. */
+/** Mirrors `swept_core::plan`'s thresholds, only to *disclose* them. */
 const MASS_COUNT = 100;
 const MASS_BYTES = 5 * 1024 ** 3;
 
@@ -446,7 +446,7 @@ function Picker({ onChoose }: { onChoose: (t: UninstallTarget) => void }) {
           <p className="text-muted text-caption">
             Identifiers starting with{" "}
             <span className="font-mono">com.apple.</span> usually belong to
-            macOS components rather than apps you removed. mac-cleaner refuses
+            macOS components rather than apps you removed. Swept refuses
             anything still installed, but cannot tell a removed app from a
             component it never saw.
           </p>
@@ -1219,7 +1219,7 @@ function ActionBar({
           <>
             <p className="text-body font-medium">Nothing selected</p>
             <p className="text-muted text-caption">
-              Tick each item you want gone. mac-cleaner never picks these for
+              Tick each item you want gone. Swept never picks these for
               you.
             </p>
           </>

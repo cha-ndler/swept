@@ -71,9 +71,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use macclean_core::privacy;
-use macclean_core::report::{CategorySummary, ScanReport};
 use serde::Serialize;
+use swept_core::privacy;
+use swept_core::report::{CategorySummary, ScanReport};
 
 use crate::{
     browser_root_for, build_config, large_and_old, privacy_report_from, probe_permissions,
@@ -190,7 +190,7 @@ impl SmartScanConfig {
         Self {
             home,
             filters: Filters::default(),
-            large_old_min_size: macclean_core::largeold::DEFAULT_MIN_SIZE,
+            large_old_min_size: swept_core::largeold::DEFAULT_MIN_SIZE,
         }
     }
 
@@ -215,7 +215,7 @@ pub fn smart_scan_in(cfg: &SmartScanConfig) -> SmartScanReportDto {
     let scanned_at_ms = now_ms();
 
     // --- cleaners ----------------------------------------------------------
-    let plan = macclean_core::scanner::scan(&build_config(home, &cfg.filters));
+    let plan = swept_core::scanner::scan(&build_config(home, &cfg.filters));
     let cleanup = ScanReport::from_plan_without_items(&plan);
 
     // --- privacy -----------------------------------------------------------
@@ -306,7 +306,7 @@ pub fn smart_scan_in(cfg: &SmartScanConfig) -> SmartScanReportDto {
     }
 
     // --- read-only findings ------------------------------------------------
-    let startup = startup_report_in(&macclean_core::loginitems::StartupConfig::new(
+    let startup = startup_report_in(&swept_core::loginitems::StartupConfig::new(
         home.to_path_buf(),
     ));
 

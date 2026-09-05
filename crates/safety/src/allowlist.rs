@@ -30,7 +30,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// The default set of locations mac-cleaner is allowed to scan and clean.
+/// The default set of locations Swept is allowed to scan and clean.
 ///
 /// Deliberately conservative: per-user caches, logs, Xcode derived data, and
 /// the user Trash. Anything outside these requires explicit user confirmation

@@ -446,51 +446,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
-name = "macclean"
-version = "0.1.0"
-dependencies = [
- "clap",
- "dirs",
- "macclean-core",
- "macclean-safety",
- "tempfile",
-]
-
-[[package]]
-name = "macclean-core"
-version = "0.1.0"
-dependencies = [
- "filetime",
- "macclean-safety",
- "plist",
- "serde",
- "serde_json",
- "tempfile",
- "trash",
- "walkdir",
-]
-
-[[package]]
-name = "macclean-gui-core"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "macclean-core",
- "macclean-safety",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "macclean-safety"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "tempfile",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -835,6 +790,51 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "swept"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dirs",
+ "swept-core",
+ "swept-safety",
+ "tempfile",
+]
+
+[[package]]
+name = "swept-core"
+version = "0.1.0"
+dependencies = [
+ "filetime",
+ "plist",
+ "serde",
+ "serde_json",
+ "swept-safety",
+ "tempfile",
+ "trash",
+ "walkdir",
+]
+
+[[package]]
+name = "swept-gui-core"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "serde",
+ "serde_json",
+ "swept-core",
+ "swept-safety",
+ "tempfile",
+]
+
+[[package]]
+name = "swept-safety"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "tempfile",
+]
 
 [[package]]
 name = "syn"

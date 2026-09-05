@@ -18,7 +18,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::spacelens::{measure, LensConfig, Node, MAX_WALK_DEPTH};
+use swept_core::spacelens::{measure, LensConfig, Node, MAX_WALK_DEPTH};
 
 /// A fake home with the discovery-scope directories these tests use.
 fn fixture_home() -> (tempfile::TempDir, PathBuf) {

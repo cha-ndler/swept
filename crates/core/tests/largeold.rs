@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use macclean_core::largeold::{find, Found, LargeOldConfig};
+use swept_core::largeold::{find, Found, LargeOldConfig};
 
 /// A fake home with the discovery-scope directories that matter here.
 fn fixture_home() -> (tempfile::TempDir, PathBuf) {
@@ -467,7 +467,7 @@ fn a_default_root_symlinked_into_mail_needs_a_canonical_home() {
     // `find_in` canonicalizes, so a non-canonical caller is still safe.
     let uncanonical = tmp.path().to_path_buf();
     assert_ne!(uncanonical, home, "fixture must really be non-canonical");
-    let report = macclean_core::largeold::find_in(&uncanonical, 1024, None);
+    let report = swept_core::largeold::find_in(&uncanonical, 1024, None);
     assert!(
         !report
             .items
@@ -500,7 +500,7 @@ fn a_protected_root_is_dropped_by_resolve_roots() {
     let (_g, home) = fixture_home();
     fs::create_dir_all(home.join("Library/Mail")).unwrap();
 
-    let resolved = macclean_core::largeold::resolve_roots(
+    let resolved = swept_core::largeold::resolve_roots(
         &[home.join("Documents"), home.join("Library/Mail")],
         &home,
     );

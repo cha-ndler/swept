@@ -1,4 +1,4 @@
-//! mac-cleaner engine.
+//! Swept engine.
 //!
 //! Pipeline: [`scanner`] discovers candidates in allowlisted locations and
 //! produces a [`plan::Plan`] (pure data, no side effects). [`executor`] turns a

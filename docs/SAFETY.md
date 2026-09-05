@@ -1,4 +1,4 @@
-# What mac-cleaner will and won't touch
+# What Swept will and won't touch
 
 This is the plain-English version. The enforced rules live in
 [`CLAUDE.md`](../CLAUDE.md) → SAFETY CONTRACT, and the code that implements them
@@ -106,7 +106,7 @@ rather than obeyed.
 Every planned action and every carried-out action is appended to:
 
 ```
-~/Library/Application Support/macclean/audit.jsonl
+~/Library/Application Support/swept/audit.jsonl
 ```
 
 One JSON object per line, with absolute paths and sizes. Previews are recorded

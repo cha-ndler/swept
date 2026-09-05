@@ -1,4 +1,4 @@
-// Mirrors macclean_core::report (the `--json` / Tauri `scan` contract).
+// Mirrors swept_core::report (the `--json` / Tauri `scan` contract).
 export interface CategorySummary {
   category: string;
   name: string;
@@ -39,7 +39,7 @@ export interface ScanReport {
   items?: unknown[];
 }
 
-// Mirrors macclean_gui_core::CleanSummary.
+// Mirrors swept_gui_core::CleanSummary.
 export interface CleanSummary {
   dry_run: boolean;
   executed: number;
@@ -49,7 +49,7 @@ export interface CleanSummary {
   entries_freed: number;
 }
 
-// Mirrors macclean_core::loginitems::LoginItem.
+// Mirrors swept_core::loginitems::LoginItem.
 export interface LoginItem {
   label: string;
   program: string | null;
@@ -80,7 +80,7 @@ export interface Filters {
   min_size_bytes?: number;
 }
 
-// Mirrors macclean_gui_core::LargeOldItem.
+// Mirrors swept_gui_core::LargeOldItem.
 //
 // Note what is absent: there is no `selected` field. Rows in this view are
 // never pre-ticked and never part of a default clean — the entire safety
@@ -94,7 +94,7 @@ export interface LargeOldItem {
   modified_ms: number | null;
 }
 
-// Mirrors macclean_gui_core::LargeOldReportDto.
+// Mirrors swept_gui_core::LargeOldReportDto.
 export interface LargeOldReport {
   items: LargeOldItem[];
   /** Total matches, which may exceed items.length when the list is capped. */
@@ -109,7 +109,7 @@ export interface LargeOldReport {
   partial: boolean;
 }
 
-// Mirrors macclean_gui_core::SpaceNodeDto.
+// Mirrors swept_gui_core::SpaceNodeDto.
 //
 // Note what is absent, and why it is a stronger absence than Large & Old's:
 // there is no `selected` field *and* no command that takes one of these back.
@@ -130,7 +130,7 @@ export interface SpaceNode {
   children: SpaceNode[];
 }
 
-// Mirrors macclean_gui_core::SpaceLensReportDto.
+// Mirrors swept_gui_core::SpaceLensReportDto.
 export interface SpaceLensReport {
   roots: SpaceNode[];
   total_bytes: number;
@@ -155,7 +155,7 @@ export interface SpaceLensReport {
 
 // --- Uninstaller ------------------------------------------------------------
 
-// Mirrors macclean_gui_core::UninstallTarget — the only two things the
+// Mirrors swept_gui_core::UninstallTarget — the only two things the
 // frontend may name. It cannot set the home or the inventory roots, because a
 // frontend that could would be able to make an installed app look uninstalled.
 export interface UninstallTarget {
@@ -163,14 +163,14 @@ export interface UninstallTarget {
   display_name?: string | null;
 }
 
-// Mirrors macclean_gui_core::InstalledAppDto. Top-level bundles only.
+// Mirrors swept_gui_core::InstalledAppDto. Top-level bundles only.
 export interface InstalledApp {
   id: string;
   name: string;
   bundle_path: string;
 }
 
-// Mirrors macclean_gui_core::LeftoverRowDto.
+// Mirrors swept_gui_core::LeftoverRowDto.
 //
 // As with Large & Old there is no `selected` field: every grant is a human's
 // individual choice. `offerable` is the backend's word on whether a row may be
@@ -193,7 +193,7 @@ export interface LeftoverRow {
   license_suspected: boolean;
 }
 
-// Mirrors macclean_gui_core::UninstallReportDto.
+// Mirrors swept_gui_core::UninstallReportDto.
 export interface UninstallReport {
   target: string;
   /** Still installed — in which case `rows` is empty. */
@@ -216,7 +216,7 @@ export interface UninstallReport {
   partial: boolean;
 }
 
-// Mirrors macclean_gui_core::Permissions. Advisory only: it says what the app
+// Mirrors swept_gui_core::Permissions. Advisory only: it says what the app
 // could read just now, not what the user has toggled in System Settings.
 export interface Permissions {
   trash_readable: boolean;
@@ -230,7 +230,7 @@ export interface Permissions {
   all_readable: boolean;
 }
 
-// Mirrors macclean_gui_core::PrivacyRowDto.
+// Mirrors swept_gui_core::PrivacyRowDto.
 //
 // Two absences are the design. There is no `selected` field, because nothing
 // here is ever pre-chosen. And there are no **member paths**: a database and
@@ -264,7 +264,7 @@ export interface PrivacyRow {
   undisposable: string | null;
 }
 
-// Mirrors macclean_gui_core::PrivacyBrowserDto.
+// Mirrors swept_gui_core::PrivacyBrowserDto.
 export interface PrivacyBrowser {
   id: string;
   name: string;
@@ -288,7 +288,7 @@ export interface CoveredElsewhere {
   browser: string;
 }
 
-// Mirrors macclean_gui_core::PrivacyReportDto.
+// Mirrors swept_gui_core::PrivacyReportDto.
 export interface PrivacyReport {
   rows: PrivacyRow[];
   browsers: PrivacyBrowser[];
@@ -300,7 +300,7 @@ export interface PrivacyReport {
   caveats: string[];
 }
 
-// Mirrors macclean_gui_core::Acknowledged.
+// Mirrors swept_gui_core::Acknowledged.
 //
 // The second consent axis, and the mirror of the backend's own gate: every
 // field defaults to false there, so a request that omits one is refused rather
@@ -311,7 +311,7 @@ export interface Acknowledged {
   loses_open_tabs: boolean;
 }
 
-// Mirrors macclean_gui_core::StartupItemDto.
+// Mirrors swept_gui_core::StartupItemDto.
 //
 // Distinct from `LoginItem`, which is the core's own shape: this one carries
 // `path` (the identity a selection is matched against) and `describes` (the
@@ -350,7 +350,7 @@ export interface SourceState {
   count: number;
 }
 
-// Mirrors macclean_gui_core::StartupReportDto.
+// Mirrors swept_gui_core::StartupReportDto.
 export interface StartupReport {
   items: StartupItem[];
   /** What this app has set aside, and can put back. */
@@ -369,7 +369,7 @@ export interface StartupReport {
   partial: boolean;
 }
 
-// Mirrors macclean_gui_core::StartupSummary.
+// Mirrors swept_gui_core::StartupSummary.
 //
 // No bytes-freed figure, because nothing is freed — the field does not exist
 // rather than existing and reading zero.
@@ -378,7 +378,7 @@ export interface StartupSummary {
   refused: number;
 }
 
-// Mirrors macclean_gui_core::smartscan.
+// Mirrors swept_gui_core::smartscan.
 
 /** Something a source could not see, named by the source that could not see it.
  *  One boolean would say "some figure somewhere is short", which is not

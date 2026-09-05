@@ -13,7 +13,7 @@ head -c 4096  /dev/zero > "$FIX/Library/Caches/app/blob.cache"
 head -c 16384 /dev/zero > "$FIX/Library/Logs/old.log"
 printf 'precious' > "$FIX/Documents/keep.txt"
 echo "--- scan (read-only preview) ---"
-HOME="$FIX" cargo run -q -p macclean -- scan
+HOME="$FIX" cargo run -q -p swept -- scan
 echo "--- fixture intact? Documents/keep.txt must still exist ---"
 ls -R "$FIX/Documents"
 rm -rf "$FIX"

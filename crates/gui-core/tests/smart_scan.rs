@@ -11,11 +11,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::DirSink;
-use macclean_core::privacy::PrivacyConfig;
-use macclean_gui_core::smartscan::{smart_scan_in, SmartScanConfig};
-use macclean_gui_core::{
+use swept_core::audit::AuditLog;
+use swept_core::executor::DirSink;
+use swept_core::privacy::PrivacyConfig;
+use swept_gui_core::smartscan::{smart_scan_in, SmartScanConfig};
+use swept_gui_core::{
     clean_with_sink, dispose_privacy_with_sink, gui_consent, Acknowledged, Filters,
 };
 

@@ -791,7 +791,7 @@ export const SAMPLE_PRIVACY_SUMMARY: CleanSummary = {
 // unreadable. That ratio is the design problem the screen is built around.
 
 const LA = `${L}/LaunchAgents`;
-const STORE = `${LA}/Moved aside by mac-cleaner`;
+const STORE = `${LA}/Moved aside by Swept`;
 
 function sitem(
   label: string,

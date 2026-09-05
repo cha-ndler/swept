@@ -16,13 +16,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::uninstall::{
+use safety::DirLimits;
+use swept_core::uninstall::{
     inventory, inventory_roots, leftovers_for, leftovers_for_named, owner_index, BundleId,
     DisplayName, Kind, Location, MatchedVia, Residence, UninstallConfig, UninstallError,
     CFPREFSD_CAVEAT, CONTAINER_STATE_PARTS, CONTAINER_USER_DATA_PARTS, DEFERRED_LOCATIONS,
     SEARCHED_LOCATIONS,
 };
-use safety::DirLimits;
 
 // --- fixtures --------------------------------------------------------------
 
@@ -132,7 +132,7 @@ fn app_support(home: &Path) -> PathBuf {
     home.join(Location::ApplicationSupport.as_str())
 }
 
-fn offerable(report: &macclean_core::uninstall::LeftoverReport) -> Vec<PathBuf> {
+fn offerable(report: &swept_core::uninstall::LeftoverReport) -> Vec<PathBuf> {
     report
         .rows
         .iter()
@@ -141,7 +141,7 @@ fn offerable(report: &macclean_core::uninstall::LeftoverReport) -> Vec<PathBuf> 
         .collect()
 }
 
-fn paths(report: &macclean_core::uninstall::LeftoverReport) -> Vec<String> {
+fn paths(report: &swept_core::uninstall::LeftoverReport) -> Vec<String> {
     report
         .rows
         .iter()
@@ -529,7 +529,7 @@ fn an_id_with_glob_or_path_metacharacters_is_refused_outright() {
 #[test]
 fn an_unusable_bundle_id_refuses_the_scan_rather_than_matching_loosely() {
     let (_g, home, _apps) = fixture();
-    let err = macclean_core::uninstall::leftovers_in(&home, "com.acme.*").unwrap_err();
+    let err = swept_core::uninstall::leftovers_in(&home, "com.acme.*").unwrap_err();
     assert!(matches!(err, UninstallError::UnmatchableId(_)));
 }
 
@@ -704,8 +704,7 @@ fn the_app_inventory_is_not_filtered_through_resolve_roots() {
     // inventory makes installed apps look uninstalled.
     let system_apps = PathBuf::from("/System/Applications");
     assert!(
-        macclean_core::largeold::resolve_roots(std::slice::from_ref(&system_apps), &home)
-            .is_empty(),
+        swept_core::largeold::resolve_roots(std::slice::from_ref(&system_apps), &home).is_empty(),
         "resolve_roots is expected to drop this — that is why inventory must not use it"
     );
     assert!(
@@ -1118,7 +1117,7 @@ fn a_container_of_a_still_installed_sibling_is_withheld_whole() {
     let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.Suite")).unwrap();
 
     assert_eq!(offerable(&report), vec![suite_caches]);
-    let withheld: Vec<&macclean_core::uninstall::Candidate> =
+    let withheld: Vec<&swept_core::uninstall::Candidate> =
         report.rows.iter().filter(|r| !r.offerable).collect();
     assert_eq!(withheld.len(), 1);
     assert_eq!(withheld[0].path, reader, "one row for the whole container");
@@ -1387,7 +1386,7 @@ fn a_group_container_is_shown_as_shared_and_never_offered() {
     let report = leftovers_for(&cfg(&home, &apps), &id("com.acme.App")).unwrap();
 
     assert_eq!(offerable(&report), vec![caches]);
-    let shared: Vec<&macclean_core::uninstall::Candidate> = report
+    let shared: Vec<&swept_core::uninstall::Candidate> = report
         .rows
         .iter()
         .filter(|r| r.location == Location::GroupContainers)

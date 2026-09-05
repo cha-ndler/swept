@@ -1,6 +1,6 @@
-# mac-cleaner
+# Swept
 
-[![ci](https://github.com/cha-ndler/mac-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/cha-ndler/mac-cleaner/actions/workflows/ci.yml)
+[![ci](https://github.com/cha-ndler/swept/actions/workflows/ci.yml/badge.svg)](https://github.com/cha-ndler/swept/actions/workflows/ci.yml)
 
 A free, open-source alternative to CleanMyMac. It finds junk worth clearing,
 shows you the large and forgotten files eating your disk, and reviews what runs
@@ -23,10 +23,10 @@ what it would do and acts only on explicit consent.
 | **Space Lens** | A sunburst of where the space actually went, with a breadcrumb to drill into any folder. It is **read-only and says so** — there is no command behind it that accepts anything back, so a wedge is a picture of your disk, never a proposal. |
 | **Startup** | Read-only review of the login items in `~/Library/LaunchAgents`. |
 | **Menu-bar extra** | The current reclaimable figure, and a way back to the window. It has deliberately **no quick-clean action** — clearing files from a menu means no preview and no confirmation. |
-| **CLI** | The same engine as `macclean`, for scripting and `--json` output. |
+| **CLI** | The same engine as `swept`, for scripting and `--json` output. |
 
 Everything it plans and everything it carries out is appended to a JSON-lines
-audit log at `~/Library/Application Support/macclean/audit.jsonl`.
+audit log at `~/Library/Application Support/swept/audit.jsonl`.
 
 <details>
 <summary>More screenshots</summary>
@@ -65,7 +65,7 @@ or build is unsigned, and macOS will say so.
 The CLI:
 
 ```bash
-cargo build --release -p macclean     # binary at target/release/macclean
+cargo build --release -p swept     # binary at target/release/swept
 ```
 
 The desktop app:
@@ -84,10 +84,10 @@ only applies to downloads.
 On macOS 15 and later, the old right-click → **Open** shortcut no longer works.
 If you download a `.dmg` from a CI run or a release:
 
-1. Open the `.dmg` and drag **mac-cleaner** to Applications.
+1. Open the `.dmg` and drag **Swept** to Applications.
 2. Launch it. macOS will refuse and say the developer cannot be verified.
 3. Open **System Settings → Privacy & Security**, scroll to Security, and click
-   **Open Anyway** next to the mac-cleaner message.
+   **Open Anyway** next to the Swept message.
 4. Launch it again and confirm.
 
 Only do this for a build you obtained from this repository and are willing to
@@ -103,19 +103,19 @@ app links straight to the right System Settings pane when it notices.
 ## CLI usage
 
 ```bash
-macclean scan                          # preview junk in allowlisted locations (read-only)
-macclean scan --older-than-days 30     # only files untouched for 30+ days
-macclean scan --min-size 100M          # only large files (4096, 500K, 100M, 2G, 1TiB)
-macclean scan --json                   # machine-readable plan (for scripts / a GUI)
+swept scan                          # preview junk in allowlisted locations (read-only)
+swept scan --older-than-days 30     # only files untouched for 30+ days
+swept scan --min-size 100M          # only large files (4096, 500K, 100M, 2G, 1TiB)
+swept scan --json                   # machine-readable plan (for scripts / a GUI)
 
-macclean clean                         # preview (nothing changes without --execute)
-macclean clean --execute               # move junk to the Trash (recoverable)
-macclean clean --execute --older-than-days 30 --min-size 100M  # filters compose
-macclean clean --execute --yes         # confirm past the mass-action threshold
-macclean clean --execute --permanent   # irreversible (per-action consent)
-macclean clean --execute --audit PATH  # write the audit log somewhere else
+swept clean                         # preview (nothing changes without --execute)
+swept clean --execute               # move junk to the Trash (recoverable)
+swept clean --execute --older-than-days 30 --min-size 100M  # filters compose
+swept clean --execute --yes         # confirm past the mass-action threshold
+swept clean --execute --permanent   # irreversible (per-action consent)
+swept clean --execute --audit PATH  # write the audit log somewhere else
 
-macclean login-items                   # read-only: what runs at login (also --json)
+swept login-items                   # read-only: what runs at login (also --json)
 ```
 
 Filters compose, the preview groups by category, and every planned and executed
@@ -169,7 +169,7 @@ refused and recorded — a partial run is never what you agreed to.
 cargo test --workspace                                   # the oracle
 cargo clippy --workspace --all-targets -- -D warnings    # must be clean
 cargo fmt --all --check
-cargo run -p macclean -- scan                            # read-only preview
+cargo run -p swept -- scan                            # read-only preview
 ```
 
 The GUI is excluded from the Rust workspace (it builds a webview app) and has
@@ -194,7 +194,7 @@ crates/safety     trust kernel — denylist, path guard, dir guard, allowlist. N
 crates/core       engine — scanner → plan → executor → audit log
 crates/gui-core   tested command layer returning serializable DTOs
 crates/gui        Tauri v2 desktop app (React + TypeScript + Tailwind)
-crates/cli        the `macclean` binary
+crates/cli        the `swept` binary
 design/           the design canvas, rubric and target artboards
 ```
 

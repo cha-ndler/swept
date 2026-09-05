@@ -892,7 +892,7 @@ instead.**
     something else. Two knobs that share a name are still two knobs, so
     `SmartScanConfig` keeps them apart and pins the Large & Old floor to
     `DEFAULT_MIN_SIZE`.
-  - [ ] **The dispatch half.** Sequential, fail-fast, ledgered. It cannot be
+  - [x] **The dispatch half.** Sequential, fail-fast, ledgered. It cannot be
     atomic — `trash::delete` has no rollback — and pre-flighting every module in
     dry-run was considered and rejected, because each verb's drift check
     compares against a scan run *inside* the call, so a green pre-flight says
@@ -908,6 +908,29 @@ instead.**
     `scanned_at_ms` freshness check, honestly a staleness guard against our own
     UI rather than authentication, and additive: deleting it should leave every
     existing safety test green.
+    Two review rounds, fourteen findings, and the pattern in them is one
+    sentence: **the set the dispatcher will act on must be the set the report
+    offered**, and three predicates define that set. The first version enforced
+    one. Each of the other two was a working data-loss path, reproduced by the
+    reviewer against a fixture rather than argued: privacy rows the report never
+    offered were disposable, because the verb's ceiling is wider than
+    `smart_scan_eligible` and the acknowledgement axis was being threaded
+    through (the field is gone now, so the two sets coincide by construction);
+    and a 64-byte file was disposable by a gesture whose report listed no large
+    files, because the size floor bounded the *offer* and nothing bounded the
+    disposal. A category that merely exists was accepted where
+    `smart_scan_default` is the real question — which would have emptied the
+    Trash, destroying the undo for every other module in the same click and
+    reporting bytes that were never freed.
+  - [ ] **Connect the report to the request, and close the class.** Every
+    corroboration in the dispatcher is either a magnitude the frontend supplies
+    both sides of, or a static predicate someone has to remember to write.
+    Nothing ties the report that was *shown* to the request that *acts* — which
+    is why the same class of finding arrived three times in different clothes.
+    Retaining the issued report server-side, keyed by its `scanned_at_ms`, and
+    requiring a request to reference one would make the offer set a fact rather
+    than a reconstruction. **It also means backend session state — lifetime,
+    multiple windows, memory — so it is a design decision, not a fix.**
   - [ ] **The screen.** *Visual → taste gate.* Artboard 05 and `ScanRing.tsx`
     already exist.
   - **Not sources, and each for its own reason.** The **Uninstaller** takes a

@@ -449,7 +449,13 @@ pub struct SmartScanRequest {
     /// direction, so a run would remove files the filter had excluded and the
     /// user never saw. Nothing else in this codebase lets a preview and its
     /// action disagree, and this is the seam where it nearly did.
-    #[serde(default)]
+    ///
+    /// **Required, deliberately.** Every other optional field on this request
+    /// defaults to the *refusing* value — `SmartScanConfirm` to false, a missing
+    /// `expected` to a refusal. `Filters::default()` is the opposite: no age
+    /// floor and no size floor, the widest cleaner configuration there is. A
+    /// frontend that lost its filter state must get a refusal, not the widest
+    /// possible scan, so this field has no serde default at all.
     pub filters: Filters,
     pub categories: Vec<String>,
     pub privacy_paths: Vec<String>,
@@ -459,11 +465,6 @@ pub struct SmartScanRequest {
     pub expected: SmartScanExpected,
     #[serde(default)]
     pub confirm_mass_delete: SmartScanConfirm,
-    /// Refused-by-default, unchanged from M5. Smart Scan never pre-selects a row
-    /// that carries a consequence, so in the default gesture this stays empty —
-    /// but the axis is threaded through rather than bypassed.
-    #[serde(default)]
-    pub acknowledged: Acknowledged,
 }
 
 /// What happened to one source.
@@ -623,15 +624,32 @@ pub fn dispatch_smart_scan_with_sink(
     // exists. `clean_with_sink` would filter it out silently and the ledger
     // would read `Executed { executed: 0 }` — the shape of a successful run over
     // nothing, which is the reading this project keeps refusing to allow.
-    if let Some(unknown) = req
-        .categories
-        .iter()
-        .find(|id| swept_core::categories::by_id(id).is_none())
-    {
-        return refuse_and_record(
-            audit,
-            format!("refused: {unknown:?} is not a category this scan offers."),
-        );
+    // Two different questions, and the first version only asked the weaker one.
+    // `by_id` answers "does this exist"; `smart_scan_default` answers "may this
+    // gesture tick it", and the Trash is `Some` for the first and `false` for
+    // the second. Emptying it here would destroy the undo for every other module
+    // in the same click — and would misreport, because re-trashing something
+    // already in `~/.Trash` frees nothing while `bytes_executed` counts it.
+    for id in &req.categories {
+        match swept_core::categories::by_id(id) {
+            None => {
+                return refuse_and_record(
+                    audit,
+                    format!("refused: {id:?} is not a category this scan offers."),
+                )
+            }
+            Some(cat) if !cat.smart_scan_default => {
+                return refuse_and_record(
+                    audit,
+                    format!(
+                        "refused: {id:?} is shown by this scan but is never part of the \
+                         combined action. Use the Cleanup screen, which asks about it on \
+                         its own."
+                    ),
+                )
+            }
+            Some(_) => {}
+        }
     }
 
     // Smart Scan's Large & Old contribution excludes anything inside a browser's
@@ -657,6 +675,34 @@ pub fn dispatch_smart_scan_with_sink(
                  never offers as a large file. Use Privacy for it."
             ),
         );
+    }
+
+    // And the other half of "what this gesture offered as a large file": the
+    // size floor.
+    //
+    // `dispose_selected_with_sink`'s ceiling is `discovery_roots` — every
+    // non-directory file in Documents, Downloads, Desktop, Movies, Music,
+    // Pictures and Application Support, at any size. The floor is what makes
+    // Large & Old *Large*, and without it a 64-byte `~/Documents/thesis.pdf`
+    // could be disposed of by a gesture whose report listed no large files at
+    // all. On the real app the floor is 100 MiB, so the entire contents of a
+    // person's Documents folder sit below the offer and above the disposal.
+    //
+    // Read from `cfg`, not the request — unlike `expected`, this is corroboration
+    // the frontend does not supply both sides of.
+    for raw in &req.large_old_paths {
+        let size = std::fs::symlink_metadata(Path::new(raw))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if size < cfg.large_old_min_size {
+            return refuse_and_record(
+                audit,
+                format!(
+                    "refused: {raw:?} is smaller than this gesture's large-file floor, \
+                     so it was never offered as one. Scan again and review."
+                ),
+            );
+        }
     }
 
     let mut steps: Vec<Step> = Vec::with_capacity(DISPATCH_ORDER.len());
@@ -702,7 +748,24 @@ pub fn dispatch_smart_scan_with_sink(
             "privacy" => run(dispose_privacy_with_sink(
                 &privacy::PrivacyConfig::new(home.to_path_buf()),
                 &req.privacy_paths,
-                req.acknowledged,
+                // **Always the default, which acknowledges nothing.**
+                //
+                // This is the ceiling, not a courtesy. `dispose_privacy_with_sink`
+                // accepts `offerable && !SiteStorage && !withheld && !undisposable`,
+                // which is strictly larger than the `smart_scan_eligible`
+                // (`offerable && regenerable`) set this gesture offers — and the
+                // only thing between them is `acknowledgement_missing`. Threading
+                // the frontend's acknowledgements through would let a routing bug
+                // carry a `Cookies` row, with the Privacy screen's toggles still
+                // set, into a gesture whose sheet never used the words "signed
+                // out". With the default, `acknowledgement_missing` returns `None`
+                // only for `Regenerable`, so the set the verb will accept *is* the
+                // set the report offered.
+                //
+                // Structural rather than a predicate someone can forget to call,
+                // which is the same argument that made the mass-delete
+                // confirmation a struct.
+                Acknowledged::default(),
                 req.expected.privacy,
                 req.confirm_mass_delete.privacy,
                 sink,
@@ -717,9 +780,6 @@ pub fn dispatch_smart_scan_with_sink(
                 sink,
                 audit,
             )),
-            // `DISPATCH_ORDER` is a constant in this file; a value not matched
-            // above is a programming error, and treating it as "nothing to do"
-            // would hide it. Refuse the whole run instead.
             // `DISPATCH_ORDER` is a constant in this file, so this is a
             // programming error rather than a reachable input. It still refuses
             // *into the ledger* rather than returning `Err` and discarding it:
@@ -737,6 +797,19 @@ pub fn dispatch_smart_scan_with_sink(
             source: source.to_string(),
             outcome,
         });
+    }
+
+    // One line tying the three verb runs together when the gesture aborted.
+    // Without it the log is indistinguishable from three separate screen
+    // actions: `NotAttempted` leaves no trace of its own, so the fact that a
+    // refusal stopped two other steps lived only in the value returned to the
+    // frontend. Best-effort — the run is already over, and failing to annotate
+    // it must not turn a truthful ledger into an error.
+    if let Some(because) = &stopped {
+        let _ = swept_core::executor::record_run_refusal(
+            audit,
+            &format!("smart scan stopped after a refusal: {because}"),
+        );
     }
 
     Ok(SmartScanRunReport::from_steps(steps))

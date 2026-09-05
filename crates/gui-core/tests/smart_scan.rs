@@ -59,6 +59,10 @@ fn audit(home: &Path) -> AuditLog {
     AuditLog::open(&home.join("audit.jsonl")).unwrap()
 }
 
+fn s(p: &Path) -> String {
+    p.display().to_string()
+}
+
 fn filters() -> Filters {
     Filters {
         older_than_days: None,
@@ -432,6 +436,7 @@ fn request(report_stamp: u64) -> SmartScanRequest {
         "categories": [],
         "privacy_paths": [],
         "large_old_paths": [],
+        "filters": {},
         "confirm_mass_delete": { "cleanup": true, "privacy": true, "large_old": true },
     }))
     .unwrap()
@@ -985,4 +990,201 @@ fn a_cleanup_drift_refusal_reaches_the_audit_log() {
         "the refusal that aborted the run must be in the log:\n{text}"
     );
     assert!(home.join("Library/Caches/app/f0000.bin").exists());
+}
+
+// --- the three offer-set predicates, each with its own reproduction ---------
+//
+// The dispatcher's job is that **the set it will act on is the set the report
+// offered**. Three predicates define that set, and the first version enforced
+// only one of them. Each of these was a working data-loss path.
+
+/// **A privacy row the report did not offer must not be disposable.**
+///
+/// `smart_scan_eligible` is `offerable && regenerable`, while
+/// `dispose_privacy_with_sink` accepts `offerable && !SiteStorage && !withheld
+/// && !undisposable` — strictly larger. The only thing between them is
+/// `acknowledgement_missing`, so threading the frontend's acknowledgements
+/// through was enough to sign a person out of every site from a gesture whose
+/// sheet never used the words.
+#[test]
+fn a_privacy_row_the_report_did_not_offer_cannot_be_disposed_of() {
+    let (_g, home) = fixture_home();
+    let profile = chromium_profile(&home, "Default");
+    let cookies = profile.join("Cookies");
+    let history = profile.join("History");
+    write_sized(&cookies, 4096);
+    write_sized(&history, 4096);
+
+    let report = smart_scan_in(&config(&home));
+    assert!(
+        !report.privacy.iter().any(|r| r.path == s(&cookies)),
+        "the fixture must not offer the cookie jar"
+    );
+
+    let mut req = request(now_ms());
+    req.privacy_paths = vec![s(&cookies), s(&history)];
+    req.expected.privacy = confirmed(2, 8192);
+
+    let mut log = audit(&home);
+    let run = dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap();
+
+    match outcome(&run, "privacy") {
+        StepOutcome::Refused { .. } => {}
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(cookies.exists(), "still signed in");
+    assert!(history.exists());
+    assert!(!run.completed);
+}
+
+/// **A file below the large-file floor was never offered as one.**
+///
+/// `dispose_selected_with_sink`'s ceiling is the discovery scope — every
+/// non-directory file in Documents, Downloads, Pictures and the rest, at any
+/// size. Without the floor, a gesture whose report listed no large files at all
+/// could trash a small document.
+#[test]
+fn a_file_below_the_large_file_floor_is_refused() {
+    let (_g, home) = fixture_home();
+    let thesis = home.join("Documents/thesis.pdf");
+    write_sized(&thesis, 64);
+
+    let report = smart_scan_in(&config(&home));
+    assert!(
+        report.large_old.items.is_empty(),
+        "the fixture must offer no large files"
+    );
+
+    let mut req = request(now_ms());
+    req.large_old_paths = vec![s(&thesis)];
+    req.expected.large_old = confirmed(1, 64);
+
+    let mut log = audit(&home);
+    let err =
+        dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap_err();
+
+    assert!(err.contains("floor"), "{err}");
+    assert!(thesis.exists());
+}
+
+/// The paired negative: a file that really is above the floor still goes.
+#[test]
+fn a_file_above_the_large_file_floor_is_still_disposable() {
+    let (_g, home) = fixture_home();
+    let iso = home.join("Downloads/big.iso");
+    write_sized(&iso, 4096);
+
+    let mut req = request(now_ms());
+    req.large_old_paths = vec![s(&iso)];
+    req.expected.large_old = confirmed(1, 4096);
+
+    let mut log = audit(&home);
+    let run = dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap();
+
+    assert!(matches!(
+        outcome(&run, "large-old"),
+        StepOutcome::Executed { .. }
+    ));
+    assert!(!iso.exists());
+}
+
+/// **A category that exists is not a category this gesture may tick.** The
+/// Trash is `Some` for `by_id` and `false` for `smart_scan_default`, and
+/// emptying it here would destroy the undo for every other module in the same
+/// click — while reporting bytes that were never freed, because re-trashing
+/// something already in `~/.Trash` frees nothing.
+#[test]
+fn a_category_the_gesture_never_offers_is_refused_even_though_it_exists() {
+    let (_g, home) = fixture_home();
+    let old = home.join(".Trash/old.bin");
+    write_sized(&old, 8192);
+
+    let mut req = request(now_ms());
+    req.categories = vec!["trash".to_string()];
+    req.expected.cleanup = zero();
+
+    let mut log = audit(&home);
+    let err =
+        dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap_err();
+
+    assert!(err.contains("never part of the combined action"), "{err}");
+    assert!(old.exists(), "the undo for every other module survives");
+}
+
+/// **The widening default.** `filters` is the one field whose permissive value
+/// would have been its serde default, so omitting it reproduced the original
+/// preview-versus-action bug exactly. It has no default now.
+#[test]
+fn a_request_that_omits_its_filters_is_refused_rather_than_run_wide_open() {
+    let err = serde_json::from_value::<SmartScanRequest>(serde_json::json!({
+        "scanned_at_ms": 0,
+        "categories": ["user-caches"],
+        "privacy_paths": [],
+        "large_old_paths": [],
+    }))
+    .unwrap_err();
+
+    assert!(err.to_string().contains("filters"), "{err}");
+}
+
+/// A misspelled filter key would deserialize to "no floor at all", which is the
+/// one direction a mistake here must not go.
+#[test]
+fn a_misspelled_filter_key_is_refused_rather_than_silently_widening() {
+    let err = serde_json::from_value::<SmartScanRequest>(serde_json::json!({
+        "scanned_at_ms": 0,
+        "filters": { "min_size": 1024 },
+        "categories": [],
+        "privacy_paths": [],
+        "large_old_paths": [],
+    }))
+    .unwrap_err();
+
+    assert!(err.to_string().contains("min_size"), "{err}");
+}
+
+/// There is no acknowledgement axis on this request at all. Removing the field
+/// is what makes the privacy ceiling structural rather than a predicate someone
+/// can forget to call.
+#[test]
+fn the_request_carries_no_acknowledgement_axis() {
+    let err = serde_json::from_value::<SmartScanRequest>(serde_json::json!({
+        "scanned_at_ms": 0,
+        "filters": {},
+        "categories": [],
+        "privacy_paths": [],
+        "large_old_paths": [],
+        "acknowledged": { "signs_you_out": true },
+    }))
+    .unwrap_err();
+
+    assert!(err.to_string().contains("acknowledged"), "{err}");
+}
+
+/// When a refusal stops the gesture, the log says so. `NotAttempted` leaves no
+/// trace of its own, so without this the fact that one refusal stopped two
+/// other steps lived only in the value returned to the frontend.
+#[test]
+fn a_gesture_that_aborted_says_so_in_the_log() {
+    let (_g, home) = fixture_home();
+    write_sized(&home.join("Library/Caches/app/blob.bin"), 4096);
+    write_sized(&home.join("Downloads/big.iso"), 4096);
+
+    let mut req = request(now_ms());
+    req.categories = vec!["user-caches".to_string()];
+    req.expected.cleanup = zero();
+    req.privacy_paths = vec![s(&home.join("Library/nope"))];
+    req.expected.privacy = zero();
+    req.large_old_paths = vec![s(&home.join("Downloads/big.iso"))];
+    req.expected.large_old = confirmed(1, 4096);
+
+    let mut log = audit(&home);
+    let run = dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap();
+
+    assert!(!run.completed);
+    let text = std::fs::read_to_string(home.join("audit.jsonl")).unwrap();
+    assert!(
+        text.contains("smart scan stopped after a refusal"),
+        "the abort must be reconstructable from the log alone:\n{text}"
+    );
 }

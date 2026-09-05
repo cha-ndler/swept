@@ -37,8 +37,13 @@ use swept_core::uninstall::{
 pub mod smartscan;
 
 /// Scan/clean filters as the frontend sends them.
+///
+/// `deny_unknown_fields` because this is frontend-supplied and every field
+/// *narrows* the scan: a misspelled key would otherwise deserialize to `None` —
+/// no floor at all — so a typo would silently widen it. The one direction a
+/// mistake here must not go is wider.
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Filters {
     /// Only consider files not modified in the last N days.
     pub older_than_days: Option<u64>,

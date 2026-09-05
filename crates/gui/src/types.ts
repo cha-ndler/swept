@@ -463,8 +463,13 @@ export interface SmartScanRequest {
    *  Carried here rather than left to the backend's defaults, because otherwise
    *  the preview and the action are built from two different configurations —
    *  and the divergence is always in the widening direction, removing files the
-   *  filter excluded and the user never saw. */
-  filters?: Filters;
+   *  filter excluded and the user never saw.
+   *
+   *  **Not optional.** Every other omittable field here defaults to the
+   *  *refusing* value; an absent `Filters` would mean no age floor and no size
+   *  floor — the widest scan there is. A frontend that lost its filter state
+   *  gets a refusal. Misspelled keys are rejected too, for the same reason. */
+  filters: Filters;
   categories: string[];
   privacy_paths: string[];
   large_old_paths: string[];
@@ -472,8 +477,16 @@ export interface SmartScanRequest {
    *  that names rows without saying what was confirmed. */
   expected?: SmartScanExpected;
   confirm_mass_delete?: SmartScanConfirm;
-  acknowledged?: Acknowledged;
 }
+
+/* There is deliberately no `acknowledged` field.
+ *
+ * Smart Scan offers only rows whose consequence is `regenerable`, and the
+ * privacy verb's own ceiling is wider than that — the gap between them is
+ * exactly the acknowledgement axis. Sending acknowledgements here would let a
+ * routing bug carry a cookie jar, with the Privacy screen's toggles still set,
+ * into a gesture whose sheet never used the words "signed out". Consequences
+ * are acknowledged on the Privacy screen, which asks about them. */
 
 /** Which sources the user confirmed a mass delete for.
  *

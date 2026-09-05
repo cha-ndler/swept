@@ -137,8 +137,10 @@ async fn large_and_old(
 /// acting on any part of it still goes through that module's own verb.
 ///
 /// `filters` are the *cleaner* filters. Large & Old's threshold is deliberately
-/// not exposed: it is pinned to `DEFAULT_MIN_SIZE`, because lowering it widens
-/// what `dispose_paths` will accept.
+/// not exposed and is pinned to `DEFAULT_MIN_SIZE` — and the dispatcher enforces
+/// it as a floor on what it will act on, which is what makes that pinning mean
+/// anything. (It does not bound `dispose_paths` itself, whose ceiling is the
+/// discovery scope; an earlier version of this comment claimed it did.)
 #[tauri::command]
 async fn smart_scan(filters: Filters) -> Result<SmartScanReportDto, String> {
     tauri::async_runtime::spawn_blocking(move || {

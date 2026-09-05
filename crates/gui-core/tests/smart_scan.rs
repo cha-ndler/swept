@@ -442,15 +442,23 @@ fn request(report_stamp: u64) -> SmartScanRequest {
     .unwrap()
 }
 
-/// A zero magnitude, for the sources whose refusal a test is *asking* for.
+/// A magnitude that asserts nothing — which the dispatcher now refuses, because
+/// `{0, 0}` is what a frontend that lost its sheet state sends.
 ///
-/// Not interchangeable across sources, and that asymmetry is the point:
-/// cleanup's drift check is `grew_beyond` — ±10 % or 64 MiB of cache-churn
-/// allowance — so zero passes it for any small fixture, while privacy and
-/// Large & Old match the count exactly and zero is itself a drift. Use
-/// [`confirmed`] where a step is meant to succeed.
-fn zero() -> Option<swept_gui_core::Expected> {
+/// Kept only for the test that pins that refusal. Everywhere else use
+/// [`confirmed`], whose count is what the sheet would really have shown.
+fn nothing_confirmed() -> Option<swept_gui_core::Expected> {
     Some(swept_gui_core::Expected { count: 0, bytes: 0 })
+}
+
+/// A count that clears the "say how many" gate without pinning a magnitude.
+///
+/// Sound for cleanup only: its drift check is `grew_beyond`, which allows 25
+/// items or 64 MiB of cache churn above what was confirmed. Privacy and
+/// Large & Old match the count exactly, so they need [`confirmed`] with the
+/// real number.
+fn some_cleanup() -> Option<swept_gui_core::Expected> {
+    Some(swept_gui_core::Expected { count: 1, bytes: 1 })
 }
 
 /// What the sheet would actually have shown for a set of rows.
@@ -479,15 +487,15 @@ fn a_refusal_stops_the_run_and_the_later_steps_say_they_were_not_attempted() {
 
     let mut req = request(now_ms());
     req.categories = vec!["user-caches".to_string()];
-    req.expected.cleanup = zero();
+    req.expected.cleanup = some_cleanup();
     // Privacy is asked for a row that is not there, so it refuses.
     req.privacy_paths = vec![home
         .join("Library/Application Support/Google/Chrome/Default/Cookies")
         .display()
         .to_string()];
-    req.expected.privacy = zero();
+    req.expected.privacy = confirmed(1, 0);
     req.large_old_paths = vec![home.join("Downloads/big.iso").display().to_string()];
-    req.expected.large_old = zero();
+    req.expected.large_old = confirmed(1, 4096);
 
     let mut log = audit(&home);
     let run = dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap();
@@ -523,7 +531,7 @@ fn a_step_that_was_not_attempted_is_distinguishable_from_one_that_did_nothing() 
     // Nothing selected anywhere but cleanup: the other two are NotSelected.
     let mut quiet = request(now_ms());
     quiet.categories = vec!["user-caches".to_string()];
-    quiet.expected.cleanup = zero();
+    quiet.expected.cleanup = some_cleanup();
     let mut log = audit(&home);
     let a = dispatch_smart_scan_with_sink(&config(&home), &quiet, &sink(&home), &mut log).unwrap();
 
@@ -533,11 +541,11 @@ fn a_step_that_was_not_attempted_is_distinguishable_from_one_that_did_nothing() 
     write_sized(&home2.join("Downloads/big.iso"), 2048);
     let mut broken = request(now_ms());
     broken.categories = vec!["user-caches".to_string()];
-    broken.expected.cleanup = zero();
+    broken.expected.cleanup = some_cleanup();
     broken.privacy_paths = vec![home2.join("Library/nope").display().to_string()];
-    broken.expected.privacy = zero();
+    broken.expected.privacy = confirmed(1, 0);
     broken.large_old_paths = vec![home2.join("Downloads/big.iso").display().to_string()];
-    broken.expected.large_old = zero();
+    broken.expected.large_old = confirmed(1, 2048);
     let mut log2 = audit(&home2);
     let b =
         dispatch_smart_scan_with_sink(&config(&home2), &broken, &sink(&home2), &mut log2).unwrap();
@@ -606,7 +614,7 @@ fn a_privacy_row_smart_scan_actually_offers_cannot_be_routed_to_large_and_old() 
     for path in [row, member.display().to_string()] {
         let mut req = request(now_ms());
         req.large_old_paths = vec![path.clone()];
-        req.expected.large_old = zero();
+        req.expected.large_old = confirmed(1, 4096);
 
         let mut log = audit(&home);
         let err = dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log)
@@ -627,7 +635,7 @@ fn a_consequence_carrying_path_sent_as_a_large_and_old_path_is_refused() {
 
     let mut req = request(now_ms());
     req.large_old_paths = vec![cookies.display().to_string()];
-    req.expected.large_old = zero();
+    req.expected.large_old = confirmed(1, 4096);
 
     let mut log = audit(&home);
     let err =
@@ -679,7 +687,7 @@ fn a_report_older_than_the_freshness_budget_is_refused() {
 
     let mut req = request(now_ms() - MAX_REPORT_AGE_MS - 1000);
     req.categories = vec!["user-caches".to_string()];
-    req.expected.cleanup = zero();
+    req.expected.cleanup = some_cleanup();
 
     let mut log = audit(&home);
     let err =
@@ -702,7 +710,7 @@ fn a_scan_stamped_in_the_future_is_refused_rather_than_treated_as_fresh() {
 
     let mut req = request(now_ms() + 60_000);
     req.categories = vec!["user-caches".to_string()];
-    req.expected.cleanup = zero();
+    req.expected.cleanup = some_cleanup();
 
     let mut log = audit(&home);
     let err =
@@ -725,7 +733,7 @@ fn the_freshness_check_is_additive_and_a_stale_selection_is_still_refused() {
     // Fresh as can be, and still routed wrongly.
     let mut req = request(now_ms());
     req.large_old_paths = vec![cookies.display().to_string()];
-    req.expected.large_old = zero();
+    req.expected.large_old = confirmed(1, 4096);
 
     let mut log = audit(&home);
     // A whole-request refusal, which is stronger than the step-level one this
@@ -750,7 +758,7 @@ fn a_non_canonical_home_refuses_before_any_step_runs() {
     cfg.home = home.join("Documents/..");
     let mut req = request(now_ms());
     req.categories = vec!["user-caches".to_string()];
-    req.expected.cleanup = zero();
+    req.expected.cleanup = some_cleanup();
 
     let mut log = audit(&home);
     let err = dispatch_smart_scan_with_sink(&cfg, &req, &sink(&home), &mut log).unwrap_err();
@@ -855,27 +863,34 @@ fn the_filters_the_report_was_built_with_are_the_filters_the_run_uses() {
     );
 }
 
-/// A combined gesture may not act on a source without saying what it confirmed.
+/// A combined gesture may not act on a source without saying how many rows it
+/// confirmed — and **a zero is not an answer**.
 ///
 /// Each verb takes `Option<Expected>` because a single screen may legitimately
 /// act without one. This is the only place where one confirmation stands for
-/// three magnitudes, so a request naming rows without a count is a frontend that
-/// lost its sheet state.
+/// three magnitudes. `{0, 0}` satisfies "is there an `Expected`" while asserting
+/// nothing, and `grew_beyond` then allows 25 items and 64 MiB above it — so a
+/// frontend that lost its sheet state would clean twenty files it had confirmed
+/// as none.
 #[test]
-fn a_source_that_names_rows_without_saying_what_was_confirmed_is_refused() {
+fn a_source_that_names_rows_without_saying_how_many_is_refused() {
     let (_g, home) = fixture_home();
-    write_sized(&home.join("Library/Caches/app/blob.bin"), 4096);
+    for i in 0..20 {
+        write_sized(&home.join(format!("Library/Caches/app/f{i:04}.bin")), 4096);
+    }
 
-    let mut req = request(now_ms());
-    req.categories = vec!["user-caches".to_string()];
-    // expected.cleanup deliberately left None.
+    for expected in [None, nothing_confirmed()] {
+        let mut req = request(now_ms());
+        req.categories = vec!["user-caches".to_string()];
+        req.expected.cleanup = expected;
 
-    let mut log = audit(&home);
-    let err =
-        dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap_err();
+        let mut log = audit(&home);
+        let err = dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log)
+            .unwrap_err();
 
-    assert!(err.contains("did not say what was confirmed"), "{err}");
-    assert!(home.join("Library/Caches/app/blob.bin").exists());
+        assert!(err.contains("did not say how many"), "{err}");
+    }
+    assert!(home.join("Library/Caches/app/f0000.bin").exists());
 }
 
 /// A category id the registry does not know cannot have been on the report.
@@ -888,7 +903,7 @@ fn a_category_the_registry_does_not_know_is_refused_not_silently_dropped() {
 
     let mut req = request(now_ms());
     req.categories = vec!["user-caches".to_string(), "not-a-category".to_string()];
-    req.expected.cleanup = zero();
+    req.expected.cleanup = some_cleanup();
 
     let mut log = audit(&home);
     let err =
@@ -912,7 +927,7 @@ fn confirming_a_mass_delete_for_one_source_does_not_confirm_it_for_another() {
 
     let mut req = request(now_ms());
     req.categories = vec!["user-caches".to_string()];
-    req.expected.cleanup = zero();
+    req.expected.cleanup = some_cleanup();
     // Confirmed for the *other* two sources only.
     req.confirm_mass_delete = serde_json::from_value(serde_json::json!({
         "cleanup": false, "privacy": true, "large_old": true
@@ -939,7 +954,7 @@ fn the_ledger_carries_action_level_refusals_separately_from_step_level_ones() {
 
     let mut req = request(now_ms());
     req.categories = vec!["user-caches".to_string()];
-    req.expected.cleanup = zero();
+    req.expected.cleanup = some_cleanup();
 
     let mut log = audit(&home);
     let run = dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap();
@@ -1060,11 +1075,16 @@ fn a_file_below_the_large_file_floor_is_refused() {
     req.expected.large_old = confirmed(1, 64);
 
     let mut log = audit(&home);
-    let err =
-        dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap_err();
+    let run = dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap();
 
-    assert!(err.contains("floor"), "{err}");
+    // Checked in the step rather than at run start, because large-old runs after
+    // two other scans and a file can shrink in that window.
+    match outcome(&run, "large-old") {
+        StepOutcome::Refused { reason } => assert!(reason.contains("floor"), "{reason}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
     assert!(thesis.exists());
+    assert!(!run.completed);
 }
 
 /// The paired negative: a file that really is above the floor still goes.
@@ -1101,7 +1121,7 @@ fn a_category_the_gesture_never_offers_is_refused_even_though_it_exists() {
 
     let mut req = request(now_ms());
     req.categories = vec!["trash".to_string()];
-    req.expected.cleanup = zero();
+    req.expected.cleanup = some_cleanup();
 
     let mut log = audit(&home);
     let err =
@@ -1172,9 +1192,9 @@ fn a_gesture_that_aborted_says_so_in_the_log() {
 
     let mut req = request(now_ms());
     req.categories = vec!["user-caches".to_string()];
-    req.expected.cleanup = zero();
+    req.expected.cleanup = some_cleanup();
     req.privacy_paths = vec![s(&home.join("Library/nope"))];
-    req.expected.privacy = zero();
+    req.expected.privacy = confirmed(1, 0);
     req.large_old_paths = vec![s(&home.join("Downloads/big.iso"))];
     req.expected.large_old = confirmed(1, 4096);
 

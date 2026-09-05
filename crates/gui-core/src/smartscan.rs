@@ -456,6 +456,12 @@ pub struct SmartScanRequest {
     /// floor and no size floor, the widest cleaner configuration there is. A
     /// frontend that lost its filter state must get a refusal, not the widest
     /// possible scan, so this field has no serde default at all.
+    ///
+    /// Precisely: an **absent** key is refused. An explicit `{}` is not — that
+    /// is a caller stating "no filters", which the Cleanup screen also allows
+    /// and which would be wrong to forbid. What bounds `{}` is the required
+    /// non-zero `expected`: a materially wider plan than the one confirmed is
+    /// caught by the drift check rather than by this field.
     pub filters: Filters,
     pub categories: Vec<String>,
     pub privacy_paths: Vec<String>,
@@ -607,13 +613,18 @@ pub fn dispatch_smart_scan_with_sink(
             req.expected.large_old,
         ),
     ] {
-        if !empty && expected.is_none() {
+        // A zero magnitude satisfies "is there an `Expected`" while asserting
+        // nothing: `grew_beyond` then allows 25 items and 64 MiB above it, so a
+        // frontend that lost its sheet state and sent `{0, 0}` would clean
+        // twenty files it had confirmed as none. `{0, 0}` is precisely what lost
+        // state looks like, which is what this gate is for.
+        if !empty && !matches!(expected, Some(e) if e.count > 0) {
             return refuse_and_record(
                 audit,
                 format!(
-                    "refused: {name} named rows but did not say what was confirmed, so \
-                     the selection could not be checked against the disk. Scan again and \
-                     review."
+                    "refused: {name} named rows but did not say how many were confirmed, \
+                     so the selection could not be checked against the disk. Scan again \
+                     and review."
                 ),
             );
         }
@@ -675,34 +686,6 @@ pub fn dispatch_smart_scan_with_sink(
                  never offers as a large file. Use Privacy for it."
             ),
         );
-    }
-
-    // And the other half of "what this gesture offered as a large file": the
-    // size floor.
-    //
-    // `dispose_selected_with_sink`'s ceiling is `discovery_roots` — every
-    // non-directory file in Documents, Downloads, Desktop, Movies, Music,
-    // Pictures and Application Support, at any size. The floor is what makes
-    // Large & Old *Large*, and without it a 64-byte `~/Documents/thesis.pdf`
-    // could be disposed of by a gesture whose report listed no large files at
-    // all. On the real app the floor is 100 MiB, so the entire contents of a
-    // person's Documents folder sit below the offer and above the disposal.
-    //
-    // Read from `cfg`, not the request — unlike `expected`, this is corroboration
-    // the frontend does not supply both sides of.
-    for raw in &req.large_old_paths {
-        let size = std::fs::symlink_metadata(Path::new(raw))
-            .map(|m| m.len())
-            .unwrap_or(0);
-        if size < cfg.large_old_min_size {
-            return refuse_and_record(
-                audit,
-                format!(
-                    "refused: {raw:?} is smaller than this gesture's large-file floor, \
-                     so it was never offered as one. Scan again and review."
-                ),
-            );
-        }
     }
 
     let mut steps: Vec<Step> = Vec::with_capacity(DISPATCH_ORDER.len());
@@ -772,14 +755,25 @@ pub fn dispatch_smart_scan_with_sink(
                 audit,
             )),
             "large-old" if req.large_old_paths.is_empty() => StepOutcome::NotSelected,
-            "large-old" => run(dispose_selected_with_sink(
-                home,
-                &req.large_old_paths,
-                req.expected.large_old,
-                req.confirm_mass_delete.large_old,
-                sink,
-                audit,
-            )),
+            "large-old" => match undersized(cfg, &req.large_old_paths) {
+                // The other half of "what this gesture offered as a large file".
+                //
+                // Checked *here* rather than with the other gates at the top,
+                // because large-old runs after cleanup and privacy — tens of
+                // seconds on a real home — and a file that passed a floor at run
+                // start could have been replaced by a small one at the same path
+                // by the time this step begins. `selection_drifted` only catches
+                // growth, so a shrink would pass.
+                Some(why) => StepOutcome::Refused { reason: why },
+                None => run(dispose_selected_with_sink(
+                    home,
+                    &req.large_old_paths,
+                    req.expected.large_old,
+                    req.confirm_mass_delete.large_old,
+                    sink,
+                    audit,
+                )),
+            },
             // `DISPATCH_ORDER` is a constant in this file, so this is a
             // programming error rather than a reachable input. It still refuses
             // *into the ledger* rather than returning `Err` and discarding it:
@@ -805,6 +799,12 @@ pub fn dispatch_smart_scan_with_sink(
     // refusal stopped two other steps lived only in the value returned to the
     // frontend. Best-effort — the run is already over, and failing to annotate
     // it must not turn a truthful ledger into an error.
+    //
+    // Safe to swallow because every producer of `stopped` is a verb refusal that
+    // already went through `refuse_and_record`, which *appends* the audit
+    // failure to the reason it returns — so an unwritable log at this moment is
+    // already visible in the step that caused it. A fourth producer that does
+    // not report its own audit failure would break that argument.
     if let Some(because) = &stopped {
         let _ = swept_core::executor::record_run_refusal(
             audit,
@@ -826,6 +826,38 @@ pub fn dispatch_smart_scan(req: SmartScanRequest) -> Result<SmartScanRunReport, 
         &swept_core::executor::SystemSink,
         &mut audit,
     )
+}
+
+/// Why one of these paths is not a large file, if one is not.
+///
+/// `dispose_selected_with_sink`'s ceiling is the whole discovery scope — every
+/// ordinary file in Documents, Downloads, Pictures and the rest, at any size —
+/// so without this a 64-byte document could be disposed of by a gesture whose
+/// report listed no large files at all. The floor comes from the config, not the
+/// request: unlike `expected`, it is corroboration the frontend does not supply
+/// both sides of.
+///
+/// "Too small" and "could not be measured" are different answers, and this
+/// codebase separates them everywhere else.
+fn undersized(cfg: &SmartScanConfig, paths: &[String]) -> Option<String> {
+    for raw in paths {
+        match std::fs::symlink_metadata(Path::new(raw)) {
+            Ok(m) if m.len() < cfg.large_old_min_size => {
+                return Some(format!(
+                    "refused: {raw:?} is smaller than this gesture's large-file floor, so \
+                     it was never offered as one. Scan again and review."
+                ))
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return Some(format!(
+                    "refused: {raw:?} could not be measured ({e}), so whether this gesture \
+                     offered it cannot be established. Scan again and review."
+                ))
+            }
+        }
+    }
+    None
 }
 
 fn run(result: Result<CleanSummary, String>) -> StepOutcome {

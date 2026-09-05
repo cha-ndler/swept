@@ -12,6 +12,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -849,6 +850,29 @@ pub fn dispose_selected_with_sink(
             // instead of silently acting on the rest of the list.
             Ok(m) if m.is_dir() => {
                 rejected.push(format!("{raw}: is a directory"));
+                continue;
+            }
+            // Nor anything that is not an ordinary file. `is_dir()` alone let a
+            // FIFO, socket or device node take the file branch — and a size of
+            // zero for something that is not a file at all is not a fact about
+            // how much space it uses.
+            Ok(m) if !m.is_file() => {
+                rejected.push(format!("{raw}: is not an ordinary file"));
+                continue;
+            }
+            // **A file with a second name frees nothing when this one goes.**
+            //
+            // `largeold::find` refuses to *offer* a hard-linked file for exactly
+            // this reason, and until now nothing mirrored that where it matters.
+            // Disposing of one name moves it to the Trash and reclaims zero
+            // bytes, while `bytes_executed` counts the full size — the same
+            // misreport that keeps the Trash category out of Smart Scan. Placed
+            // here rather than in a caller so the Large & Old screen is covered
+            // too, not only the combined gesture.
+            Ok(m) if m.nlink() > 1 => {
+                rejected.push(format!(
+                    "{raw}: has more than one name, so removing this one would free nothing"
+                ));
                 continue;
             }
             Ok(m) => m.len(),

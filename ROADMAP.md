@@ -952,10 +952,20 @@ un-notarized, and it is Apple Silicon only.
   `package.json` with nothing enforcing agreement); feed `CHANGELOG.md` into
   release notes; publish checksums. *(The `[0.2.0]` link reference landed with
   the docs refresh, #33.)*
-  **Reversed:** this item used to call for running the `package` job on pull
-  requests. That is now the opposite of what the repo can afford — see the CI
-  budget note below — so bundling stays validated locally for PRs and in CI only
-  on main and tags.
+  **Reversed, then narrowed further.** This item used to call for running the
+  `package` job on pull requests. That is the opposite of what a private repo can
+  afford — see the CI budget note below — and packaging has now moved off pushes
+  to main as well: `release-build` and `package` run on a `v*` tag or a manual
+  `workflow_dispatch` only.
+  What that costs is worth stating rather than glossing: **`cargo tauri build` is
+  the only thing that exercises release codegen and the bundler**, and the local
+  Tauri gate is a *debug* `cargo build`, so nothing else runs it. A packaging
+  regression now surfaces when a release is cut rather than at the next merge.
+  `scripts/verify.sh --bundle` is the local equivalent and is where that coverage
+  went — run it, or dispatch the workflow, before tagging.
+  **Revisit after D6.** Public repositories get standard runners free, at which
+  point the original instinct here (package on pull requests) becomes both
+  affordable and right.
 
 ### CI budget — a real constraint, not a preference
 
@@ -974,15 +984,38 @@ be measuring the runner.
 
 What changed instead: prose and design assets are `paths-ignore`d (the docs PR
 burned a full four-job macOS run for a README), superseded PR runs are
-cancelled, `release-build` and `package` are main-and-tags only, and Playwright
-browsers and the Tauri CLI are cached. Roughly a third off a code PR and all of
-it off a docs PR.
+cancelled, and Playwright browsers and the Tauri CLI are cached. Roughly a third
+off a code PR and all of it off a docs PR.
 
-- [ ] **Watch whether that is enough.** If it is not, the remaining levers are
-  ordered by how much they cost in signal: cache more aggressively; drop the
-  `gui` job to run only when GUI-adjacent paths change; run the UX oracle on a
-  schedule rather than per-PR. Making the repo public removes the constraint
-  entirely (Actions are free for public repositories) — that is **D6's call to
-  make, not CI's**, and it must not be done for billing reasons alone.
+It was not enough — the allowance ran out again mid-session. **Measured, per
+merged pull request:**
+
+| run | jobs | runner min |
+|---|---|---|
+| pull request | check 0.7 + gui 3.3 | 4.0 |
+| push to main | check 0.6 + gui 2.8 + release-build 0.6 + package 1.6 | 5.6 |
+
+~9.6 macOS runner-minutes, which is ~96 billed and ~120 once per-job rounding is
+counted: **about sixteen merges a month.** Two thirds of it is the push-to-main
+run, and `check`/`gui` there re-validate the tree the pull-request run just
+validated.
+
+So `release-build` and `package` moved to a `v*` tag or a manual
+`workflow_dispatch` — ~2.2 runner-minutes per merge for a `.dmg` nobody
+downloads between releases. `scripts/verify.sh --bundle` is where that coverage
+went; see D5 for what it costs.
+
+- [ ] **The duplicate run is the remaining lever, and it is not obviously
+  worth pulling.** Dropping `check` and `gui` from push-to-main saves ~4
+  runner-minutes per merge — the largest single saving left — but it assumes the
+  branch was up to date, so it wants "require branches to be up to date" in
+  branch protection or a nightly catch-all. **Do not do this before D6 is
+  decided**: if the repo goes public it buys nothing and costs a real signal.
+  Levers after that, ordered by how much they cost in signal: cache more
+  aggressively; run `gui` only when GUI-adjacent paths change; run the UX oracle
+  on a schedule rather than per-PR. Making the repo public removes the
+  constraint entirely (Actions are free for public repositories) — that is
+  **D6's call to make, not CI's**, and it must not be made for billing reasons
+  alone.
 - [ ] **D6 — Public flip** — *(separate, on the human's word.)* Tidy the stale
   merged remote branches, then make the repo public.

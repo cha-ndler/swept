@@ -12,6 +12,14 @@
 #   scripts/verify.sh              # everything
 #   scripts/verify.sh --rust       # workspace only (the fast loop)
 #   scripts/verify.sh --gui        # frontend + UX oracle + Tauri shell only
+#   scripts/verify.sh --bundle     # everything, plus the real .app/.dmg bundle
+#
+# `--bundle` exists because CI no longer packages on every push to main, only on
+# a v* tag. The ordinary Tauri step here is a *debug* `cargo build`, which
+# compiles the shell but never exercises release codegen, the bundler, or the
+# `.dmg` step — so nothing between merges would catch a packaging regression.
+# Run this before cutting a release. It takes minutes, not seconds, which is
+# exactly why it is not in the default gate.
 #
 # Exit code is 0 only if every step that ran passed. Anything skipped is named
 # in the summary rather than quietly counted as a pass.
@@ -23,11 +31,13 @@ cd "$ROOT"
 
 WANT_RUST=1
 WANT_GUI=1
+WANT_BUNDLE=0
 case "${1:-}" in
-  --rust) WANT_GUI=0 ;;
-  --gui)  WANT_RUST=0 ;;
-  "")     ;;
-  *) echo "usage: $0 [--rust|--gui]" >&2; exit 2 ;;
+  --rust)   WANT_GUI=0 ;;
+  --gui)    WANT_RUST=0 ;;
+  --bundle) WANT_BUNDLE=1 ;;
+  "")       ;;
+  *) echo "usage: $0 [--rust|--gui|--bundle]" >&2; exit 2 ;;
 esac
 
 PASS=()
@@ -83,6 +93,19 @@ if [ "$WANT_GUI" = 1 ]; then
     step "tauri fmt"                 in_gui cargo fmt --manifest-path src-tauri/Cargo.toml --check
     step "tauri clippy -D warnings"  in_gui cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
     step "tauri build"               in_gui cargo build --manifest-path src-tauri/Cargo.toml
+
+    # The bundle, which the step above does not cover. Release codegen and the
+    # `.app`/`.dmg` bundler are the two things CI stopped running on every
+    # merge, so this is where that coverage went — deliberately opt-in, because
+    # it is minutes rather than seconds.
+    if [ "$WANT_BUNDLE" = 1 ]; then
+      if command -v cargo-tauri >/dev/null 2>&1; then
+        step "tauri bundle (.app + .dmg)" in_gui cargo tauri build
+      else
+        skip "tauri bundle (.app + .dmg)" \
+             "cargo-tauri not installed — cargo install tauri-cli --version '^2' --locked"
+      fi
+    fi
   fi
 fi
 

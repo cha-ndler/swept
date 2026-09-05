@@ -426,3 +426,88 @@ export interface SmartScanReport {
   startup: StartupFinding;
   permissions: Permissions;
 }
+
+/** What the user confirmed: the count and byte total shown on the sheet.
+ *
+ *  Mirrors `swept_gui_core::Expected`. The backend re-scans inside the call and
+ *  refuses if the selection has drifted from these, which is what stops a sheet
+ *  outliving the report it describes. */
+export interface Expected {
+  count: number;
+  bytes: number;
+}
+
+/** What the user confirmed, per source.
+ *
+ *  There is deliberately no aggregate `Expected`: a combined count could not be
+ *  checked against any single verb's rescan, and inventing a combined tolerance
+ *  would be inventing a looser one. */
+export interface SmartScanExpected {
+  cleanup?: Expected | null;
+  privacy?: Expected | null;
+  large_old?: Expected | null;
+}
+
+/** One confirmed Smart Scan gesture.
+ *
+ *  Three separately named path fields rather than one tagged list, which is the
+ *  structural defence against the hazard this screen introduces: three sources
+ *  that used to live in three components now share one state object. There is no
+ *  field a privacy path can occupy that routes it to the Large & Old verb.
+ *  The backend also rejects unknown fields outright. */
+export interface SmartScanRequest {
+  /** Echoed back from the report, unchanged. */
+  scanned_at_ms: number;
+  /** The filters the *report* was built with, echoed back unchanged.
+   *
+   *  Carried here rather than left to the backend's defaults, because otherwise
+   *  the preview and the action are built from two different configurations —
+   *  and the divergence is always in the widening direction, removing files the
+   *  filter excluded and the user never saw. */
+  filters?: Filters;
+  categories: string[];
+  privacy_paths: string[];
+  large_old_paths: string[];
+  /** Required for every source that names rows. The backend refuses a source
+   *  that names rows without saying what was confirmed. */
+  expected?: SmartScanExpected;
+  confirm_mass_delete?: SmartScanConfirm;
+  acknowledged?: Acknowledged;
+}
+
+/** Which sources the user confirmed a mass delete for.
+ *
+ *  One boolean cannot answer three questions: each verb evaluates the
+ *  mass-delete threshold against its own count, so a single flag would let a
+ *  person who confirmed one combined figure cross it inside a module whose own
+ *  count they never saw. */
+export interface SmartScanConfirm {
+  cleanup: boolean;
+  privacy: boolean;
+  large_old: boolean;
+}
+
+/** What happened to one source.
+ *
+ *  `not_attempted` is the one that matters: "we did not try" must not be
+ *  rendered like "we tried and there was nothing". */
+export type StepOutcome =
+  | { outcome: "executed"; summary: CleanSummary }
+  | { outcome: "refused"; reason: string }
+  | { outcome: "not_attempted"; because: string }
+  | { outcome: "not_selected" };
+
+export type SmartScanStep = { source: string } & StepOutcome;
+
+export interface SmartScanRunReport {
+  steps: SmartScanStep[];
+  /** Every step either executed or had nothing selected, **and** no individual
+   *  action inside an executed step was refused. A step can execute and still
+   *  leave something behind. */
+  completed: boolean;
+  bytes_freed: number;
+  entries_freed: number;
+  /** Individual actions refused inside steps that otherwise executed —
+   *  distinct from a step-level `refused`. */
+  actions_refused: number;
+}

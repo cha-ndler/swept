@@ -190,15 +190,23 @@ pub fn clean_with_sink(
     // bigger than the one the user was shown.
     if let Some(exp) = expected {
         if grew_beyond(plan.count(), plan.total_bytes(), exp) {
-            return Err(format!(
-                "refused: the disk changed since the preview. This would now remove \
+            // Recorded, not just returned. This is the one refusal in this file
+            // that used to leave no trace, and it became load-bearing when Smart
+            // Scan made it step one of a three-source gesture: it aborts the
+            // whole run, and a log that says nothing about why is the gap
+            // `record_run_refusal` exists to close.
+            return refuse_and_record(
+                audit,
+                format!(
+                    "refused: the disk changed since the preview. This would now remove \
                  {} items ({} bytes), but you confirmed {} items ({} bytes). \
                  Scan again and review before cleaning.",
-                plan.count(),
-                plan.total_bytes(),
-                exp.count,
-                exp.bytes
-            ));
+                    plan.count(),
+                    plan.total_bytes(),
+                    exp.count,
+                    exp.bytes
+                ),
+            );
         }
     }
     match execute(&plan, consent, home, sink, audit) {
@@ -338,7 +346,11 @@ fn is_readable(dir: &Path) -> bool {
 /// is the same gap `executor::record_run_refusal` exists to close: a frontend
 /// sending a protected or foreign path is exactly the signal worth having in
 /// the log, and it was the one thing the log never mentioned.
-fn refuse_and_record(audit: &mut AuditLog, reason: String) -> Result<CleanSummary, String> {
+///
+/// Generic in the success type only so Smart Scan's dispatcher — which returns a
+/// ledger rather than a `CleanSummary` — refuses through this same path instead
+/// of growing a second one that could forget the log.
+pub(crate) fn refuse_and_record<T>(audit: &mut AuditLog, reason: String) -> Result<T, String> {
     match swept_core::executor::record_run_refusal(audit, &reason) {
         Ok(()) => Err(reason),
         // Still refusing either way; say that the record failed too rather than

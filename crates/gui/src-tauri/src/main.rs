@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter};
 
 use swept_core::loginitems::LoginItem;
 use swept_core::report::ScanReport;
-use swept_gui_core::smartscan::SmartScanReportDto;
+use swept_gui_core::smartscan::{SmartScanReportDto, SmartScanRequest, SmartScanRunReport};
 use swept_gui_core::{
     self as gui, Acknowledged, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto,
     Permissions, PrivacyReportDto, SpaceLensReportDto, StartupReportDto, StartupSummary,
@@ -149,6 +149,20 @@ async fn smart_scan(filters: Filters) -> Result<SmartScanReportDto, String> {
     })
     .await
     .map_err(|e| format!("smart-scan task failed: {e}"))?
+}
+
+/// Act on a confirmed Smart Scan.
+///
+/// Adds no disposal capability of its own: each source still goes through that
+/// module's own verb, which re-runs its own scan inside the call and enforces
+/// its own ceiling. Sequential and fail-fast — **no step begins after a step
+/// refused** — and the ledger it returns distinguishes "we did not try" from
+/// "we tried and there was nothing".
+#[tauri::command]
+async fn dispatch_smart_scan(request: SmartScanRequest) -> Result<SmartScanRunReport, String> {
+    tauri::async_runtime::spawn_blocking(move || gui::smartscan::dispatch_smart_scan(request))
+        .await
+        .map_err(|e| format!("smart-scan dispatch task failed: {e}"))?
 }
 
 /// Read-only: the size of everything in the discovery scope, as a tree.
@@ -352,7 +366,8 @@ fn main() {
             move_aside,
             put_back,
             space_lens,
-            smart_scan
+            smart_scan,
+            dispatch_smart_scan
         ])
         .run(tauri::generate_context!())
         .expect("error while running Swept");

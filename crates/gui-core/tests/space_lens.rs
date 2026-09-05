@@ -1,6 +1,6 @@
 //! Space Lens at the command layer.
 //!
-//! The walk itself is tested in `macclean-core`; what is tested here is the
+//! The walk itself is tested in `swept-core`; what is tested here is the
 //! boundary the webview actually sees — that the tree survives the conversion
 //! and the JSON round trip with its sizes, its shape, and its honesty flags
 //! intact, and that it stays what it is: a picture, with nothing in it that any
@@ -11,7 +11,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_gui_core::{space_lens, SpaceNodeDto};
+use swept_gui_core::{space_lens, SpaceNodeDto};
 
 fn fixture_home() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -106,7 +106,7 @@ fn the_payload_serializes_with_the_field_names_the_frontend_reads() {
 fn a_rollup_node_is_serialized_without_an_address() {
     let (_g, home) = fixture_home();
     // More siblings than the default width cap, so a rollup is produced.
-    for i in 0..(macclean_core::spacelens::DEFAULT_MAX_CHILDREN + 5) {
+    for i in 0..(swept_core::spacelens::DEFAULT_MAX_CHILDREN + 5) {
         write_sized(&home.join(format!("Documents/f{i:03}.bin")), 4_000);
     }
 

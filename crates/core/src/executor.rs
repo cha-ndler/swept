@@ -960,17 +960,17 @@ fn validate_store(store: &Path, home: &Path) -> Result<PathBuf, StashError> {
 
 /// What the store says about itself to someone who no longer has this app.
 const STORE_NOTE_TEXT: &str = "\
-These files were moved here by mac-cleaner so they would stop running when you
+These files were moved here by Swept so they would stop running when you
 log in. Nothing was changed inside them and nothing was removed.
 
 To put one back, drag it up one level into LaunchAgents, then log out and log
-in again. That is all mac-cleaner does when you press Put back.
+in again. That is all Swept does when you press Put back.
 
-If you ever see the same file both here and one level up, mac-cleaner made
+If you ever see the same file both here and one level up, Swept made
 the copy but could not remove the original — it is still running at login.
 Deleting whichever copy you do not want is safe; they are the same file.
 
-You can delete this note. You do not need mac-cleaner to undo any of this.
+You can delete this note. You do not need Swept to undo any of this.
 ";
 
 /// Move each planned file into `store`, reversibly.

@@ -22,11 +22,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::loginitems::{
+use safety::allowlist;
+use swept_core::loginitems::{
     scan, store_dir, Access, StartClass, StartupConfig, DEFERRED_SOURCES, STORE_DIR_NAME,
     STORE_NOTE_NAME,
 };
-use safety::allowlist;
 
 // --- fixtures --------------------------------------------------------------
 

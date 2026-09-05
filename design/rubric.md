@@ -1,4 +1,4 @@
-# mac-cleaner UX rubric
+# Swept UX rubric
 
 The `ux-critic` subagent scores GUI screenshots against these dimensions (1–5).
 A view is ready for the human taste gate when there are no MUST-FIX findings and

@@ -12,9 +12,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::{DirSink, MAX_GRANTS};
-use macclean_gui_core::{dispose_selected_with_sink, large_and_old, Expected};
+use swept_core::audit::AuditLog;
+use swept_core::executor::{DirSink, MAX_GRANTS};
+use swept_gui_core::{dispose_selected_with_sink, large_and_old, Expected};
 
 fn fixture_home() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -247,7 +247,7 @@ fn each_disposal_is_audited_as_user_granted() {
 fn a_large_selection_still_needs_mass_delete_confirmation() {
     let (_g, home) = fixture_home();
     let mut paths = Vec::new();
-    for i in 0..(macclean_core::plan::MASS_DELETE_COUNT + 1) {
+    for i in 0..(swept_core::plan::MASS_DELETE_COUNT + 1) {
         let f = home.join(format!("Documents/f{i}.iso"));
         write_sized(&f, 16);
         paths.push(s(&f));
@@ -1012,7 +1012,7 @@ fn the_refusal_boundary_does_not_widen_to_the_vendor_directory() {
 /// Adding a root spelled `.../Google` would create exactly that nesting.
 #[test]
 fn no_browser_boundary_contains_another() {
-    use macclean_core::privacy::BROWSERS;
+    use swept_core::privacy::BROWSERS;
 
     let home = Path::new("/Users/fixture");
     let bounds: Vec<_> = BROWSERS

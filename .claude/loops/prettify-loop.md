@@ -11,7 +11,7 @@ far sharper; without them it falls back to the rubric + macOS conventions.
 
 ---
 
-mac-cleaner UI PRETTIFICATION LOOP — one screen per iteration, then re-arm.
+Swept UI PRETTIFICATION LOOP — one screen per iteration, then re-arm.
 
 Working dir: repo root. Read CLAUDE.md and design/rubric.md first.
 

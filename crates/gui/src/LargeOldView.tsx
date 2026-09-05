@@ -43,7 +43,7 @@ const AGE_CHOICES = [
   { value: "365", label: "1 year" },
 ];
 
-/** Mirrors `macclean_core::plan`'s thresholds, only to *disclose* them. */
+/** Mirrors `swept_core::plan`'s thresholds, only to *disclose* them. */
 const MASS_COUNT = 100;
 const MASS_BYTES = 5 * 1024 ** 3;
 
@@ -485,7 +485,7 @@ function ActionBar({
             {/* The policy lives here rather than in a card above the list: this
                 is where the eye goes when the button will not press. */}
             <p className="text-muted text-caption">
-              mac-cleaner never picks these for you.
+              Swept never picks these for you.
             </p>
           </>
         ) : (

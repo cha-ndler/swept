@@ -1043,7 +1043,7 @@ function ActionBar({
           )}
         </p>
         <p className="text-subtle text-caption">
-          Tick each item you want gone. mac-cleaner never picks these for you.
+          Tick each item you want gone. Swept never picks these for you.
         </p>
       </div>
       <button

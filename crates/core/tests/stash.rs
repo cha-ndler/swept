@@ -26,12 +26,12 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::{
+use swept_core::audit::AuditLog;
+use swept_core::executor::{
     restore, stash, StashConsent, StashError, SystemStashSink, MAX_STARTUP_GRANTS,
 };
-use macclean_core::loginitems::{store_dir, STORE_NOTE_NAME};
-use macclean_core::plan::{PlannedMove, StashPlan};
+use swept_core::loginitems::{store_dir, STORE_NOTE_NAME};
+use swept_core::plan::{PlannedMove, StashPlan};
 
 // --- fixtures --------------------------------------------------------------
 
@@ -486,7 +486,7 @@ fn a_store_that_is_not_a_directory_refuses_the_whole_run() {
 fn a_store_whose_parent_is_not_launch_agents_refuses_the_whole_run() {
     let (_d, home) = fixture();
     let p = agent(&home, "com.acme.helper");
-    let bogus = home.join("Documents/Moved aside by mac-cleaner");
+    let bogus = home.join("Documents/Moved aside by Swept");
     fs::create_dir_all(&bogus).unwrap();
 
     let (plan, consent) = plan_for(&home, std::slice::from_ref(&p));
@@ -580,8 +580,8 @@ fn a_plan_entry_nobody_granted_is_refused() {
 /// linked, we must not unlink it.
 #[test]
 fn a_source_replaced_between_the_link_and_the_unlink_is_never_unlinked() {
-    use macclean_core::executor::StashSink;
     use std::io;
+    use swept_core::executor::StashSink;
 
     /// Swaps the source for a different file after the link is made.
     struct Swapper {
@@ -624,8 +624,8 @@ fn a_source_replaced_between_the_link_and_the_unlink_is_never_unlinked() {
 
 #[test]
 fn a_failure_to_create_the_link_leaves_the_original_exactly_where_it_was() {
-    use macclean_core::executor::StashSink;
     use std::io;
+    use swept_core::executor::StashSink;
 
     struct NoLink;
     impl StashSink for NoLink {
@@ -660,8 +660,8 @@ fn a_failure_to_create_the_link_leaves_the_original_exactly_where_it_was() {
 /// both are true: the copy was made, and the original was not removed.
 #[test]
 fn a_failure_to_unlink_the_original_leaves_both_copies_and_records_both_truths() {
-    use macclean_core::executor::StashSink;
     use std::io;
+    use swept_core::executor::StashSink;
 
     struct NoUnlink;
     impl StashSink for NoUnlink {
@@ -703,8 +703,8 @@ fn a_failure_to_unlink_the_original_leaves_both_copies_and_records_both_truths()
 /// a different struct that `execute` never sees.
 #[test]
 fn a_grant_to_move_a_plist_aside_cannot_dispose_of_it() {
-    use macclean_core::executor::{execute, Consent, DirSink};
-    use macclean_core::plan::{Disposal, Plan, PlannedAction};
+    use swept_core::executor::{execute, Consent, DirSink};
+    use swept_core::plan::{Disposal, Plan, PlannedAction};
 
     let (_d, home) = fixture();
     let p = agent(&home, "com.acme.helper");
@@ -766,7 +766,7 @@ fn the_audit_log_names_the_original_path_and_where_the_file_went() {
 
     let text = log(&home);
     assert!(text.contains(&p.display().to_string()));
-    assert!(text.contains("Moved aside by mac-cleaner"));
+    assert!(text.contains("Moved aside by Swept"));
     assert!(text.contains("startup"), "the category that authorized it");
 }
 
@@ -808,8 +808,8 @@ fn a_moved_aside_item_is_never_recorded_as_trashed_or_permanent() {
 /// this module claims it cannot produce.
 #[test]
 fn a_destination_taken_by_someone_else_is_never_removed() {
-    use macclean_core::executor::StashSink;
     use std::io;
+    use swept_core::executor::StashSink;
 
     /// An installer writes a fresh plist over the destination the instant our
     /// link exists.
@@ -1045,8 +1045,8 @@ fn a_bad_store_is_recorded_before_the_run_is_refused() {
 /// the whole story rather than only the refusal half of it.
 #[test]
 fn the_partial_state_names_the_source_on_both_of_its_lines() {
-    use macclean_core::executor::StashSink;
     use std::io;
+    use swept_core::executor::StashSink;
 
     struct NoUnlink;
     impl StashSink for NoUnlink {
@@ -1095,8 +1095,8 @@ fn the_partial_state_names_the_source_on_both_of_its_lines() {
 /// failing open, the source is the last name the file has, and it is removed.
 #[test]
 fn an_identity_that_cannot_be_read_never_removes_the_last_name() {
-    use macclean_core::executor::StashSink;
     use std::io;
+    use swept_core::executor::StashSink;
 
     struct DestVanishes;
     impl StashSink for DestVanishes {
@@ -1142,8 +1142,8 @@ fn an_identity_that_cannot_be_read_never_removes_the_last_name() {
 /// link and no copy at all.
 #[test]
 fn a_destination_swapped_for_a_link_back_to_the_source_is_not_mistaken_for_it() {
-    use macclean_core::executor::StashSink;
     use std::io;
+    use swept_core::executor::StashSink;
 
     struct SymlinkSwap {
         from: PathBuf,

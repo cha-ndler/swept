@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "mac-cleaner",
+  "productName": "Swept",
   "version": "0.2.0",
-  "identifier": "net.chandler.macclean",
+  "identifier": "net.chandler.swept",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "mac-cleaner",
+        "title": "Swept",
         "width": 1000,
         "height": 660,
         "minWidth": 860,

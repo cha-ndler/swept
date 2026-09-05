@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core APIs the mac-cleaner window needs. The scan emits progress events, so the webview must be allowed to listen on the core event channel. `start-dragging` is NOT part of core:default and must be granted explicitly: with titleBarStyle Overlay the OS title bar is gone, so without it the window cannot be moved at all. No plugin permissions are granted: the app talks only to its own scan/login_items/clean commands.",
+  "description": "Core APIs the Swept window needs. The scan emits progress events, so the webview must be allowed to listen on the core event channel. `start-dragging` is NOT part of core:default and must be granted explicitly: with titleBarStyle Overlay the OS title bar is gone, so without it the window cannot be moved at all. No plugin permissions are granted: the app talks only to its own scan/login_items/clean commands.",
   "windows": ["main"],
   "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

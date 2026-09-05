@@ -22,7 +22,7 @@ export function isDesktopApp(): boolean {
 /** Thrown when a command is attempted outside the desktop app. */
 export class NotInAppError extends Error {
   constructor() {
-    super("mac-cleaner runs as a desktop app.");
+    super("Swept runs as a desktop app.");
     this.name = "NotInAppError";
   }
 }
@@ -47,7 +47,7 @@ export function describeError(e: unknown): string {
   return String(e);
 }
 
-/** Cumulative scan progress, mirroring `macclean_core::scanner::Progress`. */
+/** Cumulative scan progress, mirroring `swept_core::scanner::Progress`. */
 export type ScanProgress = {
   examined: number;
   planned: number;

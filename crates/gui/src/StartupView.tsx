@@ -787,7 +787,7 @@ function NotThisApp() {
         </dl>
         <p className="text-subtle mt-3 border-t border-separator pt-2.5 text-caption leading-relaxed">
           Each needs administrator rights that a notarized app can only get by
-          installing a privileged background helper. mac-cleaner does not
+          installing a privileged background helper. Swept does not
           install one.
         </p>
       </Group>
@@ -819,7 +819,7 @@ function ActionBar({
           <>
             <p className="text-body font-medium">Nothing selected</p>
             <p className="text-muted text-caption">
-              Tick each item you want set aside. mac-cleaner never picks these
+              Tick each item you want set aside. Swept never picks these
               for you.
             </p>
           </>

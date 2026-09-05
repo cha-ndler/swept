@@ -1,14 +1,14 @@
-// mac-cleaner desktop GUI shell. Thin Tauri layer: every command delegates to
-// the tested `macclean-gui-core`, which routes all deletion through the
-// consent-gated executor in `macclean-core`. No deletion logic lives here.
+// Swept desktop GUI shell. Thin Tauri layer: every command delegates to
+// the tested `swept-gui-core`, which routes all deletion through the
+// consent-gated executor in `swept-core`. No deletion logic lives here.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::{AppHandle, Emitter};
 
-use macclean_core::loginitems::LoginItem;
-use macclean_core::report::ScanReport;
-use macclean_gui_core::smartscan::SmartScanReportDto;
-use macclean_gui_core::{
+use swept_core::loginitems::LoginItem;
+use swept_core::report::ScanReport;
+use swept_gui_core::smartscan::SmartScanReportDto;
+use swept_gui_core::{
     self as gui, Acknowledged, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto,
     Permissions, PrivacyReportDto, SpaceLensReportDto, StartupReportDto, StartupSummary,
     UninstallReportDto, UninstallTarget,
@@ -96,7 +96,7 @@ async fn open_privacy_settings() -> Result<(), String> {
 /// executor. `confirm_mass_delete` is the user's explicit modal confirmation,
 /// and `expected` is the count/size that confirmation was shown against — the
 /// plan is rebuilt here, so a materially larger one is refused rather than
-/// executed. Trash-only (never permanent); routes entirely through macclean-core.
+/// executed. Trash-only (never permanent); routes entirely through swept-core.
 #[tauri::command]
 async fn clean(
     filters: Filters,
@@ -319,7 +319,7 @@ fn main() {
             // must not stop the window from opening, which is what `?` here
             // would do. The label simply stays absent.
             if let Err(e) = build_tray(app.handle()) {
-                eprintln!("mac-cleaner: menu-bar extra unavailable: {e}");
+                eprintln!("Swept: menu-bar extra unavailable: {e}");
             }
             Ok(())
         })
@@ -355,7 +355,7 @@ fn main() {
             smart_scan
         ])
         .run(tauri::generate_context!())
-        .expect("error while running mac-cleaner");
+        .expect("error while running Swept");
 }
 
 // ---------------------------------------------------------------------------
@@ -388,8 +388,8 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::menu::{MenuBuilder, MenuItemBuilder};
     use tauri::tray::TrayIconBuilder;
 
-    let open = MenuItemBuilder::with_id(MENU_OPEN, "Open mac-cleaner").build(app)?;
-    let quit = MenuItemBuilder::with_id(MENU_QUIT, "Quit mac-cleaner").build(app)?;
+    let open = MenuItemBuilder::with_id(MENU_OPEN, "Open Swept").build(app)?;
+    let quit = MenuItemBuilder::with_id(MENU_QUIT, "Quit Swept").build(app)?;
     let menu = MenuBuilder::new(app)
         .item(&open)
         .separator()
@@ -398,7 +398,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
     let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
-        .tooltip("mac-cleaner")
+        .tooltip("Swept")
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_OPEN => show_main_window(app),
@@ -425,7 +425,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         Ok(icon) => tray = tray.icon(icon).icon_as_template(true),
         // Not fatal — the title alone keeps the item visible — but worth saying,
         // because an icon-less menu-bar extra is a packaging problem.
-        Err(e) => eprintln!("mac-cleaner: menu-bar icon failed to decode: {e}"),
+        Err(e) => eprintln!("Swept: menu-bar icon failed to decode: {e}"),
     }
 
     // Never leave both the icon and the title unset: a status item with neither

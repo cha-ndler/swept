@@ -1,4 +1,4 @@
-//! `macclean` — safe, dry-run-first macOS junk cleaner.
+//! `swept` — safe, dry-run-first macOS junk cleaner.
 //!
 //! `scan` previews. `clean` previews too, unless `--execute` is passed. Even
 //! with `--execute`, files go to the Trash unless `--permanent` is given, and a
@@ -11,18 +11,18 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::{execute, Consent, SystemSink};
-use macclean_core::loginitems::{self, LoginItem, StartClass};
-use macclean_core::plan::{Plan, MASS_DELETE_BYTES, MASS_DELETE_COUNT};
-use macclean_core::privacy;
-use macclean_core::report::ScanReport;
-use macclean_core::scanner::{scan, ScanConfig};
 use safety::canonical_home;
+use swept_core::audit::AuditLog;
+use swept_core::executor::{execute, Consent, SystemSink};
+use swept_core::loginitems::{self, LoginItem, StartClass};
+use swept_core::plan::{Plan, MASS_DELETE_BYTES, MASS_DELETE_COUNT};
+use swept_core::privacy;
+use swept_core::report::ScanReport;
+use swept_core::scanner::{scan, ScanConfig};
 
 #[derive(Parser)]
 #[command(
-    name = "macclean",
+    name = "swept",
     version,
     about = "Safe, dry-run-first macOS junk cleaner"
 )]
@@ -63,7 +63,7 @@ enum Cmd {
         #[arg(long, value_parser = parse_size)]
         min_size: Option<u64>,
         /// Path to the append-only audit log
-        /// (default: ~/Library/Application Support/macclean/audit.jsonl).
+        /// (default: ~/Library/Application Support/swept/audit.jsonl).
         #[arg(long)]
         audit: Option<PathBuf>,
     },
@@ -109,7 +109,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("{}", ScanReport::from_plan(&plan).to_json_pretty());
             } else {
                 print_plan(&plan);
-                println!("\nThis was a preview. Run `macclean clean --execute` to act on it.");
+                println!("\nThis was a preview. Run `swept clean --execute` to act on it.");
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -252,7 +252,7 @@ fn resolve_audit_path(
     home: &Path,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let requested =
-        arg.unwrap_or_else(|| home.join("Library/Application Support/macclean/audit.jsonl"));
+        arg.unwrap_or_else(|| home.join("Library/Application Support/swept/audit.jsonl"));
     let absolute = if requested.is_absolute() {
         requested
     } else {
@@ -285,7 +285,7 @@ fn resolve_audit_path(
     //
     // Note we check the *reconstructed* path, not the existing ancestor itself:
     // `~` and `~/Library` are both protected, yet creating
-    // `~/Library/Application Support/macclean` inside them is perfectly
+    // `~/Library/Application Support/swept` inside them is perfectly
     // legitimate. "Protected" means never destroy this, not never create here.
     let existing = parent
         .ancestors()
@@ -577,9 +577,9 @@ mod tests {
 
     // --- what the summary says about what it could not see -----------------
 
-    use macclean_core::scanner::{scan, ScanConfig};
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
+    use swept_core::scanner::{scan, ScanConfig};
 
     fn fake_home() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -595,7 +595,7 @@ mod tests {
 
     /// Scan `home` with `locked` unopenable, restoring it afterwards so the
     /// tempdir can still be cleaned up.
-    fn scan_with_locked(home: &Path, locked: &Path) -> macclean_core::plan::Plan {
+    fn scan_with_locked(home: &Path, locked: &Path) -> swept_core::plan::Plan {
         let original = std::fs::metadata(locked).unwrap().permissions();
         let mut shut = original.clone();
         shut.set_mode(0o000);

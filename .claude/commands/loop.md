@@ -5,7 +5,7 @@ argument-hint: <what to build or fix>
 
 Work on: **$ARGUMENTS**
 
-Follow the mac-cleaner development loop exactly. Do not skip steps.
+Follow the Swept development loop exactly. Do not skip steps.
 
 1. **Test first.** Add or extend a test in the appropriate crate, against a
    `tempfile::tempdir()` fixture (canonicalize the fake home). Include at least

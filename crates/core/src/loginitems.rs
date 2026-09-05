@@ -45,7 +45,7 @@ use serde::Serialize;
 /// It is also what makes putting an item back need no recorded state at all:
 /// the destination is the store's own parent, so no manifest has to remember a
 /// path, and no content ever names a destination.
-pub const STORE_DIR_NAME: &str = "Moved aside by mac-cleaner";
+pub const STORE_DIR_NAME: &str = "Moved aside by Swept";
 
 /// Written into the store when it is created, so the folder explains itself to
 /// someone who no longer has this app.

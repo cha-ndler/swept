@@ -6,10 +6,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::{execute, Consent, DirSink};
-use macclean_core::plan::Disposal;
-use macclean_core::scanner::{scan, ScanConfig};
+use swept_core::audit::AuditLog;
+use swept_core::executor::{execute, Consent, DirSink};
+use swept_core::plan::Disposal;
+use swept_core::scanner::{scan, ScanConfig};
 
 /// Build a fake `$HOME` with a Caches tree and return its canonical path.
 fn fake_home() -> (tempfile::TempDir, PathBuf) {
@@ -33,7 +33,7 @@ fn audit_at(home: &Path) -> (PathBuf, AuditLog) {
 
 #[test]
 fn scan_report_serializes_a_stable_shape() {
-    use macclean_core::report::ScanReport;
+    use swept_core::report::ScanReport;
 
     let (_g, home) = fake_home();
     write(&home.join("Library/Caches/app/a.bin"), b"12345"); // 5 bytes, cache
@@ -89,7 +89,7 @@ fn homebrew_files_classify_as_their_specific_category() {
     write(&home.join("Library/Caches/app/generic.bin"), b"de");
 
     let plan = scan(&ScanConfig::with_default_roots(home.clone()));
-    let report = macclean_core::report::ScanReport::from_plan(&plan);
+    let report = swept_core::report::ScanReport::from_plan(&plan);
     let ids: Vec<&str> = report
         .by_category
         .iter()
@@ -267,7 +267,7 @@ fn execute_with_consent_trashes_files() {
 #[test]
 fn mass_delete_is_refused_without_confirmation() {
     let (_g, home) = fake_home();
-    for i in 0..(macclean_core::plan::MASS_DELETE_COUNT + 1) {
+    for i in 0..(swept_core::plan::MASS_DELETE_COUNT + 1) {
         write(&home.join(format!("Library/Caches/app/f{i}.bin")), b"x");
     }
     let plan = scan(&ScanConfig::with_default_roots(home.clone()));
@@ -290,7 +290,7 @@ fn mass_delete_is_refused_without_confirmation() {
     .unwrap_err();
     assert!(matches!(
         err,
-        macclean_core::executor::ExecError::MassDeleteUnconfirmed { .. }
+        swept_core::executor::ExecError::MassDeleteUnconfirmed { .. }
     ));
     // Nothing was deleted.
     assert!(home.join("Library/Caches/app/f0.bin").exists());
@@ -359,7 +359,7 @@ fn execution_refuses_path_that_became_protected() {
 
 #[test]
 fn scan_with_progress_reports_monotonic_counts_and_matches_plain_scan() {
-    use macclean_core::scanner::{scan_with_progress, Progress};
+    use swept_core::scanner::{scan_with_progress, Progress};
 
     let (_g, home) = fake_home();
     for i in 0..40 {
@@ -501,7 +501,7 @@ fn a_path_refused_by_the_allowlist_is_not_reported_as_unreadable() {
 /// or the UI learns to ignore it.
 #[test]
 fn a_complete_scan_reports_no_gap() {
-    use macclean_core::report::ScanReport;
+    use swept_core::report::ScanReport;
 
     let (_g, home) = fake_home();
     write(&home.join("Library/Caches/app/a.bin"), b"12345");
@@ -518,7 +518,7 @@ fn a_complete_scan_reports_no_gap() {
 /// may not think to render.
 #[test]
 fn the_report_presents_an_incomplete_total_as_partial() {
-    use macclean_core::report::ScanReport;
+    use swept_core::report::ScanReport;
 
     let (_g, home) = fake_home();
     write(&home.join("Library/Caches/app/seen.bin"), b"12345");
@@ -666,7 +666,7 @@ fn a_denylist_refusal_is_still_counted_as_a_decision() {
 /// window between the directory's `readdir` and each name being resolved.
 #[test]
 fn a_file_that_goes_away_mid_walk_is_not_a_gap() {
-    use macclean_core::scanner::scan_with_progress;
+    use swept_core::scanner::scan_with_progress;
 
     let (_g, home) = fake_home();
     let churn = home.join("Library/Caches/churn");
@@ -679,7 +679,7 @@ fn a_file_that_goes_away_mid_walk_is_not_a_gap() {
 
     let cfg = ScanConfig::with_default_roots(home.clone());
     let mut fired = false;
-    let mut last = macclean_core::scanner::Progress::default();
+    let mut last = swept_core::scanner::Progress::default();
     let plan = scan_with_progress(&cfg, &mut |p| {
         last = p;
         if !fired {

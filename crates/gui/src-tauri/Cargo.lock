@@ -1740,44 +1740,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
-name = "macclean-core"
-version = "0.1.0"
-dependencies = [
- "macclean-safety",
- "plist",
- "serde",
- "serde_json",
- "trash",
- "walkdir",
-]
-
-[[package]]
-name = "macclean-gui"
-version = "0.2.0"
-dependencies = [
- "macclean-core",
- "macclean-gui-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
-name = "macclean-gui-core"
-version = "0.1.0"
-dependencies = [
- "dirs 5.0.1",
- "macclean-core",
- "macclean-safety",
- "serde",
-]
-
-[[package]]
-name = "macclean-safety"
-version = "0.1.0"
-
-[[package]]
 name = "markup5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2950,6 +2912,44 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "swept-core"
+version = "0.1.0"
+dependencies = [
+ "plist",
+ "serde",
+ "serde_json",
+ "swept-safety",
+ "trash",
+ "walkdir",
+]
+
+[[package]]
+name = "swept-gui"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "swept-core",
+ "swept-gui-core",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
+name = "swept-gui-core"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
+ "serde",
+ "swept-core",
+ "swept-safety",
+]
+
+[[package]]
+name = "swept-safety"
+version = "0.1.0"
 
 [[package]]
 name = "swift-rs"

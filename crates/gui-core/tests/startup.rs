@@ -16,10 +16,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use macclean_core::audit::AuditLog;
-use macclean_core::executor::SystemStashSink;
-use macclean_core::loginitems::{store_dir, StartupConfig};
-use macclean_gui_core::{move_aside_with_sink, put_back_with_sink, startup_report_in};
+use swept_core::audit::AuditLog;
+use swept_core::executor::SystemStashSink;
+use swept_core::loginitems::{store_dir, StartupConfig};
+use swept_gui_core::{move_aside_with_sink, put_back_with_sink, startup_report_in};
 
 // --- fixtures --------------------------------------------------------------
 
@@ -260,7 +260,7 @@ fn each_verb_refuses_what_belongs_to_the_other() {
 
 #[test]
 fn a_selection_that_drifted_since_the_preview_is_refused() {
-    use macclean_gui_core::Expected;
+    use swept_gui_core::Expected;
     let (_d, cfg) = fixture();
     let p = agent(&cfg, "com.acme.helper");
 
@@ -400,7 +400,7 @@ fn the_audit_line_carries_the_real_size() {
 /// drift count mean "distinct rows the user chose".
 #[test]
 fn the_same_item_named_twice_counts_once() {
-    use macclean_gui_core::Expected;
+    use swept_gui_core::Expected;
     let (_d, cfg) = fixture();
     let p = agent(&cfg, "com.acme.helper");
 

@@ -46,7 +46,14 @@ export default function CleanView({
   onReclaimable,
 }: {
   /** Reports the scan total so the sidebar badge can show it. */
-  onReclaimable?: (bytes: number | null) => void;
+  /**
+   * The reclaimable figure **as a string**, not a number to re-format.
+   *
+   * Same reason the menu-bar label is a string: the sidebar, the window and the
+   * menu bar must not be able to drift apart, and a figure that is a floor has
+   * to be able to say so. A number cannot carry "at least".
+   */
+  onReclaimable?: (label: string | null) => void;
 }) {
   const [view, setView] = useState<View>("loading");
   const [report, setReport] = useState<ScanReport | null>(null);
@@ -104,13 +111,17 @@ export default function CleanView({
     try {
       const r = await call<ScanReport>("scan", { filters });
       seed(r);
-      onReclaimable?.(r.total_bytes);
-      // The menu bar shows the string the window is already showing, so the two
-      // cannot drift apart. Best-effort: a scan that succeeded must not surface
-      // an error because a tray label failed to update.
-      void call("set_tray_label", { label: formatBytes(r.total_bytes) }).catch(
-        () => {},
-      );
+      // One string, shown in three places: the sidebar badge, the ring's
+      // neighbours and the menu bar. None of the other two has room for a
+      // caveat, so the figure carries it — a bare number in either would be the
+      // unqualified claim the window itself stopped making. Best-effort on the
+      // tray: a scan that succeeded must not surface an error because a label
+      // failed to update.
+      const label = r.partial
+        ? `≥ ${formatBytes(r.total_bytes)}`
+        : formatBytes(r.total_bytes);
+      onReclaimable?.(label);
+      void call("set_tray_label", { label }).catch(() => {});
       setView(r.by_category.length ? "results" : "empty");
     } catch (e) {
       setReport(null);
@@ -232,11 +243,20 @@ export default function CleanView({
                 onRetry={() => void runScan(currentFilters())}
               />
             )}
-            {view === "empty" && (
-              <EmptyState onRescan={() => void runScan(currentFilters())} />
+            {(view === "results" || view === "empty") &&
+              perms &&
+              !perms.all_readable && <AccessNotice perms={perms} />}
+            {(view === "results" || view === "empty") && report?.partial && (
+              <FloorNotice
+                report={report}
+                alongsideAccessNotice={!(perms?.all_readable ?? true)}
+              />
             )}
-            {view === "results" && perms && !perms.all_readable && (
-              <AccessNotice perms={perms} />
+            {view === "empty" && (
+              <EmptyState
+                onRescan={() => void runScan(currentFilters())}
+                report={report}
+              />
             )}
             {view === "results" && (
               <div className="flex flex-col gap-7 md:flex-row md:items-start">
@@ -244,7 +264,9 @@ export default function CleanView({
                   <ScanRing
                     segments={segments}
                     total={selBytes}
-                    caption="reclaimable"
+                    caption={
+                      report?.partial ? "reclaimable, at least" : "reclaimable"
+                    }
                   />
 
                   <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-separator bg-white/[.04] px-2.5 py-1">
@@ -517,13 +539,18 @@ function StatusIcon({
   tone,
   children,
 }: {
-  tone: "success" | "danger";
+  tone: "success" | "danger" | "withheld";
   children: React.ReactNode;
 }) {
+  // `withheld` is neither good news nor an error: the scan worked, it just could
+  // not see everything. It reuses the hue this app already uses for "shown, not
+  // acted on" rather than inventing a fourth vocabulary.
   const cls =
     tone === "success"
       ? "border-success/25 bg-success/10 text-success"
-      : "border-danger/25 bg-danger/10 text-danger";
+      : tone === "withheld"
+        ? "border-cat-trashes/30 bg-cat-trashes/10 text-cat-trashes"
+        : "border-danger/25 bg-danger/10 text-danger";
   return (
     <div
       className={`mx-auto grid h-12 w-12 place-items-center rounded-panel border ${cls}`}
@@ -595,15 +622,88 @@ function Scanning({ progress }: { progress: ScanProgress | null }) {
   );
 }
 
-function EmptyState({ onRescan }: { onRescan: () => void }) {
+/**
+ * The figure above is a floor, and this says by how much.
+ *
+ * Complements `AccessNotice` rather than repeating it: that one fires when the
+ * *permission probe* says a gated root is unreadable and offers the way to fix
+ * it, while this one fires when the *walk itself* could not see somewhere the
+ * probe knows nothing about — an ordinary unreadable directory, a path that
+ * would not resolve. Showing both would say the same thing twice, so this one
+ * stands down when permissions already explain it.
+ */
+function FloorNotice({
+  report,
+  alongsideAccessNotice,
+}: {
+  report: ScanReport;
+  alongsideAccessNotice: boolean;
+}) {
+  const places = report.skipped_unreadable;
+  const many = places === 1 ? "place" : "places";
+  return (
+    <div
+      role="status"
+      className="mb-5 flex items-start gap-3 rounded-card border border-cat-trashes/30 bg-cat-trashes/[.07] px-4 py-3"
+    >
+      <span className="mt-0.5 flex-none text-cat-trashes">
+        <InfoIcon size={16} />
+      </span>
+      <div className="min-w-0">
+        <p className="text-body font-medium">This is a floor, not a total</p>
+        <p className="text-muted mt-1 text-body">
+          {alongsideAccessNotice
+            ? // It complements the notice above rather than standing down.
+              // Standing down assumed the permission probe accounted for every
+              // skipped place, and it only knows about the Trash and sandboxed
+              // caches — so an ordinary unreadable directory would have gone
+              // unmentioned while the caption still said "at least".
+              `Counting the above, the scan could not look into ${places.toLocaleString()} ${many} in total.`
+            : `${places.toLocaleString()} ${many} could not be looked into, so there may be more than the figure shows.`}{" "}
+          What is shown is real; it is the completeness that is in doubt.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Nothing was found — which is only good news if the scan could see everything.
+ *
+ * `partial` means the walk could not open somewhere: a cleaner root behind Full
+ * Disk Access (`~/.Trash` is both), a directory it could not read, a path it
+ * could not resolve. Showing a green shield and "your Mac is tidy" over that is
+ * the one claim this app must never make, and it is the claim it was making.
+ */
+function EmptyState({
+  onRescan,
+  report,
+}: {
+  onRescan: () => void;
+  report: ScanReport | null;
+}) {
+  const blind = report?.partial ?? false;
+  const places = report?.skipped_unreadable ?? 0;
+  // Info, not a padlock. `partial` has causes that are not permission — a
+  // directory that would not open, a path that would not resolve — and a
+  // padlock promises a remedy (grant Full Disk Access) that would not help
+  // those. The padlock stays with `AccessNotice`, which only fires when the
+  // permission probe really is the reason and can offer the button.
+
   return (
     <section className="rounded-card border border-separator bg-surface p-10 text-center">
-      <StatusIcon tone="success">
-        <ShieldIcon size={24} />
+      <StatusIcon tone={blind ? "withheld" : "success"}>
+        {blind ? <InfoIcon size={24} /> : <ShieldIcon size={24} />}
       </StatusIcon>
-      <p className="mt-4 text-title font-semibold">Nothing to clean</p>
+      <h2 className="mt-4 text-title font-semibold">
+        {blind ? "Nothing found in what could be read" : "Nothing to clean"}
+      </h2>
       <p className="text-muted mt-1 text-body">
-        No safe-to-remove junk was found. Your Mac is tidy.
+        {blind
+          ? `${places.toLocaleString()} place${
+              places === 1 ? "" : "s"
+            } could not be looked into, so this is not the same as a clean Mac.`
+          : "No safe-to-remove junk was found. Your Mac is tidy."}
       </p>
       <button
         onClick={onRescan}

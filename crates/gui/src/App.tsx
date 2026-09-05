@@ -63,7 +63,9 @@ export default function App() {
   const [visited, setVisited] = useState<Set<Module>>(
     () => new Set([initialModule()]),
   );
-  const [reclaimable, setReclaimable] = useState<number | null>(null);
+  // The label the Cleanup screen is showing, not a number to re-format here —
+  // so a figure that is a floor arrives already saying so.
+  const [reclaimable, setReclaimable] = useState<string | null>(null);
   const [leftoverBytes, setLeftoverBytes] = useState<number | null>(null);
   const [largeOldBytes, setLargeOldBytes] = useState<number | null>(null);
   const [measuredBytes, setMeasuredBytes] = useState<number | null>(null);
@@ -88,7 +90,7 @@ export default function App() {
         <ModuleButton
           icon={<StackIcon />}
           name="Cleanup"
-          badge={reclaimable === null ? "—" : formatBytes(reclaimable)}
+          badge={reclaimable ?? "—"}
           active={active === "cleanup"}
           onClick={() => open("cleanup")}
         />

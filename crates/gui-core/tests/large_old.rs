@@ -1033,3 +1033,69 @@ fn no_browser_boundary_contains_another() {
         }
     }
 }
+
+// --- the two shape rules the walk has and the verb did not ------------------
+
+/// **A file with a second name frees nothing when this one goes.**
+///
+/// `largeold::find` refuses to *offer* a hard-linked file and says why —
+/// removing one name reclaims no space — and until now nothing mirrored that
+/// where it mattered. The verb would move the name to the Trash and report the
+/// full size as freed, while the data sat untouched at the other link. That is
+/// the same misreport that keeps the Trash category out of Smart Scan.
+#[test]
+fn a_hard_linked_file_is_refused_because_removing_one_name_frees_nothing() {
+    let (_g, home) = fixture_home();
+    let first = home.join("Downloads/big.iso");
+    let second = home.join("Documents/keeper.iso");
+    write_sized(&first, 4096);
+    fs::create_dir_all(second.parent().unwrap()).unwrap();
+    fs::hard_link(&first, &second).unwrap();
+
+    // The walk never offered it.
+    let report = large_and_old(&home, 1024, None);
+    assert!(report.items.is_empty(), "{:?}", report.items);
+    assert_eq!(report.skipped_hardlinked, 2);
+
+    let (_p, mut log) = audit_at(&home);
+    let err = dispose_selected_with_sink(&home, &[s(&first)], None, false, &sink(&home), &mut log)
+        .unwrap_err();
+
+    assert!(err.contains("more than one name"), "{err}");
+    assert!(first.exists());
+    assert!(second.exists());
+}
+
+/// The paired negative: one name, and it goes.
+#[test]
+fn a_file_with_one_name_is_still_disposable() {
+    let (_g, home) = fixture_home();
+    let only = home.join("Downloads/big.iso");
+    write_sized(&only, 4096);
+
+    let (_p, mut log) = audit_at(&home);
+    let summary =
+        dispose_selected_with_sink(&home, &[s(&only)], None, false, &sink(&home), &mut log)
+            .unwrap();
+
+    assert_eq!(summary.executed, 1);
+    assert!(!only.exists());
+}
+
+/// `is_dir()` alone let a socket, FIFO or device node take the file branch — and
+/// a length of zero for something that is not a file is not a fact about how
+/// much space it uses.
+#[test]
+fn a_path_that_is_not_an_ordinary_file_is_refused() {
+    let (_g, home) = fixture_home();
+    let sock = home.join("Downloads/live.sock");
+    fs::create_dir_all(sock.parent().unwrap()).unwrap();
+    let _listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+
+    let (_p, mut log) = audit_at(&home);
+    let err = dispose_selected_with_sink(&home, &[s(&sock)], None, false, &sink(&home), &mut log)
+        .unwrap_err();
+
+    assert!(err.contains("not an ordinary file"), "{err}");
+    assert!(sock.exists());
+}

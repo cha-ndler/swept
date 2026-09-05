@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::plan::{Disposal, Plan};
 
-#[derive(Serialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct CategorySummary {
     pub category: String,
     /// Human-facing name (from the category registry; falls back to the id).

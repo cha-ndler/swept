@@ -377,3 +377,52 @@ export interface StartupSummary {
   moved: number;
   refused: number;
 }
+
+// Mirrors macclean_gui_core::smartscan.
+
+/** Something a source could not see, named by the source that could not see it.
+ *  One boolean would say "some figure somewhere is short", which is not
+ *  something a notice on screen can be written from. */
+export interface Incompleteness {
+  source: string;
+  reason: string;
+}
+
+/** A byte figure that cannot be rendered without its provenance.
+ *
+ *  There is deliberately no bare `*_bytes` at the top level of a Smart Scan
+ *  report: every figure arrives inside one of these, so the UI always has the
+ *  completeness in hand when it draws the number. Every reason currently
+ *  recorded means the truth is *higher* than `bytes`. */
+export interface Total {
+  bytes: number;
+  /** Which sources contributed, in dispatch order. */
+  from: string[];
+  /** Empty when this figure describes everything there is. */
+  incomplete: Incompleteness[];
+}
+
+/** What runs at login, as a finding. No bytes and no selection, by
+ *  construction: setting a plist aside is a move, not a disposal. */
+export interface StartupFinding {
+  starts_at_login: number;
+  can_act_on: number;
+  modern_store_present: boolean;
+  partial: boolean;
+}
+
+export interface SmartScanReport {
+  /** When the oldest contributing scan started. Backend-stamped. */
+  scanned_at_ms: number;
+  /** What the default gesture would free. */
+  selected: Total;
+  /** What every source reported that could be acted on if ticked. */
+  found: Total;
+  cleanup: CategorySummary[];
+  /** Only rows with no consequence. The rest stay on Privacy, which has the
+   *  acknowledgement axis for them. */
+  privacy: PrivacyRow[];
+  large_old: LargeOldReport;
+  startup: StartupFinding;
+  permissions: Permissions;
+}

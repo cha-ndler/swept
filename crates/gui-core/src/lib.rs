@@ -36,6 +36,8 @@ use macclean_core::uninstall::{
 };
 use safety::DirLimits;
 
+pub mod smartscan;
+
 /// Scan/clean filters as the frontend sends them.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -560,7 +562,7 @@ fn space_node(node: &spacelens::Node) -> SpaceNodeDto {
 /// a *disposal-grantable* discovery scope at all rather than only a readable
 /// one. That is a scope decision for a human, not something to settle by adding
 /// guessed paths to a list. Tracked in `ROADMAP.md`.
-fn browser_root_for(home: &Path, path: &Path) -> Option<&'static privacy::BrowserSpec> {
+pub(crate) fn browser_root_for(home: &Path, path: &Path) -> Option<&'static privacy::BrowserSpec> {
     privacy::BROWSERS.iter().find(|b| {
         // `data_root` where the browser's own files sit above its profiles, and
         // `root` otherwise. The scan's root answers "where are the profiles",
@@ -1629,7 +1631,15 @@ fn privacy_row_dto(row: &privacy::Row) -> Option<PrivacyRowDto> {
 
 /// Read-only. See [`privacy::scan`] — nothing here can authorize anything.
 pub fn privacy_report_in(cfg: &privacy::PrivacyConfig) -> PrivacyReportDto {
-    let report = privacy::scan(cfg);
+    privacy_report_from(&privacy::scan(cfg))
+}
+
+/// [`privacy_report_in`] over a scan the caller already has.
+///
+/// Split out for Smart Scan, which needs the same scan twice — once as this
+/// DTO and once as the core report the browser-boundary predicate reads. Two
+/// scans would be two different pictures of the disk as well as twice the cost.
+pub fn privacy_report_from(report: &privacy::PrivacyReport) -> PrivacyReportDto {
     let rows: Vec<PrivacyRowDto> = report.rows.iter().filter_map(privacy_row_dto).collect();
     let skipped_unrepresentable = report.rows.len() - rows.len();
     // Summed from the rows actually emitted, not from the scan: a row this

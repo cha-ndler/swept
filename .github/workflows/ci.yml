@@ -17,8 +17,21 @@ name: ci
 #      hence `paths-ignore` for prose and design assets.
 #   2. Never let a superseded run finish — hence `concurrency`.
 #   3. Only `check` and `gui` carry signal a pull request needs. `release-build`
-#      and `package` produce artifacts, so they run on main and tags only.
+#      and `package` produce artifacts nobody consumes between releases, so they
+#      run on a `v*` tag only — not on every push to main, which was ~2.2 macOS
+#      minutes (~22 billed) per merge for a `.dmg` that was never downloaded.
 #   4. Every job has a timeout, so a hung runner cannot eat the month.
+#
+# What rule 3 costs, stated rather than glossed: `cargo tauri build` is the only
+# thing that exercises release codegen and the bundler, and nothing else runs it
+# — the local Tauri gate is a *debug* `cargo build`. So a packaging regression
+# now surfaces when a release is cut rather than at the next merge.
+# `scripts/verify.sh --bundle` is the local equivalent, and `workflow_dispatch`
+# below runs these jobs on demand. Run one of them before tagging.
+#
+# This is a private-repo economy. Public repositories get standard runners free,
+# at which point rule 3 should be revisited — and D5 in ROADMAP.md wants the
+# package job on pull requests, which only becomes affordable then.
 #
 # `scripts/verify.sh` runs the same gates locally and is the primary oracle;
 # CI is the second opinion, not the only one.
@@ -46,6 +59,9 @@ on:
       - "LICENSE"
       - ".claude/**"
       - ".gitignore"
+  # So the artifact jobs can be run on demand — before cutting a release, or to
+  # check a packaging change without pushing a tag.
+  workflow_dispatch:
 
 # A force-push or a quick follow-up commit used to leave the previous run going
 # to completion. On PRs that is pure waste; on main and tags a run is finishing
@@ -172,12 +188,12 @@ jobs:
         run: cargo build --manifest-path src-tauri/Cargo.toml
 
   release-build:
-    # Produces the `swept` binary artifact. Its only output is that artifact,
-    # and `check` has already compiled and tested the same code — so on a pull
-    # request this is a second macOS release build for nothing. Runs on main and
-    # tags only.
+    # Produces the `swept` binary artifact. Its only output is that artifact, and
+    # `check` has already compiled and tested the same code — so everywhere but a
+    # release this is a macOS release build for nothing. Tags and manual runs
+    # only.
     needs: check
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
     runs-on: macos-latest
@@ -209,11 +225,13 @@ jobs:
 
   package:
     # Bundle the desktop app (.app + .dmg). The heaviest job by far (release
-    # build + `cargo install tauri-cli` + bundling), so it runs on pushes to
-    # main and on tags — never on a pull request. Validated locally for PRs.
+    # build + `cargo install tauri-cli` + bundling), and its output is a `.dmg`
+    # that nothing consumes between releases — so tags and manual runs only.
+    # `scripts/verify.sh --bundle` is the local equivalent; run it before
+    # tagging, because nothing else exercises the bundler.
     # On a v* tag it also attaches the .dmg to the GitHub Release.
     needs: gui
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     timeout-minutes: 45
     permissions:

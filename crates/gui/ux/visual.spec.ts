@@ -243,6 +243,38 @@ test("scan empty", async ({ page }, testInfo) => {
   await capture(page, "scan-empty", testInfo.project.name);
 });
 
+// A scan that found nothing is only good news if it could see everything. These
+// two are the states that used to show a green shield and "your Mac is tidy"
+// over a hole — the one claim this app must never make.
+test("scan empty but blind", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    report: {
+      ...SAMPLE_REPORT,
+      total_count: 0,
+      total_bytes: 0,
+      by_category: [],
+      skipped_unreadable: 3,
+      partial: true,
+    },
+  });
+  await page.goto("/");
+  await expect(
+    page.getByText("Nothing found in what could be read"),
+  ).toBeVisible();
+  await expect(page.getByText("Your Mac is tidy")).toHaveCount(0);
+  await capture(page, "scan-empty-blind", testInfo.project.name);
+});
+
+test("scan results over an incomplete walk", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    report: { ...SAMPLE_REPORT, skipped_unreadable: 3, partial: true },
+  });
+  await page.goto("/");
+  await expect(page.getByText("This is a floor, not a total")).toBeVisible();
+  await expect(page.getByText("reclaimable, at least")).toBeVisible();
+  await capture(page, "scan-results-floor", testInfo.project.name);
+});
+
 test("scan loading", async ({ page }, testInfo) => {
   await installBackend(page, { hang: true });
   await page.goto("/");
@@ -273,6 +305,50 @@ test("scan results with limited access", async ({ page }, testInfo) => {
   // replace or qualify the numbers themselves.
   await expect(page.getByText("6.4 GiB")).toBeVisible();
   await capture(page, "scan-limited-access", testInfo.project.name);
+});
+
+// The fixture above overrides `perms` only, leaving `partial: false` — which the
+// backend cannot produce, because a withheld `~/.Trash` is itself a cause of
+// `partial`. It is kept as the "permissions explain everything" case; these two
+// are the states a real Mac without Full Disk Access actually reaches.
+test("scan results, withheld and incomplete", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    perms: {
+      trash_readable: false,
+      containers_readable: true,
+      all_readable: false,
+    },
+    report: { ...SAMPLE_REPORT, skipped_unreadable: 3, partial: true },
+  });
+  await page.goto("/");
+  // Both notices, and the second counts the first rather than repeating it.
+  await expect(page.getByText(/under-reporting/i)).toBeVisible();
+  await expect(page.getByText(/Counting the above/i)).toBeVisible();
+  await expect(page.getByText("reclaimable, at least")).toBeVisible();
+  await capture(page, "scan-limited-access-partial", testInfo.project.name);
+});
+
+test("scan empty, withheld and incomplete", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    perms: {
+      trash_readable: false,
+      containers_readable: true,
+      all_readable: false,
+    },
+    report: {
+      ...SAMPLE_REPORT,
+      total_count: 0,
+      total_bytes: 0,
+      by_category: [],
+      skipped_unreadable: 2,
+      partial: true,
+    },
+  });
+  await page.goto("/");
+  // The remedy sits above the card, as it does above the results — not beneath.
+  await expect(page.getByRole("button", { name: "Open Settings" })).toBeVisible();
+  await expect(page.getByText("Your Mac is tidy")).toHaveCount(0);
+  await capture(page, "scan-empty-limited-access", testInfo.project.name);
 });
 
 test("full access shows no notice", async ({ page }) => {

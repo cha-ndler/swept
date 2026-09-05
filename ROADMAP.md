@@ -272,24 +272,26 @@ and PAUSES for the human taste gate. Never auto-merged.**
   already present at 0x0 for the same reason. Needs a human's eye on a machine
   with menu-bar room.
 
-- [ ] **U7 — The Clean screen still presents a floor as a total.** *Visual →
-  taste gate.* `ScanReport` now carries `skipped_unreadable` and `partial`,
-  because the scan could not previously tell an unreadable directory from an
-  empty one — a root it cannot stat, a directory it cannot open, a path it
-  cannot resolve. The CLI acts on that today; `CleanView` does not. It renders
-  `total_bytes` unqualified, feeds the same unqualified figure to the sidebar
-  badge and the menu-bar item, and its empty state shows a green shield reading
-  *"Nothing to clean — your Mac is tidy"* even when the scan could not see
-  `~/.Trash`, which is TCC-gated and a disposal root on every Mac without Full
-  Disk Access. **Every other module's view already surfaces its own `partial`,
-  so this is the one screen in the app making a claim it has not earned.** The
-  idiom to copy exists: `LargeOldView` appends *"or more"* to the figure and
-  renders a `CoverageNotice` listing each reason. Open questions for the critic:
-  whether the menu-bar string can carry the caveat at all, and whether an
-  unreadable-Trash empty state should route to Full Disk Access, which
-  `probe_permissions` and `open_privacy_settings` already support.
+- [x] **U7 — The Clean screen presented a floor as a total.** `ScanReport`
+  gained `skipped_unreadable` and `partial` when the scan learned to tell an
+  unreadable directory from an empty one, and `CleanView` ignored both: it
+  rendered `total_bytes` unqualified and its empty state showed a **green
+  success shield** reading *"Nothing to clean — your Mac is tidy"* even when
+  `~/.Trash` could not be read, which on any Mac without Full Disk Access is
+  every time. Every other module's view already surfaced its own `partial`, so
+  this was the one screen in the app making a claim it had not earned — on a
+  tool whose entire pitch is that it does not overstate.
+  Fixed before the public flip rather than after. The empty state drops the
+  shield for a lock in the "shown, not acted on" hue and names how many places
+  could not be looked into; results grow a `FloorNotice` in `LargeOldView`'s
+  shape, which **stands down when the permission probe already explains it**
+  so `AccessNotice` and its actionable button are not duplicated; the ring
+  caption becomes *"reclaimable, at least"*; and the menu-bar label — which has
+  no room for a caveat — carries a `≥`.
+  Two new fixture states and four new baselines, because the states did not
+  exist before and a gate that never saw them is not a gate.
 
-**v0.4 complete apart from U7, which the scanner fix created the need for.**
+**v0.4 complete.**
 
 ## v0.5 — Modules
 
@@ -1040,5 +1042,30 @@ went; see D5 for what it costs.
   constraint entirely (Actions are free for public repositories) — that is
   **D6's call to make, not CI's**, and it must not be made for billing reasons
   alone.
-- [ ] **D6 — Public flip** — *(separate, on the human's word.)* Tidy the stale
-  merged remote branches, then make the repo public.
+- [x] **D6 — Public flip.** Done on the human's word, after resolving what a
+  public repository would have exposed. What was checked and found clean: no
+  secrets anywhere in history, no personal paths or machine inventory in tracked
+  files, `LICENSE` present and the README's MIT claim honest.
+  What had to be fixed first, in order of severity:
+  **The `v0.2.0` release's binaries predated every safety fix of the previous
+  session** — the build that would trash a cookie jar with no acknowledgement,
+  and that printed "Nothing to clean" over an unreadable Trash. Flipping public
+  would have made it the top download button on a data-destroying tool. The
+  assets are removed from both releases and the notes say exactly why; the tags
+  and source are untouched, so the history stands and the builds can be
+  recreated.
+  **The README was two shipped modules out of date** — no Uninstaller at all,
+  Privacy mentioned once in passing, and Startup still described as "read-only"
+  after #50 gave it a verb. It also now says plainly what is *not* there:
+  Smart Scan has an engine and no screen, there is no auto-update, no universal
+  binary and no signed build.
+  **`SECURITY.md`**, which matters more here than on most projects: someone who
+  finds a way to make this remove the wrong files needs a private channel, not a
+  public issue. It names the classes worth reporting — disposal outside the
+  allowlist, a denylist bypass, acting without the consent given, a preview and
+  an action that disagree, and a figure that is not true — and says which of
+  those this project treats as the same family of defect. Plus
+  `CONTRIBUTING.md`, and the sixteen merged branches D6 asked to tidy.
+  Actions minutes stop being a constraint at this point: standard runners are
+  free for public repositories, which retires the CI-budget note above and makes
+  D5's "package on pull requests" affordable again.

@@ -21,12 +21,21 @@ what it would do and acts only on explicit consent.
 | **Cleanup** | Application caches, logs, Xcode derived data, Homebrew downloads and the user Trash — grouped by category with sizes, counts and per-category selection. Confirmed once, then moved to the Trash. |
 | **Large & Old** | The biggest files across `~/Documents`, `~/Downloads`, `~/Desktop`, `~/Movies`, `~/Music`, `~/Pictures` and `~/Library/Application Support`, with size and age filters. **Nothing is ever pre-selected here** — see [The two scopes](#the-two-scopes). |
 | **Space Lens** | A sunburst of where the space actually went, with a breadcrumb to drill into any folder. It is **read-only and says so** — there is no command behind it that accepts anything back, so a wedge is a picture of your disk, never a proposal. |
-| **Startup** | Read-only review of the login items in `~/Library/LaunchAgents`. |
+| **Applications** | Finds what an app left behind after you removed it — caches, preferences, containers, saved state — matched on the **exact bundle id**, never a name prefix. It will not remove the `.app` itself, and it withholds anything it cannot prove is an orphan. |
+| **Privacy** | What browsers remember, across twelve of them, organised **by consequence rather than by size**. Cookies sign you out; history cannot be brought back. Each consequence needs its own acknowledgement, and the action stays disabled until every one is ticked. |
+| **Startup** | Reviews what runs at login and can set an item aside — by **moving** its plist to a folder inside `~/Library/LaunchAgents`, never removing it, so you can put it back by dragging it up one level without this app. Most login items on a current Mac live in a store macOS keeps to itself; the screen says so and links you there. |
 | **Menu-bar extra** | The current reclaimable figure, and a way back to the window. It has deliberately **no quick-clean action** — clearing files from a menu means no preview and no confirmation. |
 | **CLI** | The same engine as `swept`, for scripting and `--json` output. |
 
 Everything it plans and everything it carries out is appended to a JSON-lines
 audit log at `~/Library/Application Support/swept/audit.jsonl`.
+
+**Not here yet, stated so you do not go looking:** *Smart Scan* — one gesture
+across the cleaners, Privacy and Large & Old — has its engine and its whole
+safety ceiling built and tested, but no screen, so it is unreachable from the
+app today. There is no auto-update, no universal binary (Apple Silicon only),
+and no signed build. Those are the next things; see [`ROADMAP.md`](ROADMAP.md),
+which is candid about what is unfinished and why.
 
 <details>
 <summary>More screenshots</summary>
@@ -44,7 +53,7 @@ when the walk could not see everything:
 
 ![Confirmation](docs/screenshot-confirm.png)
 
-**Startup** — read-only:
+**Startup** — what runs at login, and what this app can and cannot change:
 
 ![Startup](docs/screenshot-startup.png)
 
@@ -198,11 +207,17 @@ crates/cli        the `swept` binary
 design/           the design canvas, rubric and target artboards
 ```
 
+## Reporting something dangerous
+
+If you find a way to make Swept remove the wrong thing, act without consent, or
+report a figure that is not true, please use **private** reporting rather than a
+public issue — [`SECURITY.md`](SECURITY.md) says how, and what counts.
+
 ## Contributing
 
-Read [`CLAUDE.md`](CLAUDE.md) first — it holds the safety contract and the
-test-first workflow that every change follows. Two rules matter more than the
-rest:
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to work on this, and
+[`CLAUDE.md`](CLAUDE.md) for the safety contract itself. Two rules matter more
+than the rest:
 
 - Tests run against throwaway temp directories. **Never a real path.**
 - Any diff that adds or changes deletion, move, or overwrite logic gets an

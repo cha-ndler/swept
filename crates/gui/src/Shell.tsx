@@ -326,3 +326,40 @@ export function AccessNotice({ perms }: { perms: Permissions }) {
     </div>
   );
 }
+
+/**
+ * Reversibility. An arrow curving back on itself — the Trash's "put back",
+ * not a bin. The three icons below exist so the first-run terms screen can
+ * say three *different* things: repeating one warning glyph three times reads
+ * as three alarms for what is a single advisory, and it also spends the
+ * circled-`!` that artboard-06 reserves for the permanent-erase callout.
+ */
+export function UndoIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M2.6 6.4h6.6a3.6 3.6 0 0 1 0 7.2H5.4" />
+      <path d="M5.2 3.2 2.2 6.4l3 3.2" />
+    </Icon>
+  );
+}
+
+/** Warranty. A document with a torn-off corner — terms, not danger. */
+export function DocumentIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M9.2 1.9H4.6a1.5 1.5 0 0 0-1.5 1.5v9.2a1.5 1.5 0 0 0 1.5 1.5h6.8a1.5 1.5 0 0 0 1.5-1.5V5.5Z" />
+      <path d="M9.2 1.9v3.6h3.7" />
+      <path d="M5.8 8.9h4.4M5.8 11.3h3" />
+    </Icon>
+  );
+}
+
+/** Backups. A clock face, for "when did you last restore from it". */
+export function ClockIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <circle cx="8" cy="8" r="6.1" />
+      <path d="M8 4.6V8l2.4 1.6" />
+    </Icon>
+  );
+}

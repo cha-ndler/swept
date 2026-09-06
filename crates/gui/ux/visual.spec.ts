@@ -1574,6 +1574,14 @@ test("terms gate", async ({ page }, testInfo) => {
   // Neither box is pre-ticked, so the primary starts disabled.
   await expect(accept).toBeDisabled();
 
+  // CAPTURED BEFORE TICKING. The first version of this test ticked both boxes
+  // and then captured, so every screenshot on the review surface showed a
+  // satisfied form with an enabled blue primary — the resting state a real
+  // first-run user actually sees was never reviewed by anyone. That is the
+  // failure `capture()`'s own comment warns about ("the reviewer then scores a
+  // frame no resting user ever sees"), arriving through a different door.
+  await capture(page, "terms-gate", testInfo.project.name);
+
   // One box is not enough: they are separate promises.
   await page
     .getByRole("checkbox", { name: /read and accept the terms/i })
@@ -1583,5 +1591,76 @@ test("terms gate", async ({ page }, testInfo) => {
   await page.getByRole("checkbox", { name: /keep a current backup/i }).check();
   await expect(accept).toBeEnabled();
 
-  await capture(page, "terms-gate", testInfo.project.name);
+  await capture(page, "terms-gate-satisfied", testInfo.project.name);
+});
+
+// The window can be resized down to `minWidth: 860, minHeight: 560` — the floor
+// `tauri.conf.json` sets — and the gate is the one screen a user cannot skip,
+// so it has to survive its own window's smallest size.
+//
+// This is a regression test with a real regression behind it. The first version
+// let the terms region grow instead of capping the sheet, and at 860x560 the
+// action row was measured 13px off the bottom of the window: Quit and Accept
+// both floated on the backdrop, clipped by the window edge, with no way to
+// accept and no way to dismiss. It failed *safe* — you cannot confirm what you
+// cannot reach — which is exactly why it would have shipped unnoticed, and it
+// is the same bug `SmartScanView`'s confirm sheet already carries a comment
+// about.
+test("terms gate at the minimum window size", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 860, height: 560 });
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__TAURI_INTERNALS__ = {
+      invoke: (cmd: string) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: false,
+            terms_version: "1.0",
+            terms_digest: "0123456789abcdef",
+            accepted_version: null,
+          });
+        if (cmd === "terms_text")
+          // Long on purpose: a short document hides exactly this bug.
+          return Promise.resolve(
+            "# Terms of Use — Swept\n\n**Version 1.0.**\n\n" +
+              Array.from(
+                { length: 40 },
+                (_, i) =>
+                  `## ${i + 1}. A section heading\n\nParagraph text that is ` +
+                  "long enough to wrap across several lines in the rendered " +
+                  "document, so the region has real content to scroll.\n",
+              ).join("\n"),
+          );
+        return Promise.resolve(null);
+      },
+      transformCallback: (cb: unknown) => cb,
+    };
+  });
+  await page.goto("/");
+
+  const accept = page.getByRole("button", { name: /accept and continue/i });
+  const quit = page.getByRole("button", { name: /^quit$/i });
+  await expect(accept).toBeVisible();
+
+  // Measured, not eyeballed: both controls must be inside the viewport. A
+  // `toBeVisible()` alone passes for an element that is rendered but sitting
+  // below the window edge, which is precisely what was broken.
+  for (const control of [quit, accept]) {
+    const box = await control.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(560);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+  }
+
+  // And the checkboxes must still be reachable rather than overlapped by the
+  // terms region above them.
+  await page
+    .getByRole("checkbox", { name: /read and accept the terms/i })
+    .check();
+  await page.getByRole("checkbox", { name: /keep a current backup/i }).check();
+  await expect(accept).toBeEnabled();
+
+  await capture(page, "terms-gate-min-window", testInfo.project.name);
 });

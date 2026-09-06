@@ -26,7 +26,11 @@ All notable changes to this project are documented here. The format is based on
   swapping to Apache-2.0, and why the Mac App Store was never available to a
   tool that has to read other applications' caches.
 - **Signing and notarization, behind optional secrets.** `tauri.conf.json` gains
-  a `bundle.macOS` block (Hardened Runtime plus an entitlements file), and
+  a `bundle.macOS` block (Hardened Runtime plus an entitlements file that is
+  **deliberately empty** -- every entitlement was considered and rejected on
+  evidence, `allow-jit` included: JavaScriptCore runs in Apple's own WebContent
+  XPC service, which carries that entitlement itself and is a child of launchd,
+  so nothing could inherit ours), and
   the `package` job signs, notarizes and then **verifies** — `codesign`,
   `spctl` and `stapler validate`, because `cargo tauri build` reports success
   whether or not it signed anything. With no secrets set it builds the same
@@ -35,6 +39,14 @@ All notable changes to this project are documented here. The format is based on
 - **Two new gates in `scripts/verify.sh`**: the terms version in `TERMS.md` must
   match `acceptance::TERMS_VERSION`, and `--bundle` refuses to pass while the
   legal documents still contain entity placeholders.
+
+- The first-run screen renders the terms as a **document** rather than as raw
+  Markdown source. A ~150-line renderer with no dependency and no
+  `dangerouslySetInnerHTML`, covering exactly what `TERMS.md` uses; anything it
+  does not recognise falls through as text, because silently dropping a clause
+  from a contract is the one failure it must not have. Links render as their
+  label: the app grants no URL-opening permission, and a control that looks
+  clickable and is not would be a small lie.
 
 ### Changed
 - The CLI prints a one-line warranty notice to stderr before it acts for real.

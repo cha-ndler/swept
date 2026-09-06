@@ -29,6 +29,19 @@
 	<string>Swept measures space used on connected volumes so its totals are accurate. It does not clean removable volumes.</string>
 
 	<!--
+	  Swept asks the Finder to move files to the Trash, so macOS shows an
+	  automation consent prompt naming Swept the first time. Without this string
+	  that prompt has no explanation in it.
+
+	  This is not obvious from the code, which is why it is written down: the
+	  `trash` crate's macOS default is DeleteMethod::Finder, which shells out to
+	  osascript -- not NSFileManager. See entitlements.plist for why no
+	  apple-events entitlement is needed despite that.
+	-->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Swept asks the Finder to move the items you confirmed to the Trash, so that they stay recoverable and can be put back. It is used for nothing else.</string>
+
+	<!--
 	  Declares that the app uses no non-exempt encryption, which is true: it has
 	  no network code at all. Without this key, every notarized upload asks the
 	  export-compliance question again. Revisit if the updater (roadmap D3) ever

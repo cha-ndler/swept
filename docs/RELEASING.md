@@ -168,6 +168,18 @@ The stapler check is the one people skip and should not: without a stapled
 ticket the app validates only while the machine can reach Apple, so a user who
 first opens it offline sees a warning on an otherwise perfect build.
 
+**Check for a secure timestamp too.** `codesign -dvv` must print a `Timestamp=`
+line; a `Signed Time=` line instead means there is no *secure* timestamp, and
+Apple's notary service rejects that. Tauri does not pass `--timestamp`
+explicitly, and `man codesign` says that without it "a system-specific default
+behavior is invoked", which "may result in some but not all code signatures
+being timestamped" — so this is worth looking at rather than assuming.
+
+The entitlements line should print an **empty** dict. Swept grants none, on
+purpose: [`entitlements.plist`](../crates/gui/src-tauri/entitlements.plist)
+records the evidence for each one considered and rejected. If that line ever
+shows something, find out who added it and why.
+
 ### The real test
 
 Verify on a Mac that has never seen the certificate, from a download rather
@@ -180,12 +192,35 @@ xattr -l ~/Downloads/Swept_0.3.0_aarch64.dmg   # expect com.apple.quarantine
 
 ### If the notarized app crashes on launch
 
-Almost always the Hardened Runtime. Check `Console.app` for a kill by
-`taskgated` or a code-signing error, then read
-[`entitlements.plist`](../crates/gui/src-tauri/entitlements.plist) — it lists
-the entitlements deliberately left out and the order to try them in. Add the
-narrowest one that fixes it and write down why, rather than pasting in the
-usual three.
+**Check for a malformed entitlements file first.** Since macOS 10.15.4 a process
+with malformed embedded entitlements does not run at all — it aborts with a
+code-signature validation error, which looks exactly like a missing entitlement
+and is far more common than one. This is very likely the real origin of the
+"Tauri crashes after notarization" folklore.
+
+```bash
+plutil -lint crates/gui/src-tauri/entitlements.plist
+```
+
+Only then treat it as a missing entitlement, and be sceptical — Swept ships an
+empty entitlements dict on the evidence recorded in that file, and a minimal
+WKWebView app signed the same way was measured launching and running JavaScript
+fine. Check `Console.app` for a kill by `taskgated`, then read the file: it
+names each entitlement considered, why it was rejected, and what would change
+that. Add the narrowest one that actually fixes it and write down why, rather
+than pasting in the usual three.
+
+### The Trash goes through the Finder
+
+Worth knowing before the first signed build, because it produces a prompt
+nobody added on purpose. The `trash` crate's macOS default is
+`DeleteMethod::Finder`, which shells out to `osascript` — so the first disposal
+triggers a TCC automation consent dialog naming Swept. `Info.plist` carries an
+`NSAppleEventsUsageDescription` explaining it, and no entitlement is required;
+`entitlements.plist` says why. Switching to `DeleteMethod::NsFileManager` would
+remove the prompt entirely, at the cost of Finder's "Put Back" — a real
+trade-off for a tool whose recovery story is the Trash, and one to decide
+deliberately rather than by leaving the default in place unexamined.
 
 ---
 

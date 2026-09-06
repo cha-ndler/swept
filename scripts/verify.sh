@@ -64,6 +64,33 @@ skip() {
 # and therefore has to be driven from its own directory.
 in_gui() { ( cd "$ROOT/crates/gui" && "$@" ); }
 
+# The version lives in `[workspace.package]` for the four workspace crates, but
+# the Tauri shell is outside the workspace and cannot inherit it — so three files
+# carry it by hand. Nothing made them agree until this, and a `.dmg` named for a
+# version the binary inside does not report is the kind of mismatch nobody
+# notices until a user does.
+versions_agree() {
+  local ws tauri conf pkg
+  ws=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -1)
+  tauri=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/crates/gui/src-tauri/Cargo.toml" | head -1)
+  conf=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' "$ROOT/crates/gui/src-tauri/tauri.conf.json" | head -1)
+  pkg=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' "$ROOT/crates/gui/package.json" | head -1)
+
+  if [ -z "$ws" ]; then
+    echo "no version in [workspace.package] — the single source is gone" >&2
+    return 1
+  fi
+  local bad=0
+  for pair in "src-tauri/Cargo.toml:$tauri" "tauri.conf.json:$conf" "package.json:$pkg"; do
+    if [ "${pair#*:}" != "$ws" ]; then
+      echo "version mismatch: ${pair%%:*} is ${pair#*:}, workspace is $ws" >&2
+      bad=1
+    fi
+  done
+  [ "$bad" = 0 ] && echo "OK: every version reads $ws."
+  return "$bad"
+}
+
 # The safety guard CI enforces, kept here so it fails before a push rather than
 # after one. SAFETY CONTRACT item 7: integration tests build their own tempfile
 # fixture and never resolve the real $HOME. A match is the failure, so the exit
@@ -82,6 +109,7 @@ if [ "$WANT_RUST" = 1 ]; then
   step "cargo clippy -D warnings"    cargo clippy --workspace --all-targets -- -D warnings
   step "cargo test --workspace"      cargo test --workspace
   step "no real \$HOME in tests"     no_real_home
+  step "versions agree"            versions_agree
 fi
 
 if [ "$WANT_GUI" = 1 ]; then

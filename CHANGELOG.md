@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-06
+
+**Smart Scan is reachable, and the download runs on any Mac.** The engine
+shipped in 0.3.0 with no screen in front of it; this release is the way in — and
+the first one whose binaries are not Apple Silicon only.
+
 ### Added
 - **Smart Scan has a screen, and it is the one the app opens on.** The engine
   and its safety ceiling shipped in 0.3.0 with no way to reach them; this is the
@@ -23,6 +29,9 @@ All notable changes to this project are documented here. The format is based on
   screen that asks about it properly. The Trash is shown and is not tickable:
   emptying it here would remove the way back from everything else in the same
   click.
+
+- **The app has a mark of its own** — an icon in the Dock and the Finder, and a
+  menu-bar glyph drawn for the menu bar rather than scaled down into it.
 
 - **The downloads run on Intel Macs.** Both the `.dmg` and the `swept` CLI are
   universal binaries now. The build inherited the runner's architecture before
@@ -322,7 +331,8 @@ property-tested safety substrate.
 - Recursive/large removals require confirmation; audit failures abort the run.
 - Tests run only against throwaway temp-dir fixtures.
 
-[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/cha-ndler/swept/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cha-ndler/swept/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cha-ndler/swept/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cha-ndler/swept/releases/tag/v0.1.0

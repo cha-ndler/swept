@@ -5,12 +5,19 @@ name: ci
 # writing down rather than rediscovering.
 #
 # This is a macOS-targeted tool, so the jobs that carry real signal have to run
-# on macOS runners — and GitHub bills macOS at **10x** the minute multiplier on
-# a private repository. Four macOS jobs at ~3-4 minutes each is ~14 macOS
-# minutes, which is ~140 billed minutes: about fourteen runs against a 2,000
-# minute monthly allowance. That allowance was exhausted, at which point jobs
-# stop starting at all (they fail in ~2 seconds having run zero steps, which
-# looks exactly like a broken build and is not one).
+# on macOS runners.
+#
+# HISTORY, because the shape below only makes sense with it: this workflow was
+# built for a PRIVATE repository, where GitHub bills macOS at 10x. Four macOS
+# jobs at ~3-4 minutes is ~140 billed minutes -- about fourteen runs against a
+# 2,000 minute allowance, and that allowance was exhausted once, at which point
+# jobs stop starting at all (they fail in ~2 seconds having run zero steps,
+# which looks exactly like a broken build and is not one).
+#
+# The repository is PUBLIC now, so standard runners are free and none of that
+# arithmetic is live. The frugal shape is kept anyway because it buys speed and
+# signal density rather than money -- and because going private again would
+# bring the whole constraint straight back.
 #
 # So the rules here are:
 #   1. Never spend a macOS minute on a change that cannot affect the result —

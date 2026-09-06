@@ -30,12 +30,24 @@ gates CI does, in the same order, and names anything it skipped rather than
 counting a skip as a pass. Never report success you haven't observed — run the
 `verifier` subagent if unsure.
 
-**Local verification is the primary oracle, not a rehearsal for CI.** GitHub
-bills macOS runners at **10x** on a private repository, and this project cannot
-move its jobs to Linux without giving up the thing they test (macOS path
-semantics for the safety kernel; `*-darwin.png` baselines for the visual gate).
-The monthly allowance is therefore a real constraint, and it has been exhausted
-once already.
+**Local verification is the primary oracle, not a rehearsal for CI.** The
+reason has changed, but the practice has not.
+
+It used to be money: GitHub bills macOS runners at **10x** on a *private*
+repository, and the monthly allowance was exhausted once. **The repository is
+public now**, so standard runners are free and that constraint is gone. Do not
+cite the 10x multiplier as a live reason — it no longer applies, and the
+workflow's own header comment is stale in the same way.
+
+What has not changed is why local-first is right anyway. A macOS run is minutes
+of wall-clock against seconds here; the jobs cannot move to Linux without
+giving up the thing they test (macOS path semantics for the safety kernel,
+`*-darwin.png` baselines for the visual gate); and a red X on a merge queue is
+a worse place to learn something than a terminal. Keep the frugal shape —
+`paths-ignore` for prose, tags-only packaging — because it keeps runs fast and
+signal-dense, not because minutes are scarce.
+
+Going private again would restore the old constraint, so this note stays.
 
 ---
 
@@ -140,7 +152,9 @@ into a fresh session. Hard-won conventions baked into them:
   return before the run finishes — always verify with `gh run view <id> --json
   status,conclusion` (status=completed AND conclusion=success) before merging.
 - **A job that fails in ~2 seconds having run ZERO steps is a billing stop, not a
-  broken build.** When the Actions allowance is exhausted GitHub simply refuses
+  broken build.** (Unlikely while the repository is public — free runners have
+  no allowance to exhaust — but the signature is worth recognising, and it
+  returns the moment the repo goes private.) When the Actions allowance is exhausted GitHub simply refuses
   to start jobs, and the result is indistinguishable from a real failure at a
   glance: red X, `conclusion: failure`, no log. Check
   `gh api repos/{owner}/{repo}/actions/runs/<id>/jobs` — if `steps` is empty and

@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-06
+
+**Swept asks before it runs.** A first-launch screen that states what this
+program does, shows the terms it is asking you to accept, and records that you
+did — plus the documents behind it, and the machinery to sign a release the day
+there is a certificate to sign it with.
+
+The builds are still unsigned and published by an individual. That is now a
+stated position rather than an unfinished one; `docs/LEGAL.md` says why and
+what would change it.
+
 ### Added
 - **Swept asks you to accept its terms before it will run.** A first-launch
   screen stating, in three sentences before any legal text, that this program
@@ -422,6 +433,7 @@ property-tested safety substrate.
 - Tests run only against throwaway temp-dir fixtures.
 
 [Unreleased]: https://github.com/cha-ndler/swept/compare/v0.4.1...HEAD
+[0.5.0]: https://github.com/cha-ndler/swept/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/cha-ndler/swept/releases/tag/v0.4.1
 [0.4.0]: https://github.com/cha-ndler/swept/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cha-ndler/swept/releases/tag/v0.3.0

@@ -1221,12 +1221,24 @@ un-notarized, so macOS treats it as suspect, and there is no auto-update.
 - [ ] **D3 — Auto-update** — `tauri-plugin-updater`, a signing keypair,
   `createUpdaterArtifacts`, `latest.json` on the release. Without it every user
   is stranded on whatever version they downloaded.
-- [ ] **D4 — Install story** — a landing README with a download button, real
-  `.app` window screenshots (today's `docs/*.png` are headless browser renders
-  with no window chrome), a Homebrew cask, and — while unsigned — the exact
-  macOS 15+ walkthrough, since Apple removed the right-click → Open bypass. Add
-  `LICENSE` (MIT is claimed in the README but the file doesn't exist),
-  `CONTRIBUTING.md`, `SECURITY.md`, issue templates.
+- [ ] **D4 — Install story** — *mostly done; two items left and both need a
+  human decision rather than a commit.*
+  **Done:** the landing README with a download button, the macOS 15+ walkthrough
+  (Apple removed the right-click → Open bypass, so an unsigned download costs a
+  trip through System Settings), `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`,
+  and issue templates. The bug form asks for the audit log, which is usually the
+  fastest answer to "what actually happened", and warns that it holds real
+  paths; a `config.yml` link routes "it removed the wrong thing" to **private**
+  reporting instead of a public issue, since that class of bug destroys data
+  rather than leaking it. `.github/ISSUE_TEMPLATE/**` is `paths-ignore`d.
+  **Left, both needing your call:**
+  - **A Homebrew cask** means a `homebrew-swept` tap repository, which is a new
+    public repo under your account — not something to create unasked.
+  - **Real `.app` window screenshots.** Today's `docs/*.png` are headless
+    browser renders with no window chrome, no traffic lights and no vibrancy,
+    which undersells U1 and U3. Producing them means launching the built app and
+    capturing its window on a real Mac — a screen capture of your machine, which
+    also has to be checked for real paths and app names before it is committed.
 - [x] **D5 — Release hygiene** — *the three concrete items are done; the
   `package`-on-pull-requests question is settled below and is no longer a
   billing question.*

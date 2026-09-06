@@ -1,0 +1,74 @@
+name: Bug report
+description: Something went wrong, or Swept did something you did not expect.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **If Swept removed something you wanted to keep, say so in the first
+        line** and do not empty your Trash — everything it disposes of goes
+        there and can be dragged back out.
+
+        Every run appends to `~/Library/Application Support/swept/audit.jsonl`,
+        one JSON object per line, with the absolute path and size of everything
+        it planned and everything it carried out. That file is usually the
+        fastest way to answer "what actually happened", so a few lines from it
+        are worth more than a description of them.
+
+        It contains **your real paths**, so read what you paste. Redact freely —
+        the shape of a path is usually all that matters.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`swept --version`, or the About panel in the app."
+      placeholder: "0.4.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - The app
+        - The CLI
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and chip
+      placeholder: "15.5, Apple Silicon"
+    validations:
+      required: true
+
+  - type: textarea
+    id: audit
+    attributes:
+      label: Relevant audit-log lines
+      description: >-
+        From `~/Library/Application Support/swept/audit.jsonl`. Redact paths as
+        you see fit. Leave this blank if the problem happened before anything
+        was recorded.
+      render: json
+
+  - type: checkboxes
+    id: fda
+    attributes:
+      label: Full Disk Access
+      options:
+        - label: Swept has Full Disk Access in System Settings → Privacy & Security
+        - label: Not sure — the app shows a notice when it is missing

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { call, describeError } from "./backend";
 import { Segmented, Checkbox } from "./Controls";
 import { FilesIcon, Group, InfoIcon, Toolbar } from "./Shell";
-import { formatBytes } from "./format";
+import { formatBytes, formatWhen, split } from "./format";
 import type { CleanSummary, LargeOldItem, LargeOldReport } from "./types";
 
 /**
@@ -297,19 +297,6 @@ export default function LargeOldView({
   );
 }
 
-/** `/Users/someone/Downloads/x` → `~/Downloads/x`. Display only. */
-function tilde(path: string): string {
-  return path.replace(/^\/Users\/[^/]+\//, "~/");
-}
-
-function split(path: string): { dir: string; name: string } {
-  const p = tilde(path);
-  const slash = p.lastIndexOf("/");
-  return slash > 0
-    ? { dir: p.slice(0, slash), name: p.slice(slash + 1) }
-    : { dir: "", name: p };
-}
-
 /**
  * Say when the figure is a floor.
  *
@@ -452,17 +439,6 @@ function FileRow({
       </span>
     </label>
   );
-}
-
-/** "3y ago" / "8mo ago". An em dash when the mtime could not be read. */
-function formatWhen(ms: number | null): string {
-  if (ms === null) return "—";
-  const days = Math.floor((Date.now() - ms) / 86_400_000);
-  if (days < 1) return "today";
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(days / 365)}y ago`;
 }
 
 function ActionBar({

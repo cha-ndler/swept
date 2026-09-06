@@ -6,7 +6,30 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **Smart Scan has a screen, and it is the one the app opens on.** The engine
+  and its safety ceiling shipped in 0.3.0 with no way to reach them; this is the
+  way. One figure, one confirmation, and a ledger afterwards that distinguishes
+  *ran*, *refused*, *never attempted* and *nothing selected* — because "we did
+  not try" must not read like "we tried and there was nothing".
+  **Large & old files get their own section, and nothing in it is ever chosen
+  for you.** It starts collapsed reading "Nothing chosen"; opening it lists each
+  file with its folder, its size and how long it has sat there, and ticking one
+  adds it to the same gesture with its own line on the confirmation sheet. Only
+  rows the backend will actually act on are listed — a large file inside a
+  browser's own data is in the scan and not in the list, because history is
+  Privacy's question and it is asked there.
+  Browser data that carries a consequence stays a finding, with a button to the
+  screen that asks about it properly. The Trash is shown and is not tickable:
+  emptying it here would remove the way back from everything else in the same
+  click.
+
+### Changed
+- The window opens on Smart Scan rather than Cleanup, and **does not scan until
+  you press the button**. Every other module scans on first visit, which is
+  right for a screen you chose; the first screen of the app is not that.
+- Outside the desktop app, Smart Scan says so immediately instead of showing a
+  "Ready to scan" hero whose button would do nothing.
 
 ## [0.3.0] — 2026-09-05
 

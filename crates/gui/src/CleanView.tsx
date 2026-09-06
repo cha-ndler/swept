@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBytes } from "./format";
 import type {
-  CategorySummary,
   CleanSummary,
   Filters,
   Permissions,
@@ -9,31 +8,23 @@ import type {
 } from "./types";
 import { call, describeError, isDesktopApp, onScanProgress } from "./backend";
 import type { ScanProgress } from "./backend";
-import { Banner, InfoIcon, LockIcon, ShieldIcon, Toolbar } from "./Shell";
-import { Checkbox, NumberField, Segmented } from "./Controls";
+import {
+  AccessNotice,
+  Banner,
+  Group,
+  InfoIcon,
+  LockIcon,
+  ShieldIcon,
+  Toolbar,
+} from "./Shell";
+import { hue } from "./hues";
+import { NumberField, Segmented } from "./Controls";
+import { CategoryRow } from "./CategoryRow";
 import { ScanRing } from "./ScanRing";
 import type { RingSegment } from "./ScanRing";
 
 type View = "loading" | "results" | "empty" | "error";
 type Phase = "none" | "confirm" | "cleaning" | "done";
-
-/**
- * One hue per cleaner, stable across every view (design/rubric.md § Hard specs).
- * Ids come from `swept_core::categories`. An unknown id deliberately falls
- * back to grey rather than borrowing another category's colour — a wrong hue
- * would claim a relationship that isn't there.
- */
-const CATEGORY_HUE: Record<string, string> = {
-  "user-caches": "rgb(var(--cat-caches))",
-  "xcode-derived-data": "rgb(var(--cat-build))",
-  "user-logs": "rgb(var(--cat-logs))",
-  trash: "rgb(var(--cat-trashes))",
-  "homebrew-downloads": "rgb(var(--cat-browser))",
-};
-
-function hue(id: string): string {
-  return CATEGORY_HUE[id] ?? "var(--text-3)";
-}
 
 const SIZE_FILTERS = [
   { value: "", label: "Any" },
@@ -292,7 +283,11 @@ export default function CleanView({
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  <ul className="space-y-2">
+                  {/* One card, hairline-separated. Smart Scan draws the same
+                      rows, and Space Lens, Privacy and Large & Old were already
+                      using `Group`; this screen and its own list were the last
+                      place in the app where every row carried its own border. */}
+                  <Group role="list" label="Categories">
                     {cats.map((c) => (
                       <CategoryRow
                         key={c.category}
@@ -301,7 +296,7 @@ export default function CleanView({
                         onToggle={() => toggle(c.category)}
                       />
                     ))}
-                  </ul>
+                  </Group>
                   {report && report.skipped_protected > 0 && (
                     <div className="mt-4">
                       <Banner icon={<LockIcon size={15} />}>
@@ -379,85 +374,6 @@ function FiltersBar({
  * this says so, on every scan it applies to, rather than once in a first-run
  * screen the user has already clicked past.
  */
-function AccessNotice({ perms }: { perms: Permissions }) {
-  const [opening, setOpening] = useState(false);
-  const missing = [
-    !perms.trash_readable ? "the Trash" : null,
-    !perms.containers_readable ? "sandboxed app caches" : null,
-  ].filter(Boolean);
-
-  return (
-    <div className="mb-5 flex items-start gap-3 rounded-card border border-cat-trashes/30 bg-cat-trashes/[.07] px-4 py-3">
-      <span className="text-cat-trashes mt-0.5 flex-none">
-        <LockIcon size={16} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-body font-medium">
-          This scan may be under-reporting
-        </p>
-        <p className="text-muted mt-1 text-caption leading-relaxed">
-          macOS is withholding {missing.join(" and ")} until you grant Full Disk
-          Access, so anything in {missing.length === 1 ? "it" : "them"} is
-          missing from the total above. Nothing else is affected, and the
-          figures shown are still real.
-        </p>
-      </div>
-      <button
-        onClick={() => {
-          setOpening(true);
-          void call("open_privacy_settings").finally(() => setOpening(false));
-        }}
-        disabled={opening}
-        className="shrink-0 rounded-control border border-border bg-surface2 px-3 py-1.5 text-caption font-medium text-text transition-colors duration-fast ease-mac hover:border-borderStrong disabled:opacity-50"
-      >
-        {opening ? "Opening…" : "Open Settings"}
-      </button>
-    </div>
-  );
-}
-
-function CategoryRow({
-  cat,
-  checked,
-  onToggle,
-}: {
-  cat: CategorySummary;
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <li>
-      <label className="flex cursor-pointer items-center gap-3 rounded-card border border-separator bg-surface px-4 py-3 transition-colors duration-fast ease-mac hover:bg-surface2">
-        <Checkbox
-          checked={checked}
-          onChange={onToggle}
-          label={`Select ${cat.name}`}
-        />
-        {/* Ties this row to its arc in the ring. */}
-        <span
-          className="h-2 w-2 flex-none rounded-full"
-          style={{ background: hue(cat.category) }}
-          aria-hidden="true"
-        />
-        <div className="min-w-0 flex-1">
-          <span className="truncate text-body font-medium">{cat.name}</span>
-          <p className="text-subtle mt-0.5 truncate text-caption">
-            {cat.description}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <span className="block font-mono text-body font-semibold tabular-nums">
-            {formatBytes(cat.bytes)}
-          </span>
-          <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
-            {cat.count.toLocaleString()} item{cat.count === 1 ? "" : "s"}
-          </span>
-        </div>
-      </label>
-    </li>
-  );
-}
-
 function ConfirmModal({
   count,
   bytes,

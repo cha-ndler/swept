@@ -1,3 +1,5 @@
+<img src="crates/gui/src-tauri/icons/128x128@2x.png" alt="" width="104" align="left" hspace="12" vspace="4">
+
 # Swept
 
 [![ci](https://github.com/cha-ndler/swept/actions/workflows/ci.yml/badge.svg)](https://github.com/cha-ndler/swept/actions/workflows/ci.yml)
@@ -12,12 +14,13 @@ what it would do and acts only on explicit consent.
 > contract in [`CLAUDE.md`](CLAUDE.md), and the plain-English version in
 > [`docs/SAFETY.md`](docs/SAFETY.md).
 
-![Cleanup](docs/screenshot-cleanup.png)
+![Smart Scan](docs/screenshot-smart-scan.png)
 
 ## What it does today
 
 | | |
 |---|---|
+| **Smart Scan** | One gesture across the cleaners and browser caches: one figure, one confirmation, and a ledger afterwards saying what each source did. It runs them one at a time and **stops at the first refusal** — nothing after one is attempted, and the result says so rather than reading like there was nothing to do. Large & old files get their own section that is **never pre-ticked**: it opens to a list showing each file's folder, size and age, and anything you tick joins the same gesture with its own line on the confirmation sheet. Browser data that carries a consequence stays a finding, asked about on the Privacy screen. |
 | **Cleanup** | Application caches, logs, Xcode derived data, Homebrew downloads and the user Trash — grouped by category with sizes, counts and per-category selection. Confirmed once, then moved to the Trash. |
 | **Large & Old** | The biggest files across `~/Documents`, `~/Downloads`, `~/Desktop`, `~/Movies`, `~/Music`, `~/Pictures` and `~/Library/Application Support`, with size and age filters. **Nothing is ever pre-selected here** — see [The two scopes](#the-two-scopes). |
 | **Space Lens** | A sunburst of where the space actually went, with a breadcrumb to drill into any folder. It is **read-only and says so** — there is no command behind it that accepts anything back, so a wedge is a picture of your disk, never a proposal. |
@@ -30,15 +33,19 @@ what it would do and acts only on explicit consent.
 Everything it plans and everything it carries out is appended to a JSON-lines
 audit log at `~/Library/Application Support/swept/audit.jsonl`.
 
-**Not here yet, stated so you do not go looking:** *Smart Scan* — one gesture
-across the cleaners, Privacy and Large & Old — has its engine and its whole
-safety ceiling built and tested, but no screen, so it is unreachable from the
-app today. There is no auto-update, no universal binary (Apple Silicon only),
-and no signed build. Those are the next things; see [`ROADMAP.md`](ROADMAP.md),
-which is candid about what is unfinished and why.
+**Not here yet, stated so you do not go looking:** there is no auto-update, no
+universal binary (Apple Silicon only), and no signed build — so installing it
+still means walking macOS through an unsigned app. Those are the next things;
+see [`ROADMAP.md`](ROADMAP.md), which is candid about what is unfinished and
+why.
 
 <details>
 <summary>More screenshots</summary>
+
+**Cleanup** — every category with its size and count, and per-category
+selection:
+
+![Cleanup](docs/screenshot-cleanup.png)
 
 **Large & Old** — nothing pre-selected, and the total is presented as a floor
 when the walk could not see everything:
@@ -74,11 +81,21 @@ real thing is a screenshot of somebody's actual files.
 
 ## Install
 
-**There is no signed release yet.** Code signing and notarization are wired up
-but inactive until a Developer ID certificate exists, so anything you download
-or build is unsigned, and macOS will say so.
+**There is no signed release yet, and nothing is wired up for one.** There is
+no `bundle.macOS` block, no entitlements file and no signing step in CI, so
+anything you download or build is unsigned and macOS will say so. Adding the
+signing path is a roadmap item (D2) that only becomes useful once a Developer
+ID certificate exists.
 
-### Build from source (the supported path today)
+### Download
+
+The latest build is on the
+[releases page](https://github.com/cha-ndler/swept/releases/latest): a `.dmg`
+for the app and a `swept` binary for the CLI. Both are **Apple Silicon only**
+and **unsigned**, so a downloaded `.dmg` needs the walkthrough below before it
+will open. Building from source avoids that entirely and is three commands.
+
+### Build from source
 
 The CLI:
 

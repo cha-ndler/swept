@@ -1,4 +1,7 @@
+import { useState } from "react";
 import type { ReactNode } from "react";
+import { call } from "./backend";
+import type { Permissions } from "./types";
 
 /**
  * Shell chrome shared by every module view.
@@ -130,6 +133,64 @@ export function MaskIcon({ size }: { size?: number }) {
   );
 }
 
+/**
+ * Smart Scan. A four-point star with a smaller companion — the only glyph in
+ * this set that names an action rather than a place, which is what Smart Scan
+ * is: the other six sidebar rows are somewhere on your disk, and this one is a
+ * gesture across them.
+ */
+export function SparkleIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M6.4 1.7 7.6 5 10.9 6.2 7.6 7.4 6.4 10.7 5.2 7.4 1.9 6.2 5.2 5Z" />
+      <path d="M11.6 9.1 12.3 11 14.2 11.7 12.3 12.4 11.6 14.3 10.9 12.4 9 11.7 10.9 11Z" />
+    </Icon>
+  );
+}
+
+/**
+ * The four Smart Scan step outcomes, as drawn glyphs.
+ *
+ * They were `✓ ✗ — ·` in a monospace span, which measured 6×6, 5×6, 8×2 and
+ * 2×3 pixels beside 36px icon tiles on the same screen — and `✗` has no
+ * monospace form on this system, so it fell back to an italic serif shape that
+ * read as a stray letter. The ledger's only per-source signal cannot be
+ * whatever the font happens to have.
+ */
+export function CheckIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M3.2 8.4 6.3 11.5 12.8 4.8" />
+    </Icon>
+  );
+}
+
+export function CrossIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
+    </Icon>
+  );
+}
+
+/** Never attempted — a step stopped by something ahead of it. */
+export function DashIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M3.6 8h8.8" />
+    </Icon>
+  );
+}
+
+/** Nothing was chosen from this source. Present, and deliberately quiet. */
+export function DotIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <circle cx="8" cy="8" r="2.4" fill="currentColor" stroke="none" />
+    </Icon>
+  );
+}
+
 export function InfoIcon({ size }: { size?: number }) {
   return (
     <Icon size={size}>
@@ -213,6 +274,55 @@ export function Banner({
     >
       <span className={`mt-px flex-none ${iconTones[tone]}`}>{icon}</span>
       <div>{children}</div>
+    </div>
+  );
+}
+
+/**
+ * macOS is withholding something, and here is the way to fix it.
+ *
+ * Shared rather than owned by the Clean screen because two screens run the same
+ * probe over the same roots. A second copy would be a second wording of the same
+ * fact, and the two would drift — the wrong direction for a notice whose whole
+ * job is to say precisely what is missing from a figure.
+ *
+ * Fires only when the *permission probe* names a gated root. An ordinary
+ * unreadable directory is a different notice: this one promises a remedy
+ * (grant Full Disk Access) that would not help there.
+ */
+export function AccessNotice({ perms }: { perms: Permissions }) {
+  const [opening, setOpening] = useState(false);
+  const missing = [
+    !perms.trash_readable ? "the Trash" : null,
+    !perms.containers_readable ? "sandboxed app caches" : null,
+  ].filter(Boolean);
+
+  return (
+    <div className="mb-5 flex items-start gap-3 rounded-card border border-cat-trashes/30 bg-cat-trashes/[.07] px-4 py-3">
+      <span className="text-cat-trashes mt-0.5 flex-none">
+        <LockIcon size={16} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-body font-medium">
+          This scan may be under-reporting
+        </p>
+        <p className="text-muted mt-1 text-caption leading-relaxed">
+          macOS is withholding {missing.join(" and ")} until you grant Full Disk
+          Access, so anything in {missing.length === 1 ? "it" : "them"} is
+          missing from the total above. Nothing else is affected, and the
+          figures shown are still real.
+        </p>
+      </div>
+      <button
+        onClick={() => {
+          setOpening(true);
+          void call("open_privacy_settings").finally(() => setOpening(false));
+        }}
+        disabled={opening}
+        className="shrink-0 rounded-control border border-border bg-surface2 px-3 py-1.5 text-caption font-medium text-text transition-colors duration-fast ease-mac hover:border-borderStrong disabled:opacity-50"
+      >
+        {opening ? "Opening\u2026" : "Open Settings"}
+      </button>
     </div>
   );
 }

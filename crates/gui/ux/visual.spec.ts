@@ -12,6 +12,11 @@ import {
   SAMPLE_PRIVACY_EMPTY,
   SAMPLE_PRIVACY_SUMMARY,
   SAMPLE_REPORT,
+  SAMPLE_SMART_SCAN,
+  SAMPLE_SMART_SCAN_MANY_FILES,
+  SAMPLE_SMART_SCAN_PARTIAL,
+  SAMPLE_SMART_SCAN_RUN,
+  SAMPLE_SMART_SCAN_STOPPED,
   SAMPLE_SPACE_LENS,
   SAMPLE_STARTUP,
   SAMPLE_STARTUP_EMPTY,
@@ -71,6 +76,12 @@ async function installBackend(
     /** When set, the startup verbs reject with this message. */
     startupReject?: string;
     hangStartup?: boolean;
+    smart?: unknown;
+    smartRun?: unknown;
+    /** Hang only the Smart Scan, for the sweeping-ring state. */
+    hangSmart?: boolean;
+    /** When set, `dispatch_smart_scan` rejects with this message. */
+    smartReject?: string;
   } = {},
 ) {
   const payload = {
@@ -99,6 +110,10 @@ async function installBackend(
       safari_readable: true,
       all_readable: true,
     },
+    smart: opts.smart ?? SAMPLE_SMART_SCAN,
+    smartRun: opts.smartRun ?? SAMPLE_SMART_SCAN_RUN,
+    hangSmart: opts.hangSmart ?? false,
+    smartReject: opts.smartReject ?? null,
     largeOld: opts.largeOld ?? SAMPLE_LARGE_OLD,
     disposeSummary: opts.disposeSummary ?? SAMPLE_DISPOSE_SUMMARY,
     spaceLens: opts.spaceLens ?? SAMPLE_SPACE_LENS,
@@ -128,6 +143,15 @@ async function installBackend(
         if (cmd === "large_and_old") return Promise.resolve(p.largeOld);
         if (cmd === "dispose_paths") return Promise.resolve(p.disposeSummary);
         if (cmd === "space_lens") return Promise.resolve(p.spaceLens);
+        if (cmd === "smart_scan")
+          return p.hangSmart ? new Promise(() => {}) : Promise.resolve(p.smart);
+        if (cmd === "dispatch_smart_scan")
+          return p.smartReject
+            ? Promise.reject(p.smartReject)
+            : Promise.resolve(p.smartRun);
+        // Best-effort in the app and swallowed there; stubbed so it does not
+        // land in the unstubbed-command branch below and read as a defect.
+        if (cmd === "set_tray_label") return Promise.resolve(null);
         if (cmd === "installed_apps") return Promise.resolve(p.installedApps);
         if (cmd === "uninstall_leftovers")
           return p.hangLeftovers
@@ -224,7 +248,7 @@ async function capture(page: Page, name: string, project: string) {
 
 test("scan results", async ({ page }, testInfo) => {
   await installBackend(page);
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await expect(page.getByRole("heading", { name: "Cleanup" })).toBeVisible();
   await capture(page, "scan-results", testInfo.project.name);
 });
@@ -238,7 +262,7 @@ test("scan empty", async ({ page }, testInfo) => {
       by_category: [],
     },
   });
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await expect(page.getByText("Nothing to clean")).toBeVisible();
   await capture(page, "scan-empty", testInfo.project.name);
 });
@@ -257,7 +281,7 @@ test("scan empty but blind", async ({ page }, testInfo) => {
       partial: true,
     },
   });
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await expect(
     page.getByText("Nothing found in what could be read"),
   ).toBeVisible();
@@ -269,7 +293,7 @@ test("scan results over an incomplete walk", async ({ page }, testInfo) => {
   await installBackend(page, {
     report: { ...SAMPLE_REPORT, skipped_unreadable: 3, partial: true },
   });
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await expect(page.getByText("This is a floor, not a total")).toBeVisible();
   await expect(page.getByText("reclaimable, at least")).toBeVisible();
   await capture(page, "scan-results-floor", testInfo.project.name);
@@ -277,7 +301,7 @@ test("scan results over an incomplete walk", async ({ page }, testInfo) => {
 
 test("scan loading", async ({ page }, testInfo) => {
   await installBackend(page, { hang: true });
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await expect(page.getByRole("status")).toBeVisible();
 
   // Drive a real progress reading so the snapshot shows the state a user
@@ -299,7 +323,7 @@ test("scan results with limited access", async ({ page }, testInfo) => {
       all_readable: false,
     },
   });
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await expect(page.getByText(/under-reporting/i)).toBeVisible();
   // The figures shown are still real — the notice explains a gap, it does not
   // replace or qualify the numbers themselves.
@@ -320,7 +344,7 @@ test("scan results, withheld and incomplete", async ({ page }, testInfo) => {
     },
     report: { ...SAMPLE_REPORT, skipped_unreadable: 3, partial: true },
   });
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   // Both notices, and the second counts the first rather than repeating it.
   await expect(page.getByText(/under-reporting/i)).toBeVisible();
   await expect(page.getByText(/Counting the above/i)).toBeVisible();
@@ -344,7 +368,7 @@ test("scan empty, withheld and incomplete", async ({ page }, testInfo) => {
       partial: true,
     },
   });
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   // The remedy sits above the card, as it does above the results — not beneath.
   await expect(page.getByRole("button", { name: "Open Settings" })).toBeVisible();
   await expect(page.getByText("Your Mac is tidy")).toHaveCount(0);
@@ -353,14 +377,14 @@ test("scan empty, withheld and incomplete", async ({ page }, testInfo) => {
 
 test("full access shows no notice", async ({ page }) => {
   await installBackend(page);
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await expect(page.getByRole("heading", { name: "Cleanup" })).toBeVisible();
   await expect(page.getByText(/under-reporting/i)).toHaveCount(0);
 });
 
 test("scan confirm", async ({ page }, testInfo) => {
   await installBackend(page);
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await page.getByRole("button", { name: /review & clean/i }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await capture(page, "scan-confirm", testInfo.project.name);
@@ -368,7 +392,7 @@ test("scan confirm", async ({ page }, testInfo) => {
 
 test("scan done", async ({ page }, testInfo) => {
   await installBackend(page);
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await page.getByRole("button", { name: /review & clean/i }).click();
   await page.getByRole("button", { name: /^move to/i }).click();
   await expect(page.getByText(/moved to the Trash/i)).toBeVisible();
@@ -392,7 +416,7 @@ test("scan error", async ({ page }, testInfo) => {
       transformCallback: (cb: unknown) => cb,
     };
   });
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await expect(page.getByText(/couldn.t finish/i)).toBeVisible();
   await capture(page, "scan-error", testInfo.project.name);
 });
@@ -1238,4 +1262,187 @@ test("startup loading", async ({ page }, testInfo) => {
   await page.goto("/?tab=startup");
   await expect(page.getByText(/Looking at what starts/)).toBeVisible();
   await capture(page, "startup-loading", testInfo.project.name);
+});
+
+// ---------------------------------------------------------------------------
+// Smart Scan
+// ---------------------------------------------------------------------------
+
+// Also the gate on which module the app opens. `goto("/")` with no `?tab`
+// is the real first-run path, and this is the only test that takes it.
+test("smart scan idle", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Smart Scan" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ready to scan" })).toBeVisible();
+  // Nothing was scanned, so nothing claims a figure.
+  await expect(page.getByText("6.4 GiB")).toHaveCount(0);
+  await capture(page, "smart-scan-idle", testInfo.project.name);
+});
+
+test("smart scan scanning", async ({ page }, testInfo) => {
+  await installBackend(page, { hangSmart: true });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await expect(page.getByText("Scanning…")).toBeVisible();
+  await capture(page, "smart-scan-scanning", testInfo.project.name);
+});
+
+test("smart scan results", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await expect(
+    page.getByRole("button", { name: /review & clean/i }),
+  ).toBeVisible();
+  // The Trash is on the report and is never tickable — it is the way back from
+  // everything else in the list.
+  await expect(
+    page.getByRole("checkbox", { name: "Include Trash" }),
+  ).toHaveCount(0);
+  await capture(page, "smart-scan-results", testInfo.project.name);
+});
+
+// `capture()` takes `fullPage: true`, but the shell puts the content in an
+// `overflow-y-auto` flex child — so "full page" is the viewport, and everything
+// below it has never been in a baseline. On this screen that is the whole
+// "Also found" band: the Trash row, the Large & Old row, the Startup finding.
+// A green gate over a region it has never seen is the same blind spot as a
+// baseline generated by the commit that introduced the component.
+test("smart scan also-found", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await expect(
+    page.getByRole("button", { name: /review & clean/i }),
+  ).toBeVisible();
+  await page
+    .getByText("Also found — asked about on their own screens")
+    .scrollIntoViewIfNeeded();
+  // The Trash is here, and it is the row that must never have a checkbox.
+  await expect(page.getByText("Trash", { exact: true })).toBeVisible();
+  await capture(page, "smart-scan-also-found", testInfo.project.name);
+});
+
+// Large & old files are offered and never chosen for you. The section starts
+// collapsed and reading "Nothing chosen", and every row carries what the
+// decision needs: the folder, the name, the size and how long it has sat there.
+test("smart scan choosing files", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await expect(page.getByText("Nothing chosen")).toBeVisible();
+  await page.getByRole("button", { name: /choose files/i }).click();
+
+  // The walk found a Firefox history file; the gesture may not offer it, so
+  // there is no control for it here.
+  await expect(page.getByText("places.sqlite")).toHaveCount(0);
+
+  await page
+    .getByRole("checkbox", { name: "Choose wedding-master-4k.mov" })
+    .check();
+  await expect(page.getByText(/1 chosen/)).toBeVisible();
+  await capture(page, "smart-scan-files", testInfo.project.name);
+});
+
+// Three sources on one sheet, each with its own count, its own byte figure and
+// its own contents named.
+test("smart scan confirm with files", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /choose files/i }).click();
+  await page
+    .getByRole("checkbox", { name: "Choose wedding-master-4k.mov" })
+    .check();
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByText("From 3 sources")).toBeVisible();
+  await capture(page, "smart-scan-confirm-files", testInfo.project.name);
+});
+
+// The sheet is the only surface here that grows with the selection, and it grew
+// past the viewport: at ~32 ticked files the title clipped off the top, at ~36
+// both buttons were below the fold — on a modal with no Escape handler and no
+// backdrop dismissal. Clicking the button is the assertion, not just seeing it.
+test("smart scan confirm stays reachable with many files", async ({
+  page,
+}, testInfo) => {
+  await installBackend(page, { smart: SAMPLE_SMART_SCAN_MANY_FILES });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /choose files/i }).click();
+
+  const boxes = page.getByRole("checkbox", { name: /^Choose render-pass-/ });
+  for (let i = 0; i < 40; i += 1) await boxes.nth(i).check();
+  await expect(page.getByText(/40 chosen/)).toBeVisible();
+
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  const go = page.getByRole("button", { name: "Move to Trash" });
+  await expect(go).toBeInViewport();
+  await capture(page, "smart-scan-confirm-many", testInfo.project.name);
+
+  // Reachable, not merely rendered.
+  await go.click();
+  await expect(page.getByRole("button", { name: /scan again/i })).toBeVisible();
+});
+
+// The headline is a floor, attributed per source, with the permission notice
+// above it saying which of them macOS is responsible for.
+test("smart scan floor", async ({ page }, testInfo) => {
+  await installBackend(page, { smart: SAMPLE_SMART_SCAN_PARTIAL });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await expect(page.getByText("This is a floor, not a total")).toBeVisible();
+  await expect(page.getByText("reclaimable, at least")).toBeVisible();
+  await capture(page, "smart-scan-floor", testInfo.project.name);
+});
+
+test("smart scan confirm", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await capture(page, "smart-scan-confirm", testInfo.project.name);
+});
+
+test("smart scan done", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await page.getByRole("button", { name: "Move to Trash" }).click();
+  await expect(page.getByRole("button", { name: /scan again/i })).toBeVisible();
+  await capture(page, "smart-scan-done", testInfo.project.name);
+});
+
+// The state the ledger exists for: one step ran, one refused, and the third was
+// never attempted — three facts a "partially succeeded" boolean would flatten.
+test("smart scan stopped", async ({ page }, testInfo) => {
+  await installBackend(page, { smartRun: SAMPLE_SMART_SCAN_STOPPED });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await page.getByRole("button", { name: "Move to Trash" }).click();
+  // "Not attempted. Privacy refused: …" — one `refused:` prefix, not the two
+  // the two honest backend layers produce between them.
+  await expect(page.getByText(/Not attempted\. Privacy refused:/)).toBeVisible();
+  await expect(page.getByText(/refused: refused:/)).toHaveCount(0);
+  await capture(page, "smart-scan-stopped", testInfo.project.name);
+});
+
+// A refusal before any step ran comes back to the sheet with the reason on it,
+// rather than to a ledger that would have nothing to show.
+test("smart scan refused", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    smartReject:
+      "refused: this report is 14 minutes old. Scan again and review.",
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await page.getByRole("button", { name: "Move to Trash" }).click();
+  await expect(page.getByText(/14 minutes old/)).toBeVisible();
+  await capture(page, "smart-scan-refused", testInfo.project.name);
 });

@@ -1,4 +1,5 @@
 import type {
+  CategorySummary,
   CleanSummary,
   InstalledApp,
   LargeOldReport,
@@ -7,7 +8,10 @@ import type {
   PrivacyBrowser,
   PrivacyReport,
   PrivacyRow,
+  LargeOldItem,
   ScanReport,
+  SmartScanReport,
+  SmartScanRunReport,
   StartupItem,
   StartupReport,
   StartupSummary,
@@ -900,4 +904,232 @@ export const SAMPLE_STARTUP_EMPTY: StartupReport = {
 export const SAMPLE_STARTUP_SUMMARY: StartupSummary = {
   moved: 1,
   refused: 0,
+};
+
+// ---------------------------------------------------------------------------
+// Smart Scan
+// ---------------------------------------------------------------------------
+//
+// Built by summing its own parts rather than by typing totals in, because the
+// screen renders `selected.bytes` in one place (the sidebar badge, via
+// `labelFor`) and the live selection in another (the ring). A fixture whose
+// headline and whose rows disagreed would put a discrepancy on screen that the
+// real backend cannot produce — the same failure the privacy dispose summary
+// was rewritten to avoid.
+
+/** The Trash: on the report, never on the gesture. */
+const SMART_TRASH: CategorySummary = {
+  category: "trash",
+  smart_scan_default: false,
+  name: "Trash",
+  description: "Items you already put in the Trash.",
+  count: 2252,
+  bytes: Math.round(1.22 * GiB),
+};
+
+const smartCleanup: CategorySummary[] = [...SAMPLE_REPORT.by_category, SMART_TRASH];
+const smartPrivacy = PRIVACY_ROWS.filter((r) => r.smart_scan_eligible);
+
+const smartSelectedBytes =
+  smartCleanup
+    .filter((c) => c.smart_scan_default)
+    .reduce((n, c) => n + c.bytes, 0) +
+  smartPrivacy.reduce((n, r) => n + r.size_bytes, 0);
+
+/**
+ * The Large & Old rows a Smart Scan may offer.
+ *
+ * A strict subset of the module's own answer: `Firefox/Profiles/…/places.sqlite`
+ * is in the walk and **not** here, because the dispatcher refuses anything
+ * inside a browser's own data — history is Privacy's question, and it is asked
+ * there with the acknowledgement this screen does not have. The fixture carries
+ * both so a screenshot shows a list that is genuinely shorter than the scan.
+ */
+const smartLargeOfferable: LargeOldItem[] = SAMPLE_LARGE_OLD.items;
+
+const smartLargeWalk: LargeOldReport = {
+  ...SAMPLE_LARGE_OLD,
+  items: [
+    ...SAMPLE_LARGE_OLD.items,
+    {
+      path: `${L}/Application Support/Firefox/Profiles/8x1.default/places.sqlite`,
+      size_bytes: Math.round(1.4 * GiB),
+      modified_ms: Date.now() - 3 * DAY,
+    },
+  ],
+  matched: SAMPLE_LARGE_OLD.matched + 1,
+  matched_bytes: SAMPLE_LARGE_OLD.matched_bytes + Math.round(1.4 * GiB),
+};
+
+const smartFoundBytes =
+  smartCleanup.reduce((n, c) => n + c.bytes, 0) +
+  privacyOfferable.reduce((n, r) => n + r.size_bytes, 0) +
+  smartLargeOfferable.reduce((n, i) => n + i.size_bytes, 0);
+
+export const SAMPLE_SMART_SCAN: SmartScanReport = {
+  // Fixed, so a screenshot is reproducible. Nothing renders it: it exists to be
+  // echoed back on the request, where the backend compares it against now.
+  scanned_at_ms: 1_757_000_000_000,
+  selected: {
+    bytes: smartSelectedBytes,
+    from: ["cleanup", "privacy"],
+    incomplete: [],
+  },
+  found: {
+    bytes: smartFoundBytes,
+    from: ["cleanup", "privacy", "large-old"],
+    incomplete: [],
+  },
+  cleanup: smartCleanup,
+  privacy: smartPrivacy,
+  large_old: smartLargeWalk,
+  large_old_offerable: smartLargeOfferable,
+  startup: {
+    starts_at_login: SAMPLE_STARTUP.starts_at_login,
+    can_act_on: SAMPLE_STARTUP.items.filter((i) => i.offerable).length,
+    modern_store_present: SAMPLE_STARTUP.modern_store_present,
+    partial: SAMPLE_STARTUP.partial,
+  },
+  permissions: {
+    trash_readable: true,
+    containers_readable: true,
+    safari_readable: true,
+    all_readable: true,
+  },
+};
+
+/**
+ * The same scan, short of the truth in two places at once.
+ *
+ * Attributed per source and in each module's own words, which is the whole
+ * reason `Incompleteness` is a list of pairs rather than a boolean: a notice
+ * saying "some figure somewhere is short" is not something anyone can act on.
+ */
+export const SAMPLE_SMART_SCAN_PARTIAL: SmartScanReport = {
+  ...SAMPLE_SMART_SCAN,
+  selected: {
+    ...SAMPLE_SMART_SCAN.selected,
+    incomplete: [
+      { source: "cleanup", reason: "3 places could not be read" },
+      { source: "privacy", reason: "some browser data could not be read" },
+    ],
+  },
+  found: {
+    ...SAMPLE_SMART_SCAN.found,
+    incomplete: [
+      { source: "cleanup", reason: "3 places could not be read" },
+      { source: "privacy", reason: "some browser data could not be read" },
+      { source: "large-old", reason: "some folders could not be read" },
+    ],
+  },
+  permissions: {
+    trash_readable: false,
+    containers_readable: true,
+    safari_readable: false,
+    all_readable: false,
+  },
+};
+
+/** Every step ran. */
+export const SAMPLE_SMART_SCAN_RUN: SmartScanRunReport = {
+  steps: [
+    {
+      source: "cleanup",
+      outcome: "executed",
+      summary: {
+        dry_run: false,
+        executed: SAMPLE_REPORT.total_count,
+        refused: 0,
+        bytes_freed: SAMPLE_REPORT.total_bytes,
+        entries_freed: 0,
+      },
+    },
+    {
+      source: "privacy",
+      outcome: "executed",
+      summary: {
+        dry_run: false,
+        executed: smartPrivacy.length,
+        refused: 0,
+        bytes_freed: smartPrivacy.reduce((n, r) => n + r.size_bytes, 0),
+        // A privacy row is one action over a whole folder, so the files inside
+        // arrive here rather than in `executed`. Zero would have hidden the
+        // ledger's under-report — three rows standing for 412 files.
+        entries_freed: smartPrivacy
+          .filter((r) => r.is_dir)
+          .reduce((n, r) => n + r.file_count, 0),
+      },
+    },
+    { source: "large-old", outcome: "not_selected" },
+  ],
+  completed: true,
+  bytes_freed:
+    SAMPLE_REPORT.total_bytes +
+    smartPrivacy.reduce((n, r) => n + r.size_bytes, 0),
+  entries_freed: 0,
+  actions_refused: 0,
+};
+
+/**
+ * A run that stopped, and the reason this screen renders a list.
+ *
+ * Cleanup moved real files; privacy then refused because the disk had changed
+ * under the report; large-old was never attempted. Three different facts that a
+ * single "partially succeeded" would flatten into one — and the third is the
+ * one a person needs, because "we did not try" must not read like "we tried and
+ * there was nothing".
+ */
+export const SAMPLE_SMART_SCAN_STOPPED: SmartScanRunReport = {
+  steps: [
+    {
+      source: "cleanup",
+      outcome: "executed",
+      summary: {
+        dry_run: false,
+        executed: 3580,
+        refused: 2,
+        bytes_freed: Math.round(1.2 * GiB),
+        entries_freed: 0,
+      },
+    },
+    {
+      source: "privacy",
+      outcome: "refused",
+      reason:
+        "refused: the selection no longer matches the disk — 4 rows were confirmed, 6 are there now. Scan again and review.",
+    },
+    {
+      source: "large-old",
+      outcome: "not_attempted",
+      // Doubled on purpose, because the real backend doubles it: every verb
+      // prefixes its reason with `refused: ` and the dispatcher then wraps a
+      // stopped step as `"{source} refused: {reason}"`. The fixture said it
+      // once, which hid the artifact from the screenshot the reviewer reads.
+      because:
+        "privacy refused: refused: the selection no longer matches the disk — 4 rows were confirmed, 6 are there now. Scan again and review.",
+    },
+  ],
+  completed: false,
+  bytes_freed: Math.round(1.2 * GiB),
+  entries_freed: 0,
+  actions_refused: 2,
+};
+
+/**
+ * A scan whose large-file list is long enough to overflow the sheet.
+ *
+ * Sixty rows, because the confirmation sheet is the one surface here that grows
+ * with the selection: measured before the fix, the title clipped off the top at
+ * ~32 ticked files and both buttons sat below the fold at ~36, on a modal with
+ * no Escape handler and no backdrop dismissal. It failed *safe* — nobody can
+ * confirm a button they cannot reach — which is precisely why it would have
+ * shipped unnoticed.
+ */
+export const SAMPLE_SMART_SCAN_MANY_FILES: SmartScanReport = {
+  ...SAMPLE_SMART_SCAN,
+  large_old_offerable: Array.from({ length: 60 }, (_, i) => ({
+    path: `/Users/tester/Movies/render-pass-${String(i + 1).padStart(3, "0")}.mov`,
+    size_bytes: Math.round((1.4 + (i % 7) * 0.3) * GiB),
+    modified_ms: Date.now() - (120 + i * 11) * DAY,
+  })),
 };

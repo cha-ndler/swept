@@ -334,11 +334,19 @@ jobs:
         if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version "^2" --locked
 
-      # Signing + notarization are OPTIONAL. When the secrets are absent every
-      # variable below is empty, Tauri skips signing, and the job produces the
-      # same unsigned .dmg it always has — so a fork, or this repo before a
-      # certificate exists, still builds. Nothing here is wasted if the
-      # certificate never appears, and nothing here fails when it hasn't.
+      # Signing + notarization are OPTIONAL, but "optional" took a fix to be
+      # true. GitHub substitutes an EMPTY STRING for a secret that does not
+      # exist — it does not leave the variable unset — and Tauri tests these
+      # for PRESENCE rather than for a value. So an empty APPLE_CERTIFICATE
+      # made it try `security import` on nothing:
+      #
+      #   security: SecKeychainItemImport: One or more parameters passed to a
+      #   function were not valid.
+      #   Error failed to bundle project: failed codesign application
+      #
+      # which failed the whole bundle. That is the opposite of optional, and it
+      # would have broken every fork as well. The build step below unsets the
+      # empties so the unsigned path is genuinely taken.
       #
       # Set up: docs/RELEASING.md. Required secrets, all or none:
       #   APPLE_CERTIFICATE           base64 of the Developer ID .p12
@@ -383,7 +391,21 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ steps.api-key.outputs.path }}
-        run: cargo tauri build --target universal-apple-darwin
+        run: |
+          # See the note above: absent secrets arrive as empty-but-set, and
+          # Tauri reads presence. Drop the empties so it takes the unsigned
+          # path instead of trying to import a certificate that isn't there.
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+                   APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_ISSUER \
+                   APPLE_API_KEY_PATH; do
+            if [ -z "${!v}" ]; then unset "$v"; fi
+          done
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "Signing as: $APPLE_SIGNING_IDENTITY"
+          else
+            echo "No signing identity present — building unsigned."
+          fi
+          cargo tauri build --target universal-apple-darwin
 
       # Checksums are taken AFTER signing and stapling, not before: stapling
       # rewrites the .dmg, so a hash computed earlier would not match what a

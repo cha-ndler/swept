@@ -1,6 +1,8 @@
 # Privacy Policy — Swept
 
-**Version 1.0.** Last revised 2026-09-06. Publisher: __LEGAL_ENTITY__.
+**Version 1.0.** Last revised 2026-09-06. Published by cha-ndler, an
+individual — there is no company behind Swept, and nothing below changes if
+that ever stops being true.
 
 ## The short version
 

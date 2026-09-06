@@ -61,6 +61,6 @@ dependency under GPL, AGPL or LGPL terms requires a deliberate decision — see
 
 ## Swept's own licence
 
-Swept's source is © 2026 __LEGAL_ENTITY__, licensed under the MIT License. See
+Swept's source is © 2026 cha-ndler, licensed under the MIT License. See
 [`LICENSE`](LICENSE) for the grant and [`TERMS.md`](TERMS.md) for the terms
 that accompany the official binaries.

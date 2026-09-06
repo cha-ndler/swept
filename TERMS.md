@@ -1,7 +1,12 @@
 # Terms of Use — Swept
 
-**Version 1.0.** Applies to the official Swept binaries distributed by
-__LEGAL_ENTITY__ ("we", "us"). Last revised 2026-09-06.
+**Version 1.0.** Applies to the official Swept binaries. Last revised
+2026-09-06.
+
+In this document, **"we"** and **"us"** mean the copyright holder named in
+[`LICENSE`](LICENSE), together with Swept's contributors and licensors. Swept
+is published by an individual, not a company; if that ever changes, the name in
+`LICENSE` changes with it and this definition still holds.
 
 ---
 
@@ -13,10 +18,16 @@ modify, merge, publish, distribute, sublicense and sell the source exactly as
 the MIT License permits, and you do not need to accept this document to do any
 of it.
 
-This document governs **the official signed, notarized builds we distribute**
-(the `.app`, the `.dmg`, and any binary published under our Developer ID). It
-exists to state, in specific terms and where you will actually read them, what
-this program does and what you are accepting when you run it.
+This document governs **the official builds we distribute** — the `.app` and
+the `.dmg` published on this project's releases page. It exists to state, in
+specific terms and where you will actually read them, what this program does
+and what you are accepting when you run it.
+
+Those builds are currently **unsigned and not notarized**, which macOS will
+tell you when you open one. That is a deliberate, disclosed state rather than
+an oversight: see [Install](README.md#install) for what it means and how to
+proceed, and `docs/LEGAL.md` for why it is where the project has chosen to
+stand for now.
 
 If the two ever conflict as to the source code, the MIT License wins.
 
@@ -109,9 +120,9 @@ THE SOFTWARE, CREATES ANY WARRANTY NOT EXPRESSLY STATED HERE.
 
 TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT AND UNDER NO
 LEGAL THEORY — WHETHER IN CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT
-LIABILITY, WARRANTY, OR OTHERWISE — SHALL __LEGAL_ENTITY__, ITS MEMBERS,
-MANAGERS, OFFICERS, EMPLOYEES, AGENTS, CONTRIBUTORS OR LICENSORS BE LIABLE TO
-YOU OR ANY THIRD PARTY FOR:
+LIABILITY, WARRANTY, OR OTHERWISE — SHALL WE, OR ANY OF OUR CONTRIBUTORS,
+LICENSORS, AGENTS, EMPLOYEES, OR (IF WE ARE EVER AN ENTITY) ITS MEMBERS,
+MANAGERS OR OFFICERS, BE LIABLE TO YOU OR ANY THIRD PARTY FOR:
 
 **(a)** ANY **LOSS OF, CORRUPTION OF, OR INABILITY TO RECOVER DATA, FILES,
 DOCUMENTS, PHOTOGRAPHS, PROJECTS, SOURCE CODE, CONFIGURATION, CREDENTIALS,

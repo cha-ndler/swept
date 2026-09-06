@@ -48,6 +48,23 @@ All notable changes to this project are documented here. The format is based on
   label: the app grants no URL-opening permission, and a control that looks
   clickable and is not would be a small lie.
 
+- **Swept names a real publisher everywhere, and it is a person.** The entity
+  placeholders are gone from the repository entirely — not filled in, removed.
+  `TERMS.md` now defines "we" as the copyright holder named in `LICENSE`, so
+  the one document nobody should have to edit twice follows the licence
+  automatically. Section 5 covers an entity's members and officers *if there
+  ever is one*, which costs nothing to keep and avoids a rewrite later.
+- **`docs/LEGAL.md` records shipping unsigned, as an individual, as a
+  decision** rather than a waiting room — why it is defensible (the entity is
+  the weakest of the five layers, and the four that matter are already built),
+  what it costs, why enrolling with Apple as an individual in the meantime
+  would be a one-way door pointed the wrong way, and the four things that
+  should trigger revisiting it.
+- **A `publisher is consistent` gate replaces the placeholder hunt.** It reads
+  the name out of `LICENSE` and fails if `NOTICE.md`, `PRIVACY.md`,
+  `Info.plist` or `tauri.conf.json` has drifted from it — the failure that
+  actually survives now that there are no blanks. It runs on every invocation
+  rather than only before a release.
 - The first-run screen **fits its own minimum window**. Below 700px of window
   height the three risk points collapse to a single line, and the terms region
   takes a smaller floor — because at the default 660px the second

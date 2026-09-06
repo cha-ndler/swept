@@ -223,20 +223,75 @@ rights attach from use — but the search is not, because discovering a conflict
 after the Developer ID, the bundle identifier `net.chandler.swept`, the domain
 and the icon are all built is the expensive version.
 
+## Shipping as an individual, on purpose
+
+**Swept is published by a person, not a company, and is distributed unsigned.**
+That is a decision with a rationale, not a half-finished migration, and it is
+written down here so nobody "fixes" it by accident.
+
+**Why it is defensible.** Layer 5 of the five above is the entity, and it is the
+weakest of them. It limits *who* a loss can reach; it does not decide whether
+anyone is liable at all. Layers 1 to 4 — the preview, the consent design, the
+disclaimer, and the acceptance record — are what would actually get a claim
+dismissed, and all four exist today. Nearly all open-source software is
+published by individuals with no entity whatsoever; that is the ordinary case,
+not a compromise.
+
+**What makes the exposure small in practice.** Swept is free, so there is no
+contract of sale, no implied warranty of merchantability in most consumer
+regimes, and a much weaker basis for damages. It makes no performance claims —
+`CONTRIBUTING.md` bans marketing language outright. It previews before it acts,
+prefers the Trash to deletion, and writes down what it was told to do. A claim
+would have to get past a disclaimer the user actively accepted, prove a defect
+and causation, and overcome the fact that the same screen told them to keep a
+backup. That is an unattractive case with a shallow pocket behind it.
+
+**What it costs.** Personal assets are exposed if a claim ever succeeded, and
+users see a Gatekeeper warning on every download because the builds are
+unsigned. Both are real; neither is worth $99/yr plus formation costs *yet*.
+
+**Why not enroll with Apple as an individual in the meantime.** Because it is a
+one-way door pointed the wrong way. Apple issues a **new Team ID** when an
+individual converts to an organization, which means a new Developer ID
+certificate, which means macOS treats the next release as a *different
+developer*: users who allowed the old build are prompted again, and a Homebrew
+cask's verification stanza changes. Enrolling now buys a migration that would
+have to be undone. And a DBA or sole proprietorship does not help — Apple
+treats sole proprietors as **individual** enrollment, and a trade name provides
+no liability protection at all. It is a naming device, not a shield.
+
+**What should trigger revisiting this**, in rough order of how strongly:
+
+1. **Money.** A paid tier, donations tied to features, or any sale. This is the
+   big one: it creates a contract of sale and pulls in consumer-refund law and
+   sales-tax nexus at the same time.
+2. **Deployment at organisational scale**, or anyone running Swept across
+   machines they do not personally own.
+3. **Wanting the signed, notarized experience** enough to pay for it — at which
+   point form the entity *first*, because of the Team ID problem above.
+4. **Outside contributors with real copyright stakes**, which makes relicensing
+   and assignment expensive rather than cheap.
+
+Until one of those, the honest posture is the current one, and the documents
+say so plainly rather than leaving a blank where a company would go.
+
 ## The open questions, tracked
 
 - [ ] Attorney review of `TERMS.md` and `PRIVACY.md` — a Maryland attorney,
       now that the governing law is Maryland.
-- [x] `__GOVERNING_STATE__` resolved to Maryland — see "Why Maryland and not
-      Delaware" above.
-- [ ] `__LEGAL_ENTITY__` replaced everywhere (`scripts/verify.sh --bundle`
-      fails while any placeholder remains).
+- [x] Governing law resolved to Maryland — see "Why Maryland and not Delaware"
+      above.
+- [x] Publisher named throughout, with no placeholders left anywhere. Swept
+      ships under an individual's name; `scripts/verify.sh` fails if `LICENSE`
+      and the four documents that repeat it ever drift apart.
 - [ ] Tech E&O / professional liability quote. For a free tool the premium is
       small, and it is the only layer here that *pays* rather than merely
       capping exposure — the entity limits what a loss can reach, insurance is
       what answers the loss.
 - [ ] Trademark knockout search for "Swept" in class 9.
-- [ ] Copyright line in `LICENSE` updated from `cha-ndler` to the entity.
+- [ ] Copyright line in `LICENSE` updated to the entity — **if** one is ever
+      formed. Changing it there is enough; the gate then requires the other
+      four to follow.
 - [ ] Decide whether the repository goes public at launch (MIT already assumes
       the source is available; a private repo with a public binary is a
       coherent but different posture).

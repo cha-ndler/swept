@@ -218,7 +218,30 @@ export default function TermsGate({ children }: { children: ReactNode }) {
             because three copies of the amber alert glyph read as three alarms
             for what is one advisory, and spend the circled-! that artboard-06
             reserves for the permanent-erase callout. */}
-        <ul className="mt-4 flex-none divide-y divide-separator overflow-hidden rounded-card border border-separator bg-surface">
+        {/* One line instead of three, on a window too short to afford the
+            card. ~100px back, which is what stops the second acknowledgement
+            hiding under the pinned action row at the default 660px height —
+            a frame that showed one checkbox above the words "Tick both boxes
+            to continue". The three points are the compressible thing here:
+            shrinking the terms region instead would undo the reason it was
+            enlarged, and moving the boxes above the document would invert
+            read-then-consent, which is the whole point of the screen. */}
+        <div className="mt-4 hidden flex-none gap-2.5 rounded-card border border-separator bg-surface px-3.5 py-2.5 [@media(max-height:700px)]:flex">
+          <span className="text-subtle mt-px flex-none" aria-hidden="true">
+            <NoUndoIcon size={14} />
+          </span>
+          {/* One sentence, and no elaboration. Every extra line here comes
+              straight out of the space the second acknowledgement needs: at
+              860x560 a four-line version left it 39.8px under the action row.
+              The detail it used to carry is in the document immediately
+              below, which is the thing being agreed to anyway. */}
+          <p className="text-text text-body font-semibold leading-snug">
+            Removal is not reliably reversible, there is no warranty, and you
+            need a current backup.
+          </p>
+        </div>
+
+        <ul className="mt-4 flex-none divide-y divide-separator overflow-hidden rounded-card border border-separator bg-surface [@media(max-height:700px)]:hidden">
           <Point icon={<NoUndoIcon size={14} />}>
             <b className="text-text font-semibold">
               Removal is not reliably reversible.
@@ -240,7 +263,7 @@ export default function TermsGate({ children }: { children: ReactNode }) {
           </Point>
         </ul>
 
-        <div className="mt-4 flex min-h-[11rem] flex-1 flex-col">
+        <div className="mt-4 flex min-h-[11rem] flex-1 flex-col [@media(max-height:620px)]:min-h-[6.75rem]">
           <p className="text-subtle mb-1.5 flex-none text-micro font-semibold uppercase">
             Terms of Use · version {status.terms_version}
           </p>

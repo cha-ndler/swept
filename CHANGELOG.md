@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+- **Swept refuses to run as the super-user.** `sudo swept clean --execute
+  --permanent --yes` was reachable, and two guarantees quietly depended on it
+  not being used. `unlink(2)`'s refusal to remove a directory — the backstop
+  that makes permanent deletion files-only even if a directory were swapped onto
+  the name mid-run — does not apply to root. And more consequentially, one
+  privileged run left `~/Library/Application Support/swept/audit.jsonl` owned by
+  root, after which every ordinary run aborted, because this tool will not act
+  when it cannot record what it did. A preview is refused too, since a preview
+  writes its plan to that same log. Nothing Swept cleans needs elevated
+  privileges, so refusing costs no functionality.
+
 ## [0.4.0] — 2026-09-06
 
 **Smart Scan is reachable, and the download runs on any Mac.** The engine

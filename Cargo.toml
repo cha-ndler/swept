@@ -20,6 +20,11 @@ serde_json = "1"
 walkdir = "2"
 trash = "5"
 plist = "1"
+# Only for `geteuid`, in `core::privilege` — see that module for why the single
+# `unsafe` in this workspace lives there. It was previously a dev-only
+# dependency (via tempfile and filetime); this is the first time it reaches the
+# shipped binary.
+libc = "0.2"
 clap = { version = "4", features = ["derive"] }
 dirs = "5"
 tempfile = "3"

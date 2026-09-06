@@ -119,12 +119,48 @@ Logs clean verified via the audit log). Run via the `.claude/loops/` prompts.
   removal of the tree around it — a vendored checkout inside an uninstaller
   leftover tree would have gone with it. Found by `deletion-safety-reviewer`,
   which demonstrated it empirically before it shipped.
-- [ ] **Refuse to run as root** — `Sink::delete` relies on `unlink(2)` returning
+- [x] **Refuse to run as root** — `Sink::delete` relied on `unlink(2)` returning
   `EPERM` for a directory, which `unlink(2)` documents as conditional on the
-  effective user not being the super-user. Nothing checks `geteuid`, and
-  `sudo swept clean --execute --permanent --yes` is reachable. The exposure
-  is small (a stray directory-entry removal, not a recursive unlink) but the
-  guarantee should not be conditional on something unenforced.
+  effective user not being the super-user, and nothing checked `geteuid`. The
+  exposure named here was small — a stray directory-entry removal, not a
+  recursive unlink — and it turned out not to be the interesting half.
+  **The larger harm was the audit log.** `AuditLog::open` is
+  `create(true).append(true)`, so one `sudo swept clean` leaves
+  `~/Library/Application Support/swept/audit.jsonl` owned by root — and this
+  project aborts a run it cannot record. A single privileged run therefore
+  disables the tool for the person who owns the files, in a way that reads as a
+  bug rather than a consequence. That is why the refusal is **whole-run and
+  covers previews**: a preview writes its plan to the log too.
+  Enforced at four layers, each with its own reason rather than for belt and
+  braces: `AuditLog::open` (where the file is born, and the layer that actually
+  prevents it — the CLI's `--audit PATH` reaches only this one),
+  `gui_core::default_audit_path` (where the *directory* is created, which is
+  first), the CLI's `main` (earliest, and the best message), and
+  `executor::execute` / `move_files` (defence in depth at the mutation
+  boundary). `crates/core/src/privilege.rs` holds the policy as a pure function
+  over a uid, so it is testable — a test process cannot become root, and the
+  uid seams are all module-private so no caller can supply one.
+  **The `deletion-safety-reviewer` round: PASS, four findings, all fixed.** Two
+  were the change undercutting its own purpose. The GUI had no front door at
+  all: all six of its mutating commands call `default_audit_path` → the
+  executor, so a root-launched app created the root-owned directory and *then*
+  got refused — exactly the harm the CLI comment said the check existed to
+  prevent, on the larger of the two front doors. And a load-bearing comment was
+  false: it claimed not appending to the log is what prevents the root-owned
+  file, when the caller has already opened the log by then. The test named for
+  that property pins "no bytes appended" and cannot pin more; the property it
+  claimed now belongs to `AuditLog::open` and is tested there.
+  The other two were prose: `libc` was described as already present via `trash`,
+  when it was **dev-only** (via `tempfile` and `filetime`) and this promotes it
+  to the runtime graph for the first time — checked with `cargo tree -e normal`
+  rather than assumed, and it is the premise the `unsafe` justification rests
+  on; and this item still read "nothing checks `geteuid`".
+  Nine tests, every one verified to bite by disabling the policy and watching
+  the mapped tests go red.
+  **Not done, recorded rather than left implicit:** the Tauri shell does not
+  refuse at *startup*, so a root-launched app opens a window and then refuses
+  each command. Every mutation is covered, so this is a message-quality gap
+  rather than a safety one — but a dialog at launch would be the honest shape.
 - [x] **Directory disposal needs `guard_dir`** — `safety::dir_guard` walks the
   tree with an explicit stack (never recursion, so a pathological tree hits
   `max_depth` rather than overflowing) and consults the denylist at every

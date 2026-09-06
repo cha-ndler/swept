@@ -13,6 +13,7 @@ pub mod largeold;
 pub mod loginitems;
 pub mod plan;
 pub mod privacy;
+pub mod privilege;
 pub mod report;
 pub mod scanner;
 pub mod spacelens;

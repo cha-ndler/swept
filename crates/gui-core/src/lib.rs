@@ -163,9 +163,62 @@ pub fn gui_consent(confirm_mass_delete: bool) -> Consent {
 
 /// Default audit-log path for the app (parent created if missing).
 pub fn default_audit_path() -> std::io::Result<PathBuf> {
-    let dir = default_home()?.join("Library/Application Support/swept");
+    audit_path_in(&default_home()?, swept_core::privilege::effective_uid())
+}
+
+/// [`default_audit_path`], with the home and the effective user supplied.
+///
+/// The seam exists so the refusal below is exercised rather than merely
+/// present. `pub(crate)` rather than `pub`: no caller outside this crate can
+/// hand it a uid, and the six commands that need an audit path all go through
+/// the public wrapper.
+///
+/// The refusal is here and not only in `AuditLog::open` because `create_dir_all`
+/// runs **first**. This is the GUI's front door — the CLI has one in `main` —
+/// and a root-launched app would otherwise leave `~/Library/Application
+/// Support/swept/` owned by root and only then be refused, which is exactly the
+/// harm the refusal exists to prevent.
+pub(crate) fn audit_path_in(home: &Path, euid: u32) -> std::io::Result<PathBuf> {
+    if let Some(why) = swept_core::privilege::refusal(euid) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            why,
+        ));
+    }
+    let dir = home.join("Library/Application Support/swept");
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("audit.jsonl"))
+}
+
+#[cfg(test)]
+mod audit_path_tests {
+    use super::*;
+
+    /// `create_dir_all` is a mutation, and it is the first one the GUI reaches.
+    /// Without this check the directory exists — owned by root — before any
+    /// refusal is returned.
+    #[test]
+    fn a_privileged_run_never_creates_the_support_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+
+        let err = audit_path_in(home, swept_core::privilege::SUPER_USER).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(
+            !home.join("Library/Application Support/swept").exists(),
+            "the support directory was created despite the refusal"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_user_gets_the_directory_and_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+
+        let path = audit_path_in(home, 501).unwrap();
+        assert!(home.join("Library/Application Support/swept").is_dir());
+        assert!(path.ends_with("audit.jsonl"));
+    }
 }
 
 /// Clean using an explicit [`Sink`] and audit log. The sink is injectable so

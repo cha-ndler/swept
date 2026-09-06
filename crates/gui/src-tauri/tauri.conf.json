@@ -43,7 +43,6 @@
       "icons/icon.ico"
     ],
     "copyright": "Copyright © 2026 cha-ndler. MIT licensed; see TERMS.md.",
-    "licenseFile": "../../../LICENSE",
     "macOS": {
       "hardenedRuntime": true,
       "entitlements": "entitlements.plist"

@@ -1,0 +1,40 @@
+name: Feature request
+description: Something Swept should find, show, or do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [`ROADMAP.md`](../blob/main/ROADMAP.md) is candid about what is
+        unfinished and, more usefully, about what was deliberately **not** done
+        and why — several obvious-sounding features are listed there as declined
+        with the reasoning. Worth a look first; it may already answer this.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to get done
+      description: >-
+        The situation rather than the feature, if you can — it often has a
+        better answer than the one that comes to mind first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you had in mind
+    validations:
+      required: true
+
+  - type: textarea
+    id: risk
+    attributes:
+      label: What could this remove that someone wanted to keep?
+      description: >-
+        Not a formality. Swept only acts on things it can argue are safe, and
+        the answer to this question is usually what decides whether a feature is
+        shipped, shipped as a read-only finding, or declined. "Nothing, it only
+        reads" is a perfectly good answer.
+    validations:
+      required: true

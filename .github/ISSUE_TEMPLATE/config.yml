@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Swept removed the wrong thing, or removed something without asking
+    url: https://github.com/cha-ndler/swept/security/advisories/new
+    about: >-
+      Report this privately instead. A bug that acts on the wrong path, acts
+      without consent, or says something untrue about what it will do destroys
+      data rather than leaking it — see SECURITY.md. Do not empty your Trash;
+      everything Swept disposes of goes there.
+  - name: What is unfinished, and what was deliberately declined
+    url: https://github.com/cha-ndler/swept/blob/main/ROADMAP.md
+    about: >-
+      Several obvious-sounding features are listed there as declined, with the
+      reasoning. Worth checking before opening a request.

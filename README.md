@@ -83,13 +83,18 @@ real thing is a screenshot of somebody's actual files.
 
 ## Install
 
-**There is no signed release yet, but everything for one is wired up.** The
-`bundle.macOS` block, the entitlements file and the signing + notarization
-steps in CI are all in place and inert: with no Developer ID certificate in the
-repository secrets they are skipped, and anything you download or build is
-unsigned, so macOS will say so. The remaining step is the certificate itself —
-[`docs/RELEASING.md`](docs/RELEASING.md) is the sequence, and it starts with
-forming the entity rather than with anything in this repository.
+**Swept is unsigned, deliberately, and published by an individual.** macOS will
+tell you so when you open a download, and the walkthrough below is what to do
+about it. This is a stated position rather than an unfinished one: signing
+means a paid Apple Developer Program membership, and the version of that worth
+buying needs a legal entity first — [`docs/LEGAL.md`](docs/LEGAL.md) sets out
+the reasoning and what would change it.
+
+Everything the signed path needs is already built and inert: a `bundle.macOS`
+block, an entitlements file, and a CI job that signs and notarizes only when
+the secrets exist. Nothing has to be written when that day comes, only
+supplied. Building from source avoids the warning entirely and is three
+commands.
 
 ### Download
 
@@ -270,9 +275,8 @@ than the rest:
 
 The **source** is MIT — see [`LICENSE`](LICENSE). Do what you like with it.
 
-The **official signed builds** additionally carry
-[`TERMS.md`](TERMS.md), which the app presents on first launch and asks you to
-accept. They do not restrict anything the MIT licence grants you; they state,
+The **official builds** additionally carry [`TERMS.md`](TERMS.md), which the
+app presents on first launch and asks you to accept. They do not restrict anything the MIT licence grants you; they state,
 specifically and where you will actually read it, that this program removes
 files, that it comes with no warranty, and that its author is not liable for
 lost data. Swept records that acceptance on your own Mac and sends it nowhere.

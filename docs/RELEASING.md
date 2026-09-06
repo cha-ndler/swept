@@ -1,16 +1,31 @@
 # Releasing Swept
 
-How a signed, notarized `.dmg` gets built and published. Read
-[`LEGAL.md`](LEGAL.md) first if you are wondering *why* it is distributed this
-way rather than through the Mac App Store — the short answer is that a
-sandboxed app cannot read other applications' caches, so the store was never an
-option.
+Read [`LEGAL.md`](LEGAL.md) first if you are wondering *why* Swept is
+distributed outside the Mac App Store — the short answer is that a sandboxed
+app cannot read other applications' caches, so the store was never an option.
 
-Everything in Part 1 happens once. Everything in Part 3 happens per release.
+> ## Today: unsigned, and that is the plan
+>
+> **Swept currently ships unsigned and un-notarized, published by an
+> individual.** Part 3 is the whole of a release right now; Part 1 and Part 2
+> describe a future the project has deliberately not entered yet, and
+> [`LEGAL.md`](LEGAL.md) → *"Shipping as an individual, on purpose"* says why
+> and what would change the answer.
+>
+> Do **not** work through Part 1 piecemeal. Its steps are ordered because
+> enrolling with Apple as an individual and converting to an entity later
+> yields a **new Team ID**, a new certificate, and a macOS prompt telling users
+> the app is from a different developer. If the entity ever happens, it happens
+> first.
+>
+> Everything the signing path needs is already wired and inert: the
+> `bundle.macOS` block, the entitlements file, and a `package` job that signs
+> and notarizes only when the secrets exist. Nothing below has to be built when
+> the time comes — only supplied.
 
 ---
 
-## Part 1 — One-time setup
+## Part 1 — One-time setup *(not started; see the note above)*
 
 Do these in order. Steps 1 and 2 gate step 3, and step 3 gates everything else.
 
@@ -48,8 +63,8 @@ comes first.
       update [`LICENSE`](../LICENSE) — see step 6. If the entity is the
       publisher but you personally still own the copyright, the two layers do
       not line up.
-- [ ] Put the entity's exact legal name into `__LEGAL_ENTITY__` — see step 6.
-      `__GOVERNING_STATE__` is already resolved to Maryland.
+- [ ] Change the publisher named across the project to the entity — see step 6.
+      Governing law is already Maryland.
 
 ### 2. Get a D-U-N-S number
 
@@ -113,23 +128,30 @@ break when the account's 2FA changes.
 - [ ] Note the **Key ID** and the **Issuer ID**.
 - [ ] Download the `.p8`. **It can only be downloaded once.**
 
-### 6. Fill in the placeholders
+### 6. Change the publisher
 
-Two placeholders are seeded through the repository and
-`./scripts/verify.sh --bundle` refuses to pass while any remain.
+There are no placeholders to fill — Swept names its publisher for real
+everywhere, and today that is an individual. Switching to an entity is a
+rename, and `./scripts/verify.sh` enforces that it is done completely.
 
-```bash
-rg -l '__LEGAL_ENTITY__|__GOVERNING_STATE__'
-```
-
-- [ ] Replace `__LEGAL_ENTITY__` with the entity's exact legal name — the same
-      string, character for character, as the D-U-N-S record and the Apple
-      enrollment. A mismatch between the three is what stalls enrollment.
-- [ ] `__GOVERNING_STATE__` is **already resolved to Maryland** in
-      [`TERMS.md`](../TERMS.md). Nothing to do unless the entity is formed
-      somewhere else, in which case revisit `LEGAL.md` first.
-- [ ] Update the copyright line in [`LICENSE`](../LICENSE) from `cha-ndler` to
-      the entity.
+- [ ] Change the copyright line in [`LICENSE`](../LICENSE) to the entity's
+      exact legal name — the same string, character for character, as the
+      D-U-N-S record and the Apple enrollment. A mismatch between those three
+      is what stalls enrollment.
+- [ ] Run `./scripts/verify.sh --rust`. The `publisher is consistent` gate
+      reads the name out of `LICENSE` and names every file that has not caught
+      up: `NOTICE.md`, `PRIVACY.md`, `Info.plist`, `tauri.conf.json`. Work
+      through what it prints.
+- [ ] `TERMS.md` needs no name at all — it defines "we" as the copyright holder
+      named in `LICENSE`, so it follows automatically. Section 5 already covers
+      an entity's members, managers and officers, so it does not need widening
+      either.
+- [ ] Governing law is **already Maryland** in [`TERMS.md`](../TERMS.md).
+      Nothing to do unless the entity is formed elsewhere, in which case
+      revisit `LEGAL.md` first.
+- [ ] Assign the copyright in the existing code to the entity in writing. If
+      the entity is the publisher but you personally still hold the copyright,
+      the two layers do not line up.
 - [ ] Have an attorney read [`TERMS.md`](../TERMS.md) and
       [`PRIVACY.md`](../PRIVACY.md). One to three hours; this is a
       well-trodden document set.

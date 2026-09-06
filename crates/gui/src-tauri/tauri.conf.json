@@ -42,7 +42,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "copyright": "Copyright © 2026 __LEGAL_ENTITY__. MIT licensed; see TERMS.md.",
+    "copyright": "Copyright © 2026 cha-ndler. MIT licensed; see TERMS.md.",
     "licenseFile": "../../../LICENSE",
     "macOS": {
       "hardenedRuntime": true,

@@ -12,12 +12,13 @@ what it would do and acts only on explicit consent.
 > contract in [`CLAUDE.md`](CLAUDE.md), and the plain-English version in
 > [`docs/SAFETY.md`](docs/SAFETY.md).
 
-![Cleanup](docs/screenshot-cleanup.png)
+![Smart Scan](docs/screenshot-smart-scan.png)
 
 ## What it does today
 
 | | |
 |---|---|
+| **Smart Scan** | One gesture across the cleaners and browser caches: one figure, one confirmation, and a ledger afterwards saying what each source did. It runs them one at a time and **stops at the first refusal** — nothing after one is attempted, and the result says so rather than reading like there was nothing to do. Large & old files and browser data that carries a consequence are shown here as findings and acted on their own screens. |
 | **Cleanup** | Application caches, logs, Xcode derived data, Homebrew downloads and the user Trash — grouped by category with sizes, counts and per-category selection. Confirmed once, then moved to the Trash. |
 | **Large & Old** | The biggest files across `~/Documents`, `~/Downloads`, `~/Desktop`, `~/Movies`, `~/Music`, `~/Pictures` and `~/Library/Application Support`, with size and age filters. **Nothing is ever pre-selected here** — see [The two scopes](#the-two-scopes). |
 | **Space Lens** | A sunburst of where the space actually went, with a breadcrumb to drill into any folder. It is **read-only and says so** — there is no command behind it that accepts anything back, so a wedge is a picture of your disk, never a proposal. |
@@ -30,15 +31,19 @@ what it would do and acts only on explicit consent.
 Everything it plans and everything it carries out is appended to a JSON-lines
 audit log at `~/Library/Application Support/swept/audit.jsonl`.
 
-**Not here yet, stated so you do not go looking:** *Smart Scan* — one gesture
-across the cleaners, Privacy and Large & Old — has its engine and its whole
-safety ceiling built and tested, but no screen, so it is unreachable from the
-app today. There is no auto-update, no universal binary (Apple Silicon only),
-and no signed build. Those are the next things; see [`ROADMAP.md`](ROADMAP.md),
-which is candid about what is unfinished and why.
+**Not here yet, stated so you do not go looking:** there is no auto-update, no
+universal binary (Apple Silicon only), and no signed build — so installing it
+still means walking macOS through an unsigned app. Those are the next things;
+see [`ROADMAP.md`](ROADMAP.md), which is candid about what is unfinished and
+why.
 
 <details>
 <summary>More screenshots</summary>
+
+**Cleanup** — every category with its size and count, and per-category
+selection:
+
+![Cleanup](docs/screenshot-cleanup.png)
 
 **Large & Old** — nothing pre-selected, and the total is presented as a floor
 when the walk could not see everything:

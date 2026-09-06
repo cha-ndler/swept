@@ -9,31 +9,21 @@ import type {
 } from "./types";
 import { call, describeError, isDesktopApp, onScanProgress } from "./backend";
 import type { ScanProgress } from "./backend";
-import { Banner, InfoIcon, LockIcon, ShieldIcon, Toolbar } from "./Shell";
+import {
+  AccessNotice,
+  Banner,
+  InfoIcon,
+  LockIcon,
+  ShieldIcon,
+  Toolbar,
+} from "./Shell";
+import { hue } from "./hues";
 import { Checkbox, NumberField, Segmented } from "./Controls";
 import { ScanRing } from "./ScanRing";
 import type { RingSegment } from "./ScanRing";
 
 type View = "loading" | "results" | "empty" | "error";
 type Phase = "none" | "confirm" | "cleaning" | "done";
-
-/**
- * One hue per cleaner, stable across every view (design/rubric.md § Hard specs).
- * Ids come from `swept_core::categories`. An unknown id deliberately falls
- * back to grey rather than borrowing another category's colour — a wrong hue
- * would claim a relationship that isn't there.
- */
-const CATEGORY_HUE: Record<string, string> = {
-  "user-caches": "rgb(var(--cat-caches))",
-  "xcode-derived-data": "rgb(var(--cat-build))",
-  "user-logs": "rgb(var(--cat-logs))",
-  trash: "rgb(var(--cat-trashes))",
-  "homebrew-downloads": "rgb(var(--cat-browser))",
-};
-
-function hue(id: string): string {
-  return CATEGORY_HUE[id] ?? "var(--text-3)";
-}
 
 const SIZE_FILTERS = [
   { value: "", label: "Any" },
@@ -379,43 +369,6 @@ function FiltersBar({
  * this says so, on every scan it applies to, rather than once in a first-run
  * screen the user has already clicked past.
  */
-function AccessNotice({ perms }: { perms: Permissions }) {
-  const [opening, setOpening] = useState(false);
-  const missing = [
-    !perms.trash_readable ? "the Trash" : null,
-    !perms.containers_readable ? "sandboxed app caches" : null,
-  ].filter(Boolean);
-
-  return (
-    <div className="mb-5 flex items-start gap-3 rounded-card border border-cat-trashes/30 bg-cat-trashes/[.07] px-4 py-3">
-      <span className="text-cat-trashes mt-0.5 flex-none">
-        <LockIcon size={16} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-body font-medium">
-          This scan may be under-reporting
-        </p>
-        <p className="text-muted mt-1 text-caption leading-relaxed">
-          macOS is withholding {missing.join(" and ")} until you grant Full Disk
-          Access, so anything in {missing.length === 1 ? "it" : "them"} is
-          missing from the total above. Nothing else is affected, and the
-          figures shown are still real.
-        </p>
-      </div>
-      <button
-        onClick={() => {
-          setOpening(true);
-          void call("open_privacy_settings").finally(() => setOpening(false));
-        }}
-        disabled={opening}
-        className="shrink-0 rounded-control border border-border bg-surface2 px-3 py-1.5 text-caption font-medium text-text transition-colors duration-fast ease-mac hover:border-borderStrong disabled:opacity-50"
-      >
-        {opening ? "Opening…" : "Open Settings"}
-      </button>
-    </div>
-  );
-}
-
 function CategoryRow({
   cat,
   checked,

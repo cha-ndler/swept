@@ -1,4 +1,5 @@
 import type {
+  CategorySummary,
   CleanSummary,
   InstalledApp,
   LargeOldReport,
@@ -8,6 +9,8 @@ import type {
   PrivacyReport,
   PrivacyRow,
   ScanReport,
+  SmartScanReport,
+  SmartScanRunReport,
   StartupItem,
   StartupReport,
   StartupSummary,
@@ -900,4 +903,183 @@ export const SAMPLE_STARTUP_EMPTY: StartupReport = {
 export const SAMPLE_STARTUP_SUMMARY: StartupSummary = {
   moved: 1,
   refused: 0,
+};
+
+// ---------------------------------------------------------------------------
+// Smart Scan
+// ---------------------------------------------------------------------------
+//
+// Built by summing its own parts rather than by typing totals in, because the
+// screen renders `selected.bytes` in one place (the sidebar badge, via
+// `labelFor`) and the live selection in another (the ring). A fixture whose
+// headline and whose rows disagreed would put a discrepancy on screen that the
+// real backend cannot produce — the same failure the privacy dispose summary
+// was rewritten to avoid.
+
+/** The Trash: on the report, never on the gesture. */
+const SMART_TRASH: CategorySummary = {
+  category: "trash",
+  smart_scan_default: false,
+  name: "Trash",
+  description: "Items you already put in the Trash.",
+  count: 2252,
+  bytes: Math.round(1.22 * GiB),
+};
+
+const smartCleanup: CategorySummary[] = [...SAMPLE_REPORT.by_category, SMART_TRASH];
+const smartPrivacy = PRIVACY_ROWS.filter((r) => r.smart_scan_eligible);
+
+const smartSelectedBytes =
+  smartCleanup
+    .filter((c) => c.smart_scan_default)
+    .reduce((n, c) => n + c.bytes, 0) +
+  smartPrivacy.reduce((n, r) => n + r.size_bytes, 0);
+
+const smartFoundBytes =
+  smartCleanup.reduce((n, c) => n + c.bytes, 0) +
+  privacyOfferable.reduce((n, r) => n + r.size_bytes, 0) +
+  SAMPLE_LARGE_OLD.matched_bytes;
+
+export const SAMPLE_SMART_SCAN: SmartScanReport = {
+  // Fixed, so a screenshot is reproducible. Nothing renders it: it exists to be
+  // echoed back on the request, where the backend compares it against now.
+  scanned_at_ms: 1_757_000_000_000,
+  selected: {
+    bytes: smartSelectedBytes,
+    from: ["cleanup", "privacy"],
+    incomplete: [],
+  },
+  found: {
+    bytes: smartFoundBytes,
+    from: ["cleanup", "privacy", "large-old"],
+    incomplete: [],
+  },
+  cleanup: smartCleanup,
+  privacy: smartPrivacy,
+  large_old: SAMPLE_LARGE_OLD,
+  startup: {
+    starts_at_login: SAMPLE_STARTUP.starts_at_login,
+    can_act_on: SAMPLE_STARTUP.items.filter((i) => i.offerable).length,
+    modern_store_present: SAMPLE_STARTUP.modern_store_present,
+    partial: SAMPLE_STARTUP.partial,
+  },
+  permissions: {
+    trash_readable: true,
+    containers_readable: true,
+    safari_readable: true,
+    all_readable: true,
+  },
+};
+
+/**
+ * The same scan, short of the truth in two places at once.
+ *
+ * Attributed per source and in each module's own words, which is the whole
+ * reason `Incompleteness` is a list of pairs rather than a boolean: a notice
+ * saying "some figure somewhere is short" is not something anyone can act on.
+ */
+export const SAMPLE_SMART_SCAN_PARTIAL: SmartScanReport = {
+  ...SAMPLE_SMART_SCAN,
+  selected: {
+    ...SAMPLE_SMART_SCAN.selected,
+    incomplete: [
+      { source: "cleanup", reason: "3 places could not be read" },
+      { source: "privacy", reason: "some browser data could not be read" },
+    ],
+  },
+  found: {
+    ...SAMPLE_SMART_SCAN.found,
+    incomplete: [
+      { source: "cleanup", reason: "3 places could not be read" },
+      { source: "privacy", reason: "some browser data could not be read" },
+      { source: "large-old", reason: "some folders could not be read" },
+    ],
+  },
+  permissions: {
+    trash_readable: false,
+    containers_readable: true,
+    safari_readable: false,
+    all_readable: false,
+  },
+};
+
+/** Every step ran. */
+export const SAMPLE_SMART_SCAN_RUN: SmartScanRunReport = {
+  steps: [
+    {
+      source: "cleanup",
+      outcome: "executed",
+      summary: {
+        dry_run: false,
+        executed: SAMPLE_REPORT.total_count,
+        refused: 0,
+        bytes_freed: SAMPLE_REPORT.total_bytes,
+        entries_freed: 0,
+      },
+    },
+    {
+      source: "privacy",
+      outcome: "executed",
+      summary: {
+        dry_run: false,
+        executed: smartPrivacy.length,
+        refused: 0,
+        bytes_freed: smartPrivacy.reduce((n, r) => n + r.size_bytes, 0),
+        // A privacy row is one action over a whole folder, so the files inside
+        // arrive here rather than in `executed`. Zero would have hidden the
+        // ledger's under-report — three rows standing for 412 files.
+        entries_freed: smartPrivacy
+          .filter((r) => r.is_dir)
+          .reduce((n, r) => n + r.file_count, 0),
+      },
+    },
+    { source: "large-old", outcome: "not_selected" },
+  ],
+  completed: true,
+  bytes_freed:
+    SAMPLE_REPORT.total_bytes +
+    smartPrivacy.reduce((n, r) => n + r.size_bytes, 0),
+  entries_freed: 0,
+  actions_refused: 0,
+};
+
+/**
+ * A run that stopped, and the reason this screen renders a list.
+ *
+ * Cleanup moved real files; privacy then refused because the disk had changed
+ * under the report; large-old was never attempted. Three different facts that a
+ * single "partially succeeded" would flatten into one — and the third is the
+ * one a person needs, because "we did not try" must not read like "we tried and
+ * there was nothing".
+ */
+export const SAMPLE_SMART_SCAN_STOPPED: SmartScanRunReport = {
+  steps: [
+    {
+      source: "cleanup",
+      outcome: "executed",
+      summary: {
+        dry_run: false,
+        executed: 3580,
+        refused: 2,
+        bytes_freed: Math.round(1.2 * GiB),
+        entries_freed: 0,
+      },
+    },
+    {
+      source: "privacy",
+      outcome: "refused",
+      reason:
+        "refused: the selection no longer matches the disk — 4 rows were confirmed, 6 are there now. Scan again and review.",
+    },
+    {
+      source: "large-old",
+      outcome: "not_attempted",
+      because:
+        "privacy refused: the selection no longer matches the disk — 4 rows were confirmed, 6 are there now. Scan again and review.",
+    },
+  ],
+  completed: false,
+  bytes_freed: Math.round(1.2 * GiB),
+  entries_freed: 0,
+  actions_refused: 2,
 };

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import CleanView from "./CleanView";
+import SmartScanView from "./SmartScanView";
 import LargeOldView from "./LargeOldView";
 import SpaceLensView from "./SpaceLensView";
 import StartupView from "./StartupView";
@@ -12,12 +13,14 @@ import {
   LensIcon,
   MaskIcon,
   ShieldIcon,
+  SparkleIcon,
   StackIcon,
   WrenchIcon,
 } from "./Shell";
 import { formatBytes } from "./format";
 
 type Module =
+  | "smart-scan"
   | "cleanup"
   | "applications"
   | "large-old"
@@ -37,12 +40,21 @@ type Module =
  * during the first render rather than in an effect, so `?tab=startup` no longer
  * mounts Cleanup, fires a full scan, and then throws it away.
  *
- * The sidebar lists only modules that actually exist. `design/references/`
- * shows seven; the other five are the v0.5 backlog, and showing them now as
- * dead rows would promise a capability that isn't there — the same class of
- * dishonesty as the sample-data fallback removed in v0.3.
+ * The sidebar lists only modules that actually exist, which is now all seven the
+ * artboards show. Showing a module before it works would promise a capability
+ * that isn't there — the same class of dishonesty as the sample-data fallback
+ * removed in v0.3, and the reason Smart Scan was absent from this list until it
+ * had a screen rather than only an engine.
+ *
+ * **Smart Scan opens first, and does not scan on mount.** Every other module
+ * runs its scan the moment it is first visited, which is right for a screen you
+ * navigated to on purpose. The first screen of the app is not that: it would
+ * mean four scans, several seconds and a spinner, for a user who has not yet
+ * said what they want. So it opens at rest with a button, which is also what
+ * artboard 03 shows.
  */
 const MODULES = [
+  "smart-scan",
   "cleanup",
   "applications",
   "large-old",
@@ -53,7 +65,7 @@ const MODULES = [
 
 function initialModule(): Module {
   const tab = new URLSearchParams(window.location.search).get("tab");
-  return MODULES.includes(tab as Module) ? (tab as Module) : "cleanup";
+  return MODULES.includes(tab as Module) ? (tab as Module) : "smart-scan";
 }
 
 export default function App() {
@@ -66,6 +78,11 @@ export default function App() {
   // The label the Cleanup screen is showing, not a number to re-format here —
   // so a figure that is a floor arrives already saying so.
   const [reclaimable, setReclaimable] = useState<string | null>(null);
+  // Smart Scan's own headline, kept apart from Cleanup's. They are different
+  // figures — Smart Scan's excludes what its gesture never touches — so one
+  // slot holding whichever ran last would be a badge that changes meaning
+  // without changing label.
+  const [smartLabel, setSmartLabel] = useState<string | null>(null);
   const [leftoverBytes, setLeftoverBytes] = useState<number | null>(null);
   const [largeOldBytes, setLargeOldBytes] = useState<number | null>(null);
   const [measuredBytes, setMeasuredBytes] = useState<number | null>(null);
@@ -87,6 +104,17 @@ export default function App() {
         <div className="titlebar-drag" data-tauri-drag-region />
 
         <SideLabel>Clean</SideLabel>
+        {/* First, and the app's front door: the one gesture that spans the
+            others. Its badge is what a confirmed run would free, which is not
+            the same as Cleanup's total below — Smart Scan leaves the Trash
+            alone, and that difference is the point rather than a rounding. */}
+        <ModuleButton
+          icon={<SparkleIcon />}
+          name="Smart Scan"
+          badge={smartLabel ?? "—"}
+          active={active === "smart-scan"}
+          onClick={() => open("smart-scan")}
+        />
         <ModuleButton
           icon={<StackIcon />}
           name="Cleanup"
@@ -165,6 +193,11 @@ export default function App() {
       </nav>
 
       <main className="content flex min-w-0 flex-1 flex-col">
+        {visited.has("smart-scan") && (
+          <Pane show={active === "smart-scan"}>
+            <SmartScanView onTotal={setSmartLabel} onOpenModule={open} />
+          </Pane>
+        )}
         {visited.has("cleanup") && (
           <Pane show={active === "cleanup"}>
             <CleanView onReclaimable={setReclaimable} />

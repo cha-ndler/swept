@@ -852,6 +852,7 @@ instead.**
   what lets restore need **no recorded state at all** — the destination is the
   store's own parent — so no manifest ever names a path.
 - [ ] **M7 — Smart Scan** — one button, one combined result, one total.
+  *Screen shipped; one design decision open (the last sub-item).*
   **The milestone is narrower than "over M2–M6" as originally written, and that
   is a decision for the human to confirm** — the same class of change as M6's
   own reshape. Three sources are dispatchable and the rest are findings.
@@ -933,8 +934,38 @@ instead.**
     requiring a request to reference one would make the offer set a fact rather
     than a reconstruction. **It also means backend session state — lifetime,
     multiple windows, memory — so it is a design decision, not a fix.**
-  - [ ] **The screen.** *Visual → taste gate.* Artboard 05 and `ScanRing.tsx`
-    already exist.
+  - [x] **The screen.** `SmartScanView.tsx`, and it is the module the app now
+    opens on. Four decisions in it are worth keeping written down, because each
+    one is a place the screen could have quietly widened what the engine
+    offers.
+    **Large & Old is a finding here, not a selection**, so this screen never
+    sends `large_old_paths` and the ledger says `not selected` for that step —
+    which is what that outcome exists to say. The aggregator already excludes it
+    from `selected`, and the reason is one the UI must not undo: those rows need
+    a human looking at each one with the path and the age in front of them,
+    which is what its own screen is for. Rebuilding a thinner version of that
+    list inside a screen whose whole affordance is *one button* would put the
+    app's most consequential per-file decision in its least careful context.
+    **Only `smart_scan_default` categories are tickable.** The Trash is on the
+    report, in "also found", with no checkbox and a line saying why.
+    **The preview shell starts at the error state.** Every other module scans on
+    first visit, so a browser reaches the truth immediately; this one waits for
+    a button, and an idle "Ready to scan" hero outside the app would have looked
+    like a working app right up until the button did nothing — the sample-data
+    lie arriving one click later.
+    **The "also found" figure is `found − selected`**, which is exact by
+    construction and needs no new backend field. Per-source bytes for that band
+    do not exist on the DTO; the rows there carry counts and a link to the
+    module instead of a number the report never computed.
+    The offer-set property is now asserted from the side that can violate it:
+    `ux/backend-failure.spec.ts` records the dispatch request and pins that the
+    Trash is not in `categories`, `large_old_paths` is empty, `expected` names
+    three magnitudes with none inherited, and the request has exactly the seven
+    keys the backend accepts. The backend refuses each of these independently —
+    the point of the gate is that a UI change cannot start relying on that.
+    Found by rendering rather than by reading: two Chrome profiles produced two
+    rows reading *Google Chrome — GPU cache* word for word, distinguishable only
+    by their sizes. The subtitle carries the profile now.
   - **Not sources, and each for its own reason.** The **Uninstaller** takes a
     bundle id; including it means building the orphan sweep the M4 entry left
     as an open question, and it inverts the predicate that module exists to get

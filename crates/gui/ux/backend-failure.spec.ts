@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import type { ScanReport } from "../src/types";
+import type { ScanReport, SmartScanReport } from "../src/types";
 
 // Regression gate for the trust bug: when the Rust backend returns an error,
 // the app must SAY SO. It must never silently substitute fixture data — the
@@ -30,7 +30,7 @@ test("a failing scan shows the error state, not fixture data", async ({
     page,
     `Promise.reject("permission denied reading ~/Library/Caches")`,
   );
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
 
   await expect(page.getByText(/couldn.t finish/i)).toBeVisible();
   await expect(page.getByText(/permission denied/i)).toBeVisible();
@@ -62,7 +62,7 @@ test("the shipped bundle contains no fixture data", async () => {
   expect(bundles.length).toBeGreaterThan(0);
 
   // Tells must be strings that ONLY a fixture could supply. Category *ids* do
-  // not qualify: the frontend legitimately knows them (CleanView maps each id
+  // not qualify: the frontend legitimately knows them (`hues.ts` maps each id
   // to its category hue), so "xcode-derived-data" appearing in the bundle
   // proves nothing. Human-readable names, descriptions and counts do qualify —
   // they are rendered straight from the backend response and are never
@@ -159,7 +159,7 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
     };
   });
 
-  await page.goto("/");
+  await page.goto("/?tab=cleanup");
   await page.getByRole("button", { name: /review & clean/i }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
 
@@ -178,4 +178,155 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
       () => (window as never as Record<string, unknown[]>).__cleanCalls,
     ),
   ).toEqual([]);
+});
+
+// The property three rounds of backend review were spent on, asserted from the
+// side that can actually violate it: **the set the request names must be the
+// set the report offered.**
+//
+// The backend refuses each of these independently, and that is the point — this
+// gate is here so a UI change cannot start relying on those refusals. A screen
+// that sends a category the gesture never offers is broken whether or not
+// something downstream catches it.
+test("the Smart Scan request names only what the report offered", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__dispatched = [];
+    w.__TAURI_INTERNALS__ = {
+      invoke: (cmd: string, args: unknown) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        if (cmd === "smart_scan") {
+          return Promise.resolve({
+            scanned_at_ms: 1_757_000_000_000,
+            selected: { bytes: 3072, from: ["cleanup", "privacy"], incomplete: [] },
+            found: { bytes: 7168, from: ["cleanup", "privacy", "large-old"], incomplete: [] },
+            cleanup: [
+              {
+                category: "user-logs",
+                smart_scan_default: true,
+                name: "Logs",
+                description: "d",
+                count: 12,
+                bytes: 2048,
+              },
+              // On the report, never on the gesture. Ticking it would empty the
+              // Trash — the way back from every other row in the same click.
+              {
+                category: "trash",
+                smart_scan_default: false,
+                name: "Trash",
+                description: "d",
+                count: 4,
+                bytes: 4096,
+              },
+            ],
+            privacy: [
+              {
+                browser: "google-chrome",
+                browser_name: "Google Chrome",
+                profile: null,
+                class: "cache",
+                consequence: "regenerable",
+                label: "GPU cache",
+                path: "/Users/tester/Library/Application Support/Google/Chrome/Default/GPUCache",
+                member_count: 1,
+                is_dir: false,
+                size_bytes: 1024,
+                file_count: 1,
+                size_is_floor: false,
+                offerable: true,
+                bulk_grantable: true,
+                smart_scan_eligible: true,
+                withheld: null,
+                undisposable: null,
+              },
+            ],
+            large_old: {
+              items: [
+                {
+                  path: "/Users/tester/Downloads/big.iso",
+                  size_bytes: 2048,
+                  modified_ms: null,
+                },
+              ],
+              matched: 1,
+              matched_bytes: 2048,
+              examined: 10,
+              truncated: false,
+              skipped_unreadable: 0,
+              skipped_hardlinked: 0,
+              skipped_unrepresentable: 0,
+              partial: false,
+            },
+            startup: {
+              starts_at_login: 0,
+              can_act_on: 0,
+              modern_store_present: true,
+              partial: false,
+            },
+            permissions: {
+              trash_readable: true,
+              containers_readable: true,
+              safari_readable: true,
+              all_readable: true,
+            },
+          } satisfies SmartScanReport);
+        }
+        if (cmd === "dispatch_smart_scan") {
+          ((w as Record<string, unknown>).__dispatched as unknown[]).push(args);
+          return Promise.resolve({
+            steps: [],
+            completed: true,
+            bytes_freed: 0,
+            entries_freed: 0,
+            actions_refused: 0,
+          });
+        }
+        return Promise.resolve(null);
+      },
+      transformCallback: (cb: unknown) => cb,
+    };
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await page.getByRole("button", { name: "Move to Trash" }).click();
+  await expect(page.getByRole("button", { name: /scan again/i })).toBeVisible();
+
+  const calls = (await page.evaluate(
+    () => (window as never as Record<string, unknown[]>).__dispatched,
+  )) as { request: Record<string, unknown> }[];
+  expect(calls).toHaveLength(1);
+  const req = calls[0].request;
+
+  // The Trash was on the report and is not on the request.
+  expect(req.categories).toEqual(["user-logs"]);
+  // Large & Old is a finding on this screen, so the gesture never names a path
+  // from it — and the ledger says `not selected` rather than pretending it ran.
+  expect(req.large_old_paths).toEqual([]);
+  expect(req.privacy_paths).toHaveLength(1);
+  // Three magnitudes, never one, and none inherited from another source.
+  expect(req.expected).toEqual({
+    cleanup: { count: 12, bytes: 2048 },
+    privacy: { count: 1, bytes: 1024 },
+    large_old: null,
+  });
+  // `deny_unknown_fields` on the backend would refuse an extra key; the screen
+  // must not send one in the first place. `acknowledged` in particular does not
+  // exist on this request, and a screen that grew one would be routing a
+  // consequence through a sheet that never named it.
+  expect(Object.keys(req).sort()).toEqual([
+    "categories",
+    "confirm_mass_delete",
+    "expected",
+    "filters",
+    "large_old_paths",
+    "privacy_paths",
+    "scanned_at_ms",
+  ]);
+  expect(req.scanned_at_ms).toBe(1_757_000_000_000);
 });

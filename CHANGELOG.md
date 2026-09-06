@@ -6,7 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **Smart Scan has a screen, and it is the one the app opens on.** The engine
+  and its safety ceiling shipped in 0.3.0 with no way to reach them; this is the
+  way. One figure, one confirmation, and a ledger afterwards that distinguishes
+  *ran*, *refused*, *never attempted* and *nothing selected* — because "we did
+  not try" must not read like "we tried and there was nothing".
+  Large & old files and browser data that carries a consequence appear as
+  **findings**, with a button to the screen that asks about them properly: this
+  gesture never names a large file, and the ledger says so rather than implying
+  it had nothing to do. The Trash is shown and is not tickable — emptying it
+  here would remove the way back from everything else in the same click.
+
+### Changed
+- The window opens on Smart Scan rather than Cleanup, and **does not scan until
+  you press the button**. Every other module scans on first visit, which is
+  right for a screen you chose; the first screen of the app is not that.
+- Outside the desktop app, Smart Scan says so immediately instead of showing a
+  "Ready to scan" hero whose button would do nothing.
 
 ## [0.3.0] — 2026-09-05
 

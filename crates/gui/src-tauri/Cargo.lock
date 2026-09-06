@@ -2944,7 +2944,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "swept-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "libc",
  "plist",
@@ -2957,7 +2957,7 @@ dependencies = [
 
 [[package]]
 name = "swept-gui"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2969,7 +2969,7 @@ dependencies = [
 
 [[package]]
 name = "swept-gui-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "dirs 5.0.1",
  "serde",
@@ -2981,7 +2981,7 @@ dependencies = [
 
 [[package]]
 name = "swept-safety"
-version = "0.4.1"
+version = "0.5.0"
 
 [[package]]
 name = "swift-rs"

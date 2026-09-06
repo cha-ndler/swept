@@ -65,6 +65,12 @@ All notable changes to this project are documented here. The format is based on
   `Info.plist` or `tauri.conf.json` has drifted from it — the failure that
   actually survives now that there are no blanks. It runs on every invocation
   rather than only before a release.
+- The first-run screen **fits its own minimum window**. Below 700px of window
+  height the three risk points collapse to a single line, and the terms region
+  takes a smaller floor — because at the default 660px the second
+  acknowledgement was sitting under the pinned action row, so the frame showed
+  one checkbox above the words "Tick both boxes to continue". Found by looking
+  at it on a real display, after measurement had rated it acceptable.
 
 ### Changed
 - The CLI prints a one-line warranty notice to stderr before it acts for real.

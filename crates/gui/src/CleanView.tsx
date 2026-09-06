@@ -12,6 +12,7 @@ import type { ScanProgress } from "./backend";
 import {
   AccessNotice,
   Banner,
+  Group,
   InfoIcon,
   LockIcon,
   ShieldIcon,
@@ -282,7 +283,11 @@ export default function CleanView({
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  <ul className="space-y-2">
+                  {/* One card, hairline-separated. Smart Scan draws the same
+                      rows, and Space Lens, Privacy and Large & Old were already
+                      using `Group`; this screen and its own list were the last
+                      place in the app where every row carried its own border. */}
+                  <Group role="list" label="Categories">
                     {cats.map((c) => (
                       <CategoryRow
                         key={c.category}
@@ -291,7 +296,7 @@ export default function CleanView({
                         onToggle={() => toggle(c.category)}
                       />
                     ))}
-                  </ul>
+                  </Group>
                   {report && report.skipped_protected > 0 && (
                     <div className="mt-4">
                       <Banner icon={<LockIcon size={15} />}>
@@ -379,35 +384,38 @@ function CategoryRow({
   onToggle: () => void;
 }) {
   return (
-    <li>
-      <label className="flex cursor-pointer items-center gap-3 rounded-card border border-separator bg-surface px-4 py-3 transition-colors duration-fast ease-mac hover:bg-surface2">
-        <Checkbox
-          checked={checked}
-          onChange={onToggle}
-          label={`Select ${cat.name}`}
-        />
-        {/* Ties this row to its arc in the ring. */}
-        <span
-          className="h-2 w-2 flex-none rounded-full"
-          style={{ background: hue(cat.category) }}
-          aria-hidden="true"
-        />
-        <div className="min-w-0 flex-1">
-          <span className="truncate text-body font-medium">{cat.name}</span>
-          <p className="text-subtle mt-0.5 truncate text-caption">
-            {cat.description}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <span className="block font-mono text-body font-semibold tabular-nums">
-            {formatBytes(cat.bytes)}
-          </span>
-          <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
-            {cat.count.toLocaleString()} item{cat.count === 1 ? "" : "s"}
-          </span>
-        </div>
-      </label>
-    </li>
+    <label
+      role="listitem"
+      className={`flex cursor-pointer items-center gap-3 border-t border-separator px-4 py-3 transition-colors duration-fast ease-mac first:border-t-0 ${
+        checked ? "bg-accentTint" : "hover:bg-surface2"
+      }`}
+    >
+      <Checkbox
+        checked={checked}
+        onChange={onToggle}
+        label={`Select ${cat.name}`}
+      />
+      {/* Ties this row to its arc in the ring. */}
+      <span
+        className="h-2 w-2 flex-none rounded-full"
+        style={{ background: hue(cat.category) }}
+        aria-hidden="true"
+      />
+      <div className="min-w-0 flex-1">
+        <span className="truncate text-body font-medium">{cat.name}</span>
+        <p className="text-subtle mt-0.5 truncate text-caption">
+          {cat.description}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <span className="block font-mono text-body font-semibold tabular-nums">
+          {formatBytes(cat.bytes)}
+        </span>
+        <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
+          {cat.count.toLocaleString()} item{cat.count === 1 ? "" : "s"}
+        </span>
+      </div>
+    </label>
   );
 }
 

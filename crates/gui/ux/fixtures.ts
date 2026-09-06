@@ -1074,8 +1074,12 @@ export const SAMPLE_SMART_SCAN_STOPPED: SmartScanRunReport = {
     {
       source: "large-old",
       outcome: "not_attempted",
+      // Doubled on purpose, because the real backend doubles it: every verb
+      // prefixes its reason with `refused: ` and the dispatcher then wraps a
+      // stopped step as `"{source} refused: {reason}"`. The fixture said it
+      // once, which hid the artifact from the screenshot the reviewer reads.
       because:
-        "privacy refused: the selection no longer matches the disk — 4 rows were confirmed, 6 are there now. Scan again and review.",
+        "privacy refused: refused: the selection no longer matches the disk — 4 rows were confirmed, 6 are there now. Scan again and review.",
     },
   ],
   completed: false,

@@ -6,6 +6,18 @@ const STROKE = 18;
 const C = 2 * Math.PI * R;
 /** Gap between segments, in path units. Keeps adjacent hues from touching. */
 const GAP = 3;
+/**
+ * The shortest arc a real quantity may be drawn as (design/rubric.md, hard
+ * specs). Path units are pixels here — the `viewBox` is 1:1 with `SIZE`.
+ *
+ * The floor used to be 2, and it was applied *after* subtracting `GAP`, so a
+ * segment the gap had already eaten could not climb back out of it. Measured on
+ * the Smart Scan ring: 36.4 MiB of browser data next to 6.4 GiB of caches came
+ * out **1.00px wide** at full saturation — indistinguishable from a seam
+ * between two other arcs, on the one part of that selection that touches
+ * browser data.
+ */
+const MIN_ARC = 3;
 
 export type RingSegment = { id: string; bytes: number; color: string };
 
@@ -30,6 +42,8 @@ export function ScanRing({
   busy?: boolean;
 }) {
   const { value, unit } = formatBytesParts(total);
+  /** Sweeping, with nothing counted yet. There is no honest figure. */
+  const blank = busy && total === 0;
 
   // Fractions are of the total the ring is showing, so the arcs always close.
   let acc = 0;
@@ -44,7 +58,9 @@ export function ScanRing({
         color: s.color,
         // Never let a real quantity vanish: a category at a fraction of a
         // percent still gets a visible arc (design/rubric.md MUST-FIX #3).
-        len: Math.max(frac * C - GAP, 2),
+        // The floor is applied to the *drawn* length, so the inter-segment gap
+        // cannot push a segment under it.
+        len: Math.max(frac * C - GAP, MIN_ARC),
         offset,
       };
     });
@@ -54,7 +70,7 @@ export function ScanRing({
       className="relative"
       style={{ width: SIZE, height: SIZE }}
       role="img"
-      aria-label={`${value} ${unit} ${caption}`}
+      aria-label={blank ? "Scanning" : `${value} ${unit} ${caption}`}
     >
       <svg
         width={SIZE}
@@ -106,13 +122,21 @@ export function ScanRing({
       </svg>
 
       <div className="absolute inset-0 grid place-content-center text-center">
-        <p className="font-mono text-hero font-semibold tabular-nums">
-          {value}
-          <span className="text-muted ml-1 text-heroUnit font-medium tracking-normal">
-            {unit}
-          </span>
+        {/* A sweeping ring with nothing counted yet has no figure, and `0 B`
+            is not one — it is the reading of an empty disk, set at 52px, for
+            the whole of a scan that has not finished looking. Suppressed
+            rather than faked, and the `aria-label` above says the same. */}
+        {!blank && (
+          <p className="font-mono text-hero font-semibold tabular-nums">
+            {value}
+            <span className="text-muted ml-1 text-heroUnit font-medium tracking-normal">
+              {unit}
+            </span>
+          </p>
+        )}
+        <p className={`text-muted text-caption ${blank ? "" : "mt-2"}`}>
+          {blank ? "Looking" : caption}
         </p>
-        <p className="text-muted mt-2 text-caption">{caption}</p>
       </div>
     </div>
   );

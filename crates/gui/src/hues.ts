@@ -31,13 +31,17 @@ export function hue(id: string): string {
 /**
  * The hue Smart Scan gives the browser-data arc.
  *
- * Pink is Large & Old's colour elsewhere, and it is free *here* because Large &
- * Old contributes no arc to this ring — it is a finding on this screen, not a
- * selection. The alternative was `--cat-browser`, which `homebrew-downloads`
- * already owns, and two identically coloured arcs in one ring meaning two
- * different things is worse than one hue meaning different things on two
- * screens. The rule the dot obeys is local and absolute: on this screen, a
- * coloured dot means "this row is an arc in the ring above", and nothing else
- * carries one.
+ * `--cat-caches`, which is what the Privacy screen already gives a `cache` row
+ * (`CLASS_HUES` in `PrivacyView.tsx`) — and every row Smart Scan offers from
+ * that source is a cache. So the two screens say the same thing about the same
+ * bytes.
+ *
+ * It was `--cat-large` first, chosen to avoid two same-coloured arcs in one
+ * ring. That was the wrong trade: pink is Large & Old's identity throughout its
+ * own screen — its dots, its bars, its sheet — so the ring taught a key that is
+ * contradicted everywhere else in the app. Sharing the cache hue with
+ * `user-caches` is not a collision but a statement, and a true one: on this
+ * screen a coloured dot means "this row is an arc above", and two rows that are
+ * both caches earning the same colour says exactly what it looks like.
  */
-export const PRIVACY_HUE = "rgb(var(--cat-large))";
+export const PRIVACY_HUE = "rgb(var(--cat-caches))";

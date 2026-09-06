@@ -13,6 +13,11 @@ import { call, describeError, isDesktopApp } from "./backend";
 import {
   AccessNotice,
   Banner,
+  CheckIcon,
+  CrossIcon,
+  DashIcon,
+  DotIcon,
+  Group,
   InfoIcon,
   ShieldIcon,
   SparkleIcon,
@@ -343,7 +348,15 @@ export default function SmartScanView({
                   <div className="min-w-0 flex-1 space-y-6">
                     <section>
                       <SectionLabel>Included in this scan</SectionLabel>
-                      <ul className="mt-2 space-y-2" aria-label="Selected">
+                      {/* One card, hairline-separated — the idiom `Group`
+                          exists for and the shape artboard 05 draws. A border
+                          per row turns a manifest into a stack of unrelated
+                          panels. */}
+                      <Group
+                        role="list"
+                        label="Included in this scan"
+                        className="mt-2"
+                      >
                         {offered.map((c) => (
                           <CategoryRow
                             key={c.category}
@@ -360,7 +373,7 @@ export default function SmartScanView({
                             onToggle={() => toggleRow(r.path)}
                           />
                         ))}
-                      </ul>
+                      </Group>
                       {offered.length === 0 && privacyRows.length === 0 && (
                         <p className="text-muted mt-2 text-body">
                           Nothing this gesture can act on was found.
@@ -389,6 +402,12 @@ export default function SmartScanView({
                   count: cleanupCount,
                   bytes: cleanupBytes,
                   note: cleanupMass ? "a large removal" : null,
+                  // What the figure is *made of*. A person can reach this
+                  // sheet without scrolling the manifest, and "6.4 GiB from
+                  // Cleanup" does not tell them 4.1 GiB of it is Xcode.
+                  parts: chosenCats.map(
+                    (c) => `${c.name} ${formatBytes(c.bytes)}`,
+                  ),
                 }
               : null
           }
@@ -410,6 +429,20 @@ export default function SmartScanView({
                       : privacyMass
                         ? "a large removal"
                         : null,
+                  // Named, because "3 locations" could be any three places on
+                  // the disk and these are somebody's browsers.
+                  parts: Array.from(
+                    new Set(
+                      // Parenthesised, not `·`-joined: the separator between
+                      // entries is also `·`, so "Google Chrome · Profile 1 ·
+                      // Google Chrome · Profile 2" reads as four browsers.
+                      chosenRows.map((r) =>
+                        r.profile
+                          ? `${r.browser_name} (${r.profile})`
+                          : r.browser_name,
+                      ),
+                    ),
+                  ),
                 }
               : null
           }
@@ -426,6 +459,21 @@ export default function SmartScanView({
       )}
     </>
   );
+}
+
+/**
+ * A backend refusal, as a sentence rather than a log line.
+ *
+ * `refuse_and_record` prefixes every reason with `refused: `, and the
+ * dispatcher then wraps a stopped step as `"{source} refused: {reason}"` — so
+ * a `not_attempted` line arrives reading *"privacy refused: refused: the
+ * selection…"*. The doubling is an artifact of two honest layers meeting, and
+ * it belongs in the audit log, not on screen.
+ */
+function readable(msg: string): string {
+  const collapsed = msg.replace(/(?:refused:\s*)+/gi, "refused: ").trim();
+  const bare = collapsed.replace(/^refused:\s*/i, "");
+  return bare.charAt(0).toUpperCase() + bare.slice(1);
 }
 
 /** `≥` when the figure is a floor. Same string in the sidebar and the menu bar. */
@@ -445,7 +493,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function Idle({ onScan }: { onScan: () => void }) {
   return (
-    <section className="flex flex-col items-center py-8 text-center">
+    <section className="flex min-h-full flex-col items-center justify-center py-8 text-center">
       {/* 202, not 220. `ScanRing` is a 220px box whose stroke is centred on
           r=92 at width 18, so the circle it actually draws is 202 across. A
           220px ring here made the shape grow by 18px the moment a scan started
@@ -466,7 +514,7 @@ function Idle({ onScan }: { onScan: () => void }) {
       </p>
       <button
         onClick={onScan}
-        className="mt-6 rounded-control bg-accent px-6 py-2.5 text-emph font-semibold text-white"
+        className="mt-6 rounded-control bg-accent px-6 py-2 text-emph font-semibold text-white"
       >
         Scan My Mac
       </button>
@@ -488,7 +536,7 @@ function Scanning() {
   // zero that would look like a stall.
   return (
     <section
-      className="flex flex-col items-center py-6 text-center"
+      className="flex min-h-full flex-col items-center justify-center py-6 text-center"
       role="status"
       aria-busy="true"
       aria-live="polite"
@@ -516,36 +564,39 @@ function CategoryRow({
   onToggle: () => void;
 }) {
   return (
-    <li>
-      <label className="flex cursor-pointer items-center gap-3 rounded-card border border-separator bg-surface px-4 py-3 transition-colors duration-fast ease-mac hover:bg-surface2">
-        <Checkbox
-          checked={checked}
-          onChange={onToggle}
-          label={`Include ${cat.name}`}
-        />
-        {/* A coloured dot on this screen means one thing: this row is an arc in
-            the ring. Nothing in "also found" carries one. */}
-        <span
-          className="h-2 w-2 flex-none rounded-full"
-          style={{ background: hue(cat.category) }}
-          aria-hidden="true"
-        />
-        <div className="min-w-0 flex-1">
-          <span className="truncate text-body font-medium">{cat.name}</span>
-          <p className="text-subtle mt-0.5 truncate text-caption">
-            {cat.description}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <span className="block font-mono text-body font-semibold tabular-nums">
-            {formatBytes(cat.bytes)}
-          </span>
-          <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
-            {cat.count.toLocaleString()} item{cat.count === 1 ? "" : "s"}
-          </span>
-        </div>
-      </label>
-    </li>
+    <label
+      role="listitem"
+      className={`flex cursor-pointer items-center gap-3 border-t border-separator px-4 py-3 transition-colors duration-fast ease-mac first:border-t-0 ${
+        checked ? "bg-accentTint" : "hover:bg-surface2"
+      }`}
+    >
+      <Checkbox
+        checked={checked}
+        onChange={onToggle}
+        label={`Include ${cat.name}`}
+      />
+      {/* A coloured dot on this screen means one thing: this row is an arc in
+          the ring. Nothing in "also found" carries one. */}
+      <span
+        className="h-2 w-2 flex-none rounded-full"
+        style={{ background: hue(cat.category) }}
+        aria-hidden="true"
+      />
+      <div className="min-w-0 flex-1">
+        <span className="truncate text-body font-medium">{cat.name}</span>
+        <p className="text-subtle mt-0.5 truncate text-caption">
+          {cat.description}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <span className="block font-mono text-body font-semibold tabular-nums">
+          {formatBytes(cat.bytes)}
+        </span>
+        <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
+          {cat.count.toLocaleString()} item{cat.count === 1 ? "" : "s"}
+        </span>
+      </div>
+    </label>
   );
 }
 
@@ -559,44 +610,47 @@ function PrivacyLine({
   onToggle: () => void;
 }) {
   return (
-    <li>
-      <label className="flex cursor-pointer items-center gap-3 rounded-card border border-separator bg-surface px-4 py-3 transition-colors duration-fast ease-mac hover:bg-surface2">
-        <Checkbox
-          checked={checked}
-          onChange={onToggle}
-          label={`Include ${row.browser_name} ${row.label}`}
-        />
-        <span
-          className="h-2 w-2 flex-none rounded-full"
-          style={{ background: PRIVACY_HUE }}
-          aria-hidden="true"
-        />
-        <div className="min-w-0 flex-1">
-          <span className="truncate text-body font-medium">
-            {row.browser_name} — {row.label}
-          </span>
-          {/* The profile is not decoration. A browser with two profiles
-              produces two rows whose browser and label are word-for-word
-              identical and whose sizes differ — seen in the fixture the moment
-              this screen was first rendered — and without it the only way to
-              tell which is which is to guess from the number. */}
-          <p className="text-subtle mt-0.5 truncate text-caption">
-            Regenerated as you browse
-            {row.profile ? ` · ${row.profile}` : ""}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <span className="block font-mono text-body font-semibold tabular-nums">
-            {row.size_is_floor ? "≥ " : ""}
-            {formatBytes(row.size_bytes)}
-          </span>
-          <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
-            {row.file_count.toLocaleString()} file
-            {row.file_count === 1 ? "" : "s"}
-          </span>
-        </div>
-      </label>
-    </li>
+    <label
+      role="listitem"
+      className={`flex cursor-pointer items-center gap-3 border-t border-separator px-4 py-3 transition-colors duration-fast ease-mac first:border-t-0 ${
+        checked ? "bg-accentTint" : "hover:bg-surface2"
+      }`}
+    >
+      <Checkbox
+        checked={checked}
+        onChange={onToggle}
+        label={`Include ${row.browser_name} ${row.label}`}
+      />
+      <span
+        className="h-2 w-2 flex-none rounded-full"
+        style={{ background: PRIVACY_HUE }}
+        aria-hidden="true"
+      />
+      <div className="min-w-0 flex-1">
+        <span className="truncate text-body font-medium">
+          {row.browser_name} — {row.label}
+        </span>
+        {/* The profile is not decoration. A browser with two profiles
+            produces two rows whose browser and label are word-for-word
+            identical and whose sizes differ — seen in the fixture the moment
+            this screen was first rendered — and without it the only way to
+            tell which is which is to guess from the number. */}
+        <p className="text-subtle mt-0.5 truncate text-caption">
+          Regenerated as you browse
+          {row.profile ? ` · ${row.profile}` : ""}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <span className="block font-mono text-body font-semibold tabular-nums">
+          {row.size_is_floor ? "≥ " : ""}
+          {formatBytes(row.size_bytes)}
+        </span>
+        <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
+          {row.file_count.toLocaleString()} file
+          {row.file_count === 1 ? "" : "s"}
+        </span>
+      </div>
+    </label>
   );
 }
 
@@ -634,7 +688,7 @@ function AlsoFound({
           </span>
         )}
       </div>
-      <ul className="mt-2 space-y-2">
+      <Group role="list" label="Also found" className="mt-2">
         {withheld.map((c) => (
           <FindingRow
             key={c.category}
@@ -662,6 +716,7 @@ function AlsoFound({
           name="Browser data with consequences"
           detail="Cookies sign you out; history cannot be brought back"
           figure="By consequence"
+          numeric={false}
           action="Privacy"
           onOpen={() => onOpenModule?.("privacy")}
         />
@@ -678,7 +733,7 @@ function AlsoFound({
             onOpen={() => onOpenModule?.("startup")}
           />
         )}
-      </ul>
+      </Group>
     </section>
   );
 }
@@ -687,22 +742,34 @@ function FindingRow({
   name,
   detail,
   figure,
+  numeric = true,
   action,
   onOpen,
 }: {
   name: string;
   detail: string;
   figure: string;
+  /** False when `figure` is a phrase rather than a quantity. */
+  numeric?: boolean;
   action: string;
   onOpen: () => void;
 }) {
   return (
-    <li className="flex items-center gap-3 rounded-card border border-separator bg-surface px-4 py-3">
+    <div
+      role="listitem"
+      className="flex items-center gap-3 border-t border-separator px-4 py-3 first:border-t-0"
+    >
       <div className="min-w-0 flex-1">
         <span className="truncate text-body font-medium">{name}</span>
         <p className="text-subtle mt-0.5 truncate text-caption">{detail}</p>
       </div>
-      <span className="text-muted shrink-0 font-mono text-caption tabular-nums">
+      {/* A count is a figure and gets the mono column; a phrase is not, and
+          setting it in tabular numerals would be a column that cannot add up. */}
+      <span
+        className={`text-muted shrink-0 text-caption ${
+          numeric ? "font-mono tabular-nums" : ""
+        }`}
+      >
         {figure}
       </span>
       <button
@@ -711,7 +778,7 @@ function FindingRow({
       >
         {action}
       </button>
-    </li>
+    </div>
   );
 }
 
@@ -768,12 +835,18 @@ function ConfirmSheet({
   onConfirm,
   onRescan,
 }: {
-  cleanup: { count: number; bytes: number; note: string | null } | null;
+  cleanup: {
+    count: number;
+    bytes: number;
+    note: string | null;
+    parts: string[];
+  } | null;
   privacy: {
     count: number;
     files: number;
     bytes: number;
     note: string | null;
+    parts: string[];
   } | null;
   total: number;
   busy: boolean;
@@ -813,13 +886,14 @@ function ConfirmSheet({
         {/* Per source, because the backend checks per source. A combined count
             could not be checked against any single verb's rescan, and inventing
             a combined tolerance would be inventing a looser one. */}
-        <ul className="mt-4 space-y-2">
+        <Group role="list" label="What this will move" className="mt-4">
           {cleanup && (
             <SheetLine
               name="Cleanup"
               detail={`${cleanup.count.toLocaleString()} item${cleanup.count === 1 ? "" : "s"}`}
               bytes={cleanup.bytes}
               note={cleanup.note}
+              parts={cleanup.parts}
             />
           )}
           {privacy && (
@@ -828,9 +902,10 @@ function ConfirmSheet({
               detail={`${privacy.count} location${privacy.count === 1 ? "" : "s"} · ${privacy.files.toLocaleString()} file${privacy.files === 1 ? "" : "s"}`}
               bytes={privacy.bytes}
               note={privacy.note}
+              parts={privacy.parts}
             />
           )}
-        </ul>
+        </Group>
 
         <div className="mt-4 flex gap-2.5 rounded-card border border-success/25 bg-success/[.08] px-3.5 py-3">
           <span className="mt-px flex-none text-success">
@@ -857,7 +932,9 @@ function ConfirmSheet({
           </p>
         )}
 
-        {error && <p className="text-danger mt-3 text-body">{error}</p>}
+        {error && (
+          <p className="text-danger mt-3 text-body">{readable(error)}</p>
+        )}
 
         <div className="mt-6 flex justify-end gap-3">
           <button
@@ -899,29 +976,40 @@ function SheetLine({
   detail,
   bytes,
   note,
+  parts,
 }: {
   name: string;
   detail: string;
   bytes: number;
   note: string | null;
+  /** What the figure is made of, named. */
+  parts: string[];
 }) {
   return (
-    <li className="flex items-center gap-3 rounded-card border border-separator bg-surface px-3.5 py-2.5">
-      <div className="min-w-0 flex-1">
-        <span className="text-body font-medium">{name}</span>
-        {/* Not truncated. This line carries the reason a source will ask —
-            "includes 3 folders" — and an ellipsis through the middle of the
-            reason is the one place on this sheet where clipping costs the
-            reader the thing they are being asked to agree to. */}
-        <p className="text-subtle mt-0.5 font-mono text-caption leading-snug tabular-nums">
-          {detail}
-          {note ? ` · ${note}` : ""}
-        </p>
+    <div
+      role="listitem"
+      className="border-t border-separator px-3.5 py-2.5 first:border-t-0"
+    >
+      <div className="flex items-center gap-3">
+        <span className="min-w-0 flex-1 text-body font-medium">{name}</span>
+        <span className="font-mono text-body font-semibold tabular-nums">
+          {formatBytes(bytes)}
+        </span>
       </div>
-      <span className="font-mono text-body font-semibold tabular-nums">
-        {formatBytes(bytes)}
-      </span>
-    </li>
+      {/* Not truncated. This line carries the reason a source will ask —
+          "includes 3 folders" — and an ellipsis through the middle of the
+          reason is the one place on this sheet where clipping costs the reader
+          the thing they are being asked to agree to. */}
+      <p className="text-subtle mt-0.5 font-mono text-caption leading-snug tabular-nums">
+        {detail}
+        {note ? ` · ${note}` : ""}
+      </p>
+      {parts.length > 0 && (
+        <p className="text-subtle mt-1 text-caption leading-snug">
+          {parts.join(" · ")}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -964,11 +1052,16 @@ function RunLedger({
         </p>
       </div>
 
-      <ul className="mx-auto mt-6 max-w-md space-y-2">
+      {/* Its own surface rather than `Group`'s, because this list sits inside
+          an outcome panel that is already `bg-surface`. */}
+      <div
+        role="list"
+        className="mx-auto mt-6 max-w-md overflow-hidden rounded-card border border-separator bg-surface2"
+      >
         {run.steps.map((s) => (
           <StepLine key={s.source} step={s} />
         ))}
-      </ul>
+      </div>
 
       <p className="text-subtle mt-5 text-center text-caption">
         Recorded in the audit log. Recover anything from the Trash if needed.
@@ -1003,7 +1096,8 @@ function StepLine({ step }: { step: SmartScanStep }) {
     step.outcome === "executed"
       ? {
           tone: "text-success",
-          mark: "✓",
+          mark: <CheckIcon size={15} />,
+          mono: true,
           // Two numbers, not their sum, and the same two the sheet showed.
           // `executed` counts the *actions* a verb took — a privacy row is one
           // action over a whole folder — so reporting it alone says "3 items"
@@ -1013,34 +1107,47 @@ function StepLine({ step }: { step: SmartScanStep }) {
           text: `${stepFigures(step.summary)} · ${formatBytes(step.summary.bytes_freed)}${step.summary.refused > 0 ? ` · ${step.summary.refused} skipped` : ""}`,
         }
       : step.outcome === "refused"
-        ? { tone: "text-danger", mark: "✗", text: step.reason }
+        ? {
+            tone: "text-danger",
+            mark: <CrossIcon size={15} />,
+            mono: false,
+            text: readable(step.reason),
+          }
         : step.outcome === "not_attempted"
           ? {
               tone: "text-cat-trashes",
-              mark: "—",
-              text: `Not attempted: ${step.because}`,
+              mark: <DashIcon size={15} />,
+              mono: false,
+              text: `Not attempted. ${readable(step.because)}`,
             }
           : {
               tone: "text-subtle",
-              mark: "·",
+              mark: <DotIcon size={15} />,
+              mono: false,
               text: "Nothing selected from this source",
             };
 
   return (
-    <li className="flex items-start gap-3 rounded-card border border-separator bg-surface2 px-3.5 py-2.5">
-      <span
-        className={`mt-px w-3 flex-none text-center font-mono text-body ${shown.tone}`}
-        aria-hidden="true"
-      >
+    <div
+      role="listitem"
+      className="flex items-start gap-3 border-t border-separator px-3.5 py-2.5 first:border-t-0"
+    >
+      <span className={`mt-0.5 flex-none ${shown.tone}`} aria-hidden="true">
         {shown.mark}
       </span>
       <div className="min-w-0 flex-1">
         <span className="text-body font-medium">{name}</span>
-        <p className="text-muted mt-0.5 text-caption leading-relaxed">
+        {/* Figures are mono and tabular so the steps line up as a column;
+            a refusal is prose and must not be. */}
+        <p
+          className={`text-muted mt-0.5 text-caption leading-relaxed ${
+            shown.mono ? "font-mono tabular-nums" : ""
+          }`}
+        >
           {shown.text}
         </p>
       </div>
-    </li>
+    </div>
   );
 }
 

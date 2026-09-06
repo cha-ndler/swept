@@ -965,7 +965,75 @@ instead.**
     the point of the gate is that a UI change cannot start relying on that.
     Found by rendering rather than by reading: two Chrome profiles produced two
     rows reading *Google Chrome — GPU cache* word for word, distinguishable only
-    by their sizes. The subtitle carries the profile now.
+    by their sizes. The subtitle carries the profile now. And the ledger said
+    "3 items" for a step that moved 412 files, because `executed` counts a
+    verb's *actions* and a privacy row is one action over a folder.
+  - [x] **The `ux-critic` round, and the four findings that were about the
+    ring rather than about Smart Scan.** Scored ITERATE with nine must-fixes;
+    all nine are resolved or recorded below, and four of them were pre-existing
+    defects in shared components that only became visible once a second screen
+    used them.
+    **The scanning ring rendered `0 B` at 52px** for the whole of a scan — the
+    reading of an empty disk, set at hero size, and reaching assistive tech as
+    `aria-label="0 B so far"`. `ScanRing` now suppresses the figure entirely
+    while sweeping with nothing counted. The Clean screen had the same bug
+    whenever progress had not yet arrived.
+    **A 36.4 MiB arc drew 1.00px wide** beside 6.4 GiB — measured by polar
+    trace, against a 3px hard spec. The floor was 2 units *and* was applied
+    after the inter-segment gap was subtracted, so the gap could push a segment
+    under its own minimum. Both fixed.
+    **The ledger's four outcome marks were text glyphs** measuring 6×6, 5×6,
+    8×2 and 2×3 next to 36px icon tiles, and `✗` has no monospace form on this
+    system so it fell back to an italic serif shape. Four drawn icons now.
+    **Every row carried its own border**, which the rubric names as the generic
+    dashboard tell; Space Lens, Privacy and Large & Old were already using
+    `Group`. Smart Scan **and Cleanup** now do too — converting only the new
+    screen would have shipped two treatments of the same category rows.
+    Also: the confirmation sheet named sources without naming contents (a person
+    could confirm 6.4 GiB without seeing that 4.1 of it was Xcode); the browser
+    arc took Large & Old's pink, teaching a key the rest of the app
+    contradicts — it takes the cache hue now, which is what Privacy already
+    gives a cache row; and refusals reached the screen doubled
+    (`refused: refused:`) because two honest layers each add the prefix.
+  - [ ] **The gate cannot see below the fold.** `capture()` passes
+    `fullPage: true`, but the shell puts content in an `overflow-y-auto` flex
+    child — so "full page" is the viewport, and **every baseline in this repo
+    stops at 800px**. Found by `ux-critic` on this screen, where it meant the
+    whole "also found" band had no baseline at all. One scrolled capture was
+    added for that band; the general fix — capturing the scroll container, or
+    asserting on `scrollHeight` — is still open and affects every screen.
+  - [ ] **No Stop during a scan**, which artboard 04 has. Deliberately not
+    faked: the sidebar stays live so the window is not locked, and a button
+    that returned the UI to idle while four full-disk walks kept running would
+    be a claim this app does not get to make. Real cancellation is a backend
+    change — `scanner::scan` has no cancellation token — so it is a task, not a
+    polish item.
+  - [ ] **Button heights are 30 / 36 / 40 against a 28 / 34 spec**, app-wide
+    rather than here: `design/rubric.md` defines two sizes and no view uses
+    them. Wants `.btn` / `.btn-lg` component classes and one pass over every
+    view, which is why it is not folded into a module PR.
+  - [ ] **Smaller `ux-critic` items, all recorded rather than done:** the two
+    amber notices in the floor state say overlapping things in the same colour
+    and shape and should merge; the size column should split value and unit
+    into two tracks so `544.0 KiB` cannot look as long as `14.3 MiB`; at narrow
+    widths the primary action sits above the manifest it describes; the Done
+    state discards the ring instead of draining it, contradicting `ScanRing`'s
+    own docstring about continuity; `homebrew-downloads` owns `--cat-browser`
+    while Privacy uses that hue for *history*; the sheet overlay's
+    `pl-[256px]` is a magic number that happens to equal the sidebar plus its
+    padding; and artboard 05's "N protected items skipped" panel has no
+    equivalent here because `SmartScanReportDto` carries no `skipped_protected`.
+  - [ ] **A completed run leaves the other modules' figures stale.** Smart Scan
+    clears its own badge and the menu-bar label afterwards, because the numbers
+    no longer describe the disk — but a Cleanup screen visited earlier is kept
+    mounted and still shows its pre-run report. Acting on it is *safe*: every
+    verb re-scans inside the call and the drift check refuses a selection that
+    no longer matches. It is still a stale number on screen, and the fix is a
+    shell-level invalidation signal rather than anything in this screen, which
+    is why it is not folded in here. **Pre-existing and wider than Smart Scan**
+    — disposing from Large & Old already leaves the Cleanup badge behind — but
+    a gesture that spans three modules is what makes it likely rather than
+    theoretical.
   - **Not sources, and each for its own reason.** The **Uninstaller** takes a
     bundle id; including it means building the orphan sweep the M4 entry left
     as an open question, and it inverts the predicate that module exists to get

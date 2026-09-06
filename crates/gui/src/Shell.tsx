@@ -148,6 +148,49 @@ export function SparkleIcon({ size }: { size?: number }) {
   );
 }
 
+/**
+ * The four Smart Scan step outcomes, as drawn glyphs.
+ *
+ * They were `✓ ✗ — ·` in a monospace span, which measured 6×6, 5×6, 8×2 and
+ * 2×3 pixels beside 36px icon tiles on the same screen — and `✗` has no
+ * monospace form on this system, so it fell back to an italic serif shape that
+ * read as a stray letter. The ledger's only per-source signal cannot be
+ * whatever the font happens to have.
+ */
+export function CheckIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M3.2 8.4 6.3 11.5 12.8 4.8" />
+    </Icon>
+  );
+}
+
+export function CrossIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
+    </Icon>
+  );
+}
+
+/** Never attempted — a step stopped by something ahead of it. */
+export function DashIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M3.6 8h8.8" />
+    </Icon>
+  );
+}
+
+/** Nothing was chosen from this source. Present, and deliberately quiet. */
+export function DotIcon({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <circle cx="8" cy="8" r="2.4" fill="currentColor" stroke="none" />
+    </Icon>
+  );
+}
+
 export function InfoIcon({ size }: { size?: number }) {
   return (
     <Icon size={size}>

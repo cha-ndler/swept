@@ -256,6 +256,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          # Draft, because the assets arrive from two jobs and `package` is much
+          # the slower of them. Publishing on first contact would put a release
+          # page up saying "v0.4.0, download it" with the `.dmg` still
+          # compiling — on a project whose whole pitch is the download. It is
+          # published by hand once both jobs are green and the checksums check.
+          draft: true
           body_path: dist/notes.md
           files: |
             dist/swept
@@ -336,6 +342,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          # Kept draft here too: whichever job reaches the release first creates
+          # it, so if this one wins the race a `false` would publish it with no
+          # CLI binary on it.
+          draft: true
           files: |
             crates/gui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             crates/gui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg.sha256

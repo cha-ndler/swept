@@ -1207,6 +1207,13 @@ un-notarized, so macOS treats it as suspect, and there is no auto-update.
   before it was.
   **Every asset ships a `.sha256` beside it**, written with a bare filename
   inside so `shasum -c swept.sha256` works in the folder you downloaded to.
+  **A tag produces a *draft* release, published by hand.** The assets arrive
+  from two jobs and `package` is much the slower, so publishing on first contact
+  puts a page up saying "here is v0.4.0, download it" with the `.dmg` still
+  compiling — on a project whose whole pitch is the download. Both jobs pass
+  `draft: true`, because whichever reaches the release first is the one that
+  creates it. `gh release edit <tag> --draft=false` is the last step, after the
+  published checksums have been checked against the published files.
   **`package` stays off pull requests, and the reason has changed.** It used to
   be unaffordable — see the CI budget note below, now historical. It is free on
   a public repository, so the cost is *time*: after D1 that job compiles two

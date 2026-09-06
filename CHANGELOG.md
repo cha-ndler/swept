@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Fixed
+- **The `.dmg` no longer makes you click through the MIT License to open it.**
+  A `licenseFile` in the bundle config turned `LICENSE` into a mount-time
+  agreement, so the first thing a download asked for was assent to a document
+  that does not require any — and `TERMS.md` §0 says so in as many words.
+  It also put the wrong consent surface in front of the right one.
+
 ## [0.5.0] — 2026-09-06
 
 **Swept asks before it runs.** A first-launch screen that states what this

@@ -6,10 +6,46 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-Real-world hardening after dogfooding v0.2, a native-feeling shell, and the
-first two modules that look outside the cleanup allowlist.
+_Nothing yet._
+
+## [0.3.0] — 2026-09-05
+
+**The project is called Swept.** Six modules, a native shell, and the first
+release that is honest about what a scan could not see.
+
+Two of the fixes below are the reason the `v0.2.0` binaries were withdrawn
+rather than left up: that build would dispose of a browser's cookie jar without
+asking, and would tell you your Mac was tidy when it could not read your Trash.
+
+### Fixed
+- **Large & Old could dispose of a cookie jar, browsing history or a password
+  database with no acknowledgement of any kind.** `~/Library/Application
+  Support` is a discovery root, so a browser profile lives inside it and a
+  `Cookies` or `places.sqlite` file passed every check that existed. Reachable
+  through the shipped UI at its smallest size setting. A path inside a browser's
+  own data is refused now unless a *regenerable* row covers it, and the refusal
+  names the screen that does ask. Opera, Orion and Tor have no recorded layout,
+  so they are **not** covered — see the note in `ROADMAP.md` under M2. (#53)
+- **The scan could not tell an unreadable directory from an empty one.**
+  `~/.Trash` is a cleanup location *and* gated behind Full Disk Access, so
+  without that permission the whole of it was missing from a figure presented as
+  complete — and the CLI printed "Nothing to clean" over it. Reports now carry
+  what they could not read, and the Clean screen says "at least" rather than
+  claiming a total. A file that removed itself mid-scan is *not* counted as a
+  gap, or the caveat would be on nearly every real run. (#52, #59)
+- **A hard-linked file was disposable**, reporting its full size as freed while
+  the data survived under its other name. So was a socket or device node. (#58)
+- The Clean screen no longer shows a green shield reading "your Mac is tidy"
+  when the scan could not see everything. (#59)
 
 ### Added
+- **Smart Scan's engine** — one combined figure across the cleaners, Privacy and
+  Large & Old, and the dispatcher that acts on it: sequential, stopping at the
+  first refusal, and reporting per source whether it ran, refused, or was never
+  attempted. **There is no screen for it yet**, so it is not reachable from the
+  app. Every byte in its headline belongs to a row a confirmed run would
+  actually free, which is one test. (#54, #55, #58)
+- **Startup grows a verb** — the screen that reviewed login items can now set
 - **Startup grows a verb** — the screen that reviewed login items can now set
   one aside and put it back. Nothing is removed: the file moves to a folder
   inside your LaunchAgents directory, so undoing it works by hand and without
@@ -250,6 +286,7 @@ property-tested safety substrate.
 - Recursive/large removals require confirmation; audit failures abort the run.
 - Tests run only against throwaway temp-dir fixtures.
 
-[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/cha-ndler/swept/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cha-ndler/swept/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cha-ndler/swept/releases/tag/v0.1.0

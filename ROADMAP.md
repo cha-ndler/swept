@@ -1145,15 +1145,38 @@ instead.**
 
 ## v0.6 — Distribution
 
-Nobody can install this today: the repo is private, the `.dmg` is unsigned and
-un-notarized, and it is Apple Silicon only.
+The repository is public and the app is downloadable. What is left is the part
+that makes a download pleasant rather than merely possible: it is unsigned and
+un-notarized, so macOS treats it as suspect, and there is no auto-update.
 
-- [ ] **D1 — Universal binary** — CI runs a bare `cargo tauri build` with no
-  `--target`, so it inherits the Apple Silicon runner and Intel Macs get no
-  download at all. Add both targets and `--target universal-apple-darwin`.
-  **Gotcha:** that moves the bundle output to
-  `target/universal-apple-darwin/release/bundle/…`, so the upload and release
-  globs must both change or the job fails on `if-no-files-found: error`.
+- [x] **D1 — Universal binary** — CI ran a bare `cargo tauri build` with no
+  `--target`, so it inherited the Apple Silicon runner: **every binary this
+  project has published simply did not run on an Intel Mac.** Both jobs now name
+  both targets. `package` builds `--target universal-apple-darwin`; the CLI is
+  built twice and `lipo`'d, because there is no universal target for a plain
+  `cargo build`.
+  The predicted gotcha was real — `--target` moves the bundle two directories
+  deeper, to `target/universal-apple-darwin/release/bundle/…`, so the upload
+  glob, the release glob and the checksum step all had to move with it.
+  `if-no-files-found: error` is what turns getting that wrong into a red job
+  rather than a release with no `.dmg` on it.
+  **Verified by building it, not by reading the config:** `lipo -info` reports
+  both architectures in the shipped binary and in the `.app`'s, and
+  `scripts/verify.sh --bundle` now builds the same universal target CI does —
+  a local gate that bundles for this machine's architecture is not the local
+  equivalent of a job that bundles for both. It skips, loudly, if either target
+  is missing rather than quietly building one.
+  Cost, stated: the bundle job roughly doubles, since it is two compiles.
+- [ ] **The minimum macOS version is a default, not a decision.** Measured on the
+  universal bundle: the Intel slice carries `LC_VERSION_MIN_MACOSX 10.13`, the
+  Apple Silicon slice `minos 11.0` (which is the floor by construction — that
+  hardware did not exist earlier), and `Info.plist` declares `10.13`. Those are
+  coherent with each other, so nothing is *lying*; but nothing has been run on
+  anything older than current macOS either, and `minimumSystemVersion` is unset
+  in `tauri.conf.json`. Setting it would be a one-line change that **narrows**
+  who can install — the opposite of what D1 just did — so it wants a report from
+  a real old machine first rather than a guess. The README says which floor is
+  declared and that it is untested, which is the honest state until then.
 - [ ] **D2 — Signing + notarization behind optional secrets** — a `bundle.macOS`
   block (`signingIdentity` from env, `hardenedRuntime`, `entitlements.plist`,
   `minimumSystemVersion`), CI guarded by `if: secrets.APPLE_CERTIFICATE != ''`.
@@ -1168,27 +1191,47 @@ un-notarized, and it is Apple Silicon only.
   macOS 15+ walkthrough, since Apple removed the right-click → Open bypass. Add
   `LICENSE` (MIT is claimed in the README but the file doesn't exist),
   `CONTRIBUTING.md`, `SECURITY.md`, issue templates.
-- [ ] **D5 — Release hygiene** — single-source the version (currently
-  triplicated across `tauri.conf.json`, `src-tauri/Cargo.toml` and
-  `package.json` with nothing enforcing agreement); feed `CHANGELOG.md` into
-  release notes; publish checksums. *(The `[0.2.0]` link reference landed with
-  the docs refresh, #33.)*
-  **Reversed, then narrowed further.** This item used to call for running the
-  `package` job on pull requests. That is the opposite of what a private repo can
-  afford — see the CI budget note below — and packaging has now moved off pushes
-  to main as well: `release-build` and `package` run on a `v*` tag or a manual
-  `workflow_dispatch` only.
-  What that costs is worth stating rather than glossing: **`cargo tauri build` is
-  the only thing that exercises release codegen and the bundler**, and the local
-  Tauri gate is a *debug* `cargo build`, so nothing else runs it. A packaging
-  regression now surfaces when a release is cut rather than at the next merge.
-  `scripts/verify.sh --bundle` is the local equivalent and is where that coverage
-  went — run it, or dispatch the workflow, before tagging.
-  **Revisit after D6.** Public repositories get standard runners free, at which
-  point the original instinct here (package on pull requests) becomes both
-  affordable and right.
+- [x] **D5 — Release hygiene** — *the three concrete items are done; the
+  `package`-on-pull-requests question is settled below and is no longer a
+  billing question.*
+  **The version is single-sourced** (#60): `[workspace.package]` is the one
+  place it is written, the three files outside the workspace are checked against
+  it by `scripts/verify.sh`, and a mismatch fails the gate. *(The `[0.2.0]` link
+  reference landed with the docs refresh, #33.)*
+  **The release notes are the CHANGELOG section for the tag.**
+  `scripts/release-notes.sh <tag>` extracts it and CI hands it to the release as
+  `body_path`, so the release page and `CHANGELOG.md` cannot say different
+  things about the same version. It **fails** on a missing section rather than
+  producing empty notes, and `verify.sh` runs it against the current version —
+  which moves "you forgot to write the notes" from after the tag was pushed to
+  before it was.
+  **Every asset ships a `.sha256` beside it**, written with a bare filename
+  inside so `shasum -c swept.sha256` works in the folder you downloaded to.
+  **`package` stays off pull requests, and the reason has changed.** It used to
+  be unaffordable — see the CI budget note below, now historical. It is free on
+  a public repository, so the cost is *time*: after D1 that job compiles two
+  architectures, which would add roughly a quarter of an hour to every pull
+  request for a bundler that changes a few times a year.
+  What that costs is worth stating rather than glossing: **`cargo tauri build`
+  is the only thing that exercises release codegen and the bundler**, and the
+  local Tauri gate is a *debug* `cargo build`, so nothing else runs it. A
+  packaging regression surfaces when a release is cut rather than at the next
+  merge. `scripts/verify.sh --bundle` is the local equivalent — it now builds
+  the same universal target — and `workflow_dispatch` runs the real jobs on a
+  branch. **Run one of them before tagging.**
+  The version of this worth doing later is a *path-filtered* trigger: package on
+  pull requests that touch `src-tauri/`, `tauri.conf.json` or the workflow, and
+  nowhere else. Job-level path filters need an action (`dorny/paths-filter`),
+  which is a dependency this repo does not have yet.
 
-### CI budget — a real constraint, not a preference
+### CI budget — historical, kept for the reasoning
+
+**D6 ended this: Actions minutes are free on public repositories, so nothing
+below is a live constraint any more.** It is kept because the shape it produced
+is still the right shape for other reasons — a superseded run is waste at any
+price, prose cannot break a build, and a hung runner is still hung — and because
+the next person to widen a trigger should know what was measured rather than
+assumed. Where a rule was purely economic, D5 above says what replaced it.
 
 The Actions allowance was exhausted. The cause is structural: this is a
 macOS-targeted tool, GitHub bills macOS runners at **10x** on a private

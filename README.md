@@ -33,11 +33,10 @@ what it would do and acts only on explicit consent.
 Everything it plans and everything it carries out is appended to a JSON-lines
 audit log at `~/Library/Application Support/swept/audit.jsonl`.
 
-**Not here yet, stated so you do not go looking:** there is no auto-update, no
-universal binary (Apple Silicon only), and no signed build — so installing it
-still means walking macOS through an unsigned app. Those are the next things;
-see [`ROADMAP.md`](ROADMAP.md), which is candid about what is unfinished and
-why.
+**Not here yet, stated so you do not go looking:** there is no auto-update and
+no signed build — so installing it still means walking macOS through an unsigned
+app, and updating means downloading again. Those are the next things; see
+[`ROADMAP.md`](ROADMAP.md), which is candid about what is unfinished and why.
 
 <details>
 <summary>More screenshots</summary>
@@ -89,11 +88,24 @@ ID certificate exists.
 
 ### Download
 
-The latest build is on the
-[releases page](https://github.com/cha-ndler/swept/releases/latest): a `.dmg`
-for the app and a `swept` binary for the CLI. Both are **Apple Silicon only**
-and **unsigned**, so a downloaded `.dmg` needs the walkthrough below before it
-will open. Building from source avoids that entirely and is three commands.
+**[Download the latest release →](https://github.com/cha-ndler/swept/releases/latest)**
+
+Two files: a `.dmg` for the app and a `swept` binary for the CLI. Both are
+**universal** — one file that runs on Apple Silicon and on Intel — and both are
+**unsigned**, so a downloaded `.dmg` needs the walkthrough below before it will
+open. Building from source avoids that entirely and is three commands.
+
+Each download has a `.sha256` beside it. Checking one is a single command in the
+folder you downloaded to:
+
+```bash
+shasum -c swept.sha256
+```
+
+The bundle declares **macOS 10.13** as its minimum on Intel and 11.0 on Apple
+Silicon. That is the toolchain's default rather than a tested floor — it has
+only been exercised on current macOS, so if you run it on something older, an
+issue saying whether it worked would be genuinely useful.
 
 ### Build from source
 

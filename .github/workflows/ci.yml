@@ -29,9 +29,16 @@ name: ci
 # `scripts/verify.sh --bundle` is the local equivalent, and `workflow_dispatch`
 # below runs these jobs on demand. Run one of them before tagging.
 #
-# This is a private-repo economy. Public repositories get standard runners free,
-# at which point rule 3 should be revisited — and D5 in ROADMAP.md wants the
-# package job on pull requests, which only becomes affordable then.
+# **The repository is public now (D6), so none of the billing above applies any
+# more** — Actions minutes are free on public repositories, and the rules that
+# remain are kept for reasons that outlived the bill: a superseded run is still
+# waste, a hung runner is still a hung runner, and prose still cannot break a
+# build. Rule 3 is the one that was purely economic, and it now costs *time*
+# rather than money: `package` builds two architectures, so putting it on every
+# pull request would add a quarter of an hour to each. It stays on tags and
+# `workflow_dispatch` until someone decides that trade is worth making — see D5
+# in ROADMAP.md. Dispatch it by hand before tagging; nothing else runs the
+# bundler.
 #
 # `scripts/verify.sh` runs the same gates locally and is the primary oracle;
 # CI is the second opinion, not the only one.
@@ -197,31 +204,62 @@ jobs:
     permissions:
       contents: write
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Rust (stable)
+      # Both, so the binary can be `lipo`'d into one that runs on either.
+      - name: Install Rust (stable, both macOS architectures)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Build release binary
-        run: cargo build --release -p swept
+      # A bare `cargo build --release` inherits the runner's architecture, and
+      # the runner is Apple Silicon — so every binary this project has ever
+      # published simply did not run on an Intel Mac. Naming both targets and
+      # merging them is the whole of the fix.
+      - name: Build release binary (universal)
+        run: |
+          cargo build --release -p swept --target aarch64-apple-darwin
+          cargo build --release -p swept --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create -output dist/swept \
+            target/aarch64-apple-darwin/release/swept \
+            target/x86_64-apple-darwin/release/swept
+          lipo -info dist/swept
+
+      # A download nobody can verify is a download you have to take on trust.
+      # Written next to the file, with a bare filename inside, so `shasum -c
+      # swept.sha256` works in the directory you downloaded it to.
+      - name: Checksum
+        run: cd dist && shasum -a 256 swept | tee swept.sha256
 
       - name: Upload swept binary
         uses: actions/upload-artifact@v4
         with:
-          name: swept-macos
-          path: target/release/swept
+          name: swept-macos-universal
+          path: |
+            dist/swept
+            dist/swept.sha256
           if-no-files-found: error
+
+      # The release notes are the CHANGELOG section for this tag, so the two can
+      # never say different things about the same version.
+      - name: Release notes from CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./scripts/release-notes.sh "${GITHUB_REF_NAME}" | tee dist/notes.md
 
       - name: Attach binary to GitHub Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: target/release/swept
+          body_path: dist/notes.md
+          files: |
+            dist/swept
+            dist/swept.sha256
 
   package:
     # Bundle the desktop app (.app + .dmg). The heaviest job by far (release
@@ -233,7 +271,7 @@ jobs:
     needs: gui
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: write
     defaults:
@@ -242,8 +280,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Rust (stable)
+      - name: Install Rust (stable, both macOS architectures)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
 
       - name: Cache cargo (Tauri crate)
         uses: Swatinem/rust-cache@v2
@@ -272,20 +312,30 @@ jobs:
         if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version "^2" --locked
 
-      - name: Build app bundle (.app + .dmg)
-        run: cargo tauri build
+      # `--target universal-apple-darwin` moves the bundle two directories
+      # deeper — every path below has to agree with it or the upload fails on
+      # `if-no-files-found: error`, which is the intended way to find out.
+      - name: Build app bundle (.app + .dmg, universal)
+        run: cargo tauri build --target universal-apple-darwin
+
+      - name: Checksum the .dmg
+        working-directory: crates/gui/src-tauri/target/universal-apple-darwin/release/bundle/dmg
+        run: |
+          for f in *.dmg; do shasum -a 256 "$f" | tee "$f.sha256"; done
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v4
         with:
-          name: swept-gui-macos
+          name: swept-gui-macos-universal
           path: |
-            crates/gui/src-tauri/target/release/bundle/dmg/*.dmg
-            crates/gui/src-tauri/target/release/bundle/macos/*.app
+            crates/gui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            crates/gui/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
           if-no-files-found: error
 
       - name: Attach .dmg to GitHub Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: crates/gui/src-tauri/target/release/bundle/dmg/*.dmg
+          files: |
+            crates/gui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            crates/gui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg.sha256

@@ -24,12 +24,25 @@ All notable changes to this project are documented here. The format is based on
   emptying it here would remove the way back from everything else in the same
   click.
 
+- **The downloads run on Intel Macs.** Both the `.dmg` and the `swept` CLI are
+  universal binaries now. The build inherited the runner's architecture before
+  this, and the runner is Apple Silicon — so every binary this project has
+  published was Apple Silicon only, which the README said but which was a gap
+  rather than a decision.
+- **Every download has a `.sha256` beside it**, written so that `shasum -c
+  swept.sha256` works in the folder you downloaded to.
+
 ### Changed
 - The window opens on Smart Scan rather than Cleanup, and **does not scan until
   you press the button**. Every other module scans on first visit, which is
   right for a screen you chose; the first screen of the app is not that.
 - Outside the desktop app, Smart Scan says so immediately instead of showing a
   "Ready to scan" hero whose button would do nothing.
+- **A release's notes are its CHANGELOG section**, extracted by
+  `scripts/release-notes.sh` and handed to the GitHub Release, so the two cannot
+  drift. A version with no section fails the build rather than publishing empty
+  notes — and `scripts/verify.sh` checks it locally, so the failure arrives
+  before the tag rather than after it.
 
 ## [0.3.0] — 2026-09-05
 

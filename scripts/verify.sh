@@ -64,24 +64,48 @@ skip() {
 # and therefore has to be driven from its own directory.
 in_gui() { ( cd "$ROOT/crates/gui" && "$@" ); }
 
+# Can the compiler that will actually run build for this target?
+#
+# Deliberately not `rustup target list --installed`. On a machine with Homebrew's
+# rust ahead of rustup's shims on PATH — which is not exotic — rustup happily
+# reports both macOS targets installed for a toolchain that `cargo` never uses,
+# and the universal build then fails a few minutes in with "can't find crate for
+# `core`". Asking rustc where the target's libdir is asks the right compiler, and
+# is the same question the build will ask.
+MISSING_TARGET=""
+have_target() {
+  local t="$1" libdir
+  libdir=$(rustc --print target-libdir --target "$t" 2>/dev/null) || libdir=""
+  if [ -n "$libdir" ] && [ -d "$libdir" ]; then
+    return 0
+  fi
+  MISSING_TARGET="$(command -v rustc) cannot build $t — 'rustup target add $t', and check that rustup's shims come before any other rust on PATH"
+  return 1
+}
+
 # The version lives in `[workspace.package]` for the four workspace crates, but
 # the Tauri shell is outside the workspace and cannot inherit it — so three files
 # carry it by hand. Nothing made them agree until this, and a `.dmg` named for a
 # version the binary inside does not report is the kind of mismatch nobody
 # notices until a user does.
 versions_agree() {
-  local ws tauri conf pkg
+  local ws tauri conf pkg lock
   ws=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -1)
   tauri=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/crates/gui/src-tauri/Cargo.toml" | head -1)
   conf=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' "$ROOT/crates/gui/src-tauri/tauri.conf.json" | head -1)
   pkg=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' "$ROOT/crates/gui/package.json" | head -1)
+  # `npm ci` refuses a lockfile that disagrees with its package.json, so this
+  # one is not cosmetic: forgetting it turns a version bump into a red CI job
+  # on a file nobody thinks of as carrying a version.
+  lock=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' "$ROOT/crates/gui/package-lock.json" | head -1)
 
   if [ -z "$ws" ]; then
     echo "no version in [workspace.package] — the single source is gone" >&2
     return 1
   fi
   local bad=0
-  for pair in "src-tauri/Cargo.toml:$tauri" "tauri.conf.json:$conf" "package.json:$pkg"; do
+  for pair in "src-tauri/Cargo.toml:$tauri" "tauri.conf.json:$conf" "package.json:$pkg" \
+              "package-lock.json:$lock"; do
     if [ "${pair#*:}" != "$ws" ]; then
       echo "version mismatch: ${pair%%:*} is ${pair#*:}, workspace is $ws" >&2
       bad=1
@@ -89,6 +113,20 @@ versions_agree() {
   done
   [ "$bad" = 0 ] && echo "OK: every version reads $ws."
   return "$bad"
+}
+
+# The release notes are the CHANGELOG section for the tag, extracted by
+# `scripts/release-notes.sh` and handed to the GitHub Release — so a version
+# with no section produces a release with no notes. That failure used to happen
+# at tag time, after the tag was already pushed; this moves it to the local gate
+# where it costs nothing to fix.
+changelog_has_version() {
+  local ws
+  ws=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -1)
+  if ! "$ROOT/scripts/release-notes.sh" "$ws" >/dev/null; then
+    return 1
+  fi
+  echo "OK: CHANGELOG.md has notes for $ws ($("$ROOT/scripts/release-notes.sh" "$ws" | wc -l | tr -d ' ') lines)."
 }
 
 # The safety guard CI enforces, kept here so it fails before a push rather than
@@ -110,6 +148,7 @@ if [ "$WANT_RUST" = 1 ]; then
   step "cargo test --workspace"      cargo test --workspace
   step "no real \$HOME in tests"     no_real_home
   step "versions agree"            versions_agree
+  step "changelog has the version" changelog_has_version
 fi
 
 if [ "$WANT_GUI" = 1 ]; then
@@ -126,12 +165,21 @@ if [ "$WANT_GUI" = 1 ]; then
     # `.app`/`.dmg` bundler are the two things CI stopped running on every
     # merge, so this is where that coverage went — deliberately opt-in, because
     # it is minutes rather than seconds.
+    #
+    # `--target universal-apple-darwin` because that is what a tag builds, and a
+    # local gate that builds something else is not the local equivalent of
+    # anything. It needs both toolchain targets installed; without them, say so
+    # rather than quietly bundling for this machine's architecture only.
     if [ "$WANT_BUNDLE" = 1 ]; then
-      if command -v cargo-tauri >/dev/null 2>&1; then
-        step "tauri bundle (.app + .dmg)" in_gui cargo tauri build
-      else
-        skip "tauri bundle (.app + .dmg)" \
+      if ! command -v cargo-tauri >/dev/null 2>&1; then
+        skip "tauri bundle (.app + .dmg, universal)" \
              "cargo-tauri not installed — cargo install tauri-cli --version '^2' --locked"
+      elif ! have_target aarch64-apple-darwin || ! have_target x86_64-apple-darwin; then
+        skip "tauri bundle (.app + .dmg, universal)" \
+             "$MISSING_TARGET"
+      else
+        step "tauri bundle (.app + .dmg, universal)" \
+             in_gui cargo tauri build --target universal-apple-darwin
       fi
     fi
   fi

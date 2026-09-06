@@ -454,7 +454,15 @@ test("nothing is pre-selected, and the action stays disabled until it is", async
   ).toBeVisible();
 
   // The safety claim, asserted rather than described: no row arrives ticked.
+  //
+  // `count()` does not retry, and the heading above renders before the scan
+  // resolves — so counting here was really asking "had the rows arrived within
+  // whatever time the runner happened to take", and on a loaded CI runner the
+  // answer was no. Waiting for the first row is the retrying assertion that
+  // makes the count meaningful. The `toBeGreaterThan(0)` guard is what turned
+  // that into a red run rather than a test that passed over an empty list.
   const boxes = page.getByRole("checkbox");
+  await expect(boxes.first()).toBeVisible();
   const n = await boxes.count();
   expect(n).toBeGreaterThan(0);
   for (let i = 0; i < n; i++) {

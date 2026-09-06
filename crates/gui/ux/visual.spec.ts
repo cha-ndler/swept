@@ -317,9 +317,23 @@ test("scan loading", async ({ page }, testInfo) => {
 
   // Drive a real progress reading so the snapshot shows the state a user
   // actually sees mid-scan, not just the initial frame.
+  //
+  // `__emit` only exists once the view has subscribed, and the mock installs it
+  // from inside the `plugin:event|listen` handler. Waiting for the spinner is
+  // NOT the same wait: the status role and the subscription are independent
+  // async paths, so the emit could land first and go nowhere.
+  //
+  // This used to read `w.__emit?.({...})`, and the optional call is what made
+  // the race hard to see — losing the event was silent, so the test failed
+  // several lines later on a missing string with no hint that nothing had been
+  // emitted at all. It flaked on CI exactly this way. Wait for the hook, then
+  // call it unconditionally so a genuine absence throws where it happens.
+  await page.waitForFunction(
+    () => typeof (window as unknown as { __emit?: unknown }).__emit === "function",
+  );
   await page.evaluate(() => {
-    const w = window as unknown as { __emit?: (p: unknown) => void };
-    w.__emit?.({ examined: 48231, planned: 46012, bytes: 7_600_000_000 });
+    const w = window as unknown as { __emit: (p: unknown) => void };
+    w.__emit({ examined: 48231, planned: 46012, bytes: 7_600_000_000 });
   });
   await expect(page.getByText(/48,231 files examined/)).toBeVisible();
 

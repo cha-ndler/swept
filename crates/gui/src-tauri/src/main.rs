@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter};
 
 use swept_core::loginitems::LoginItem;
 use swept_core::report::ScanReport;
+use swept_gui_core::acceptance::{self, AcceptanceStatus};
 use swept_gui_core::smartscan::{SmartScanReportDto, SmartScanRequest, SmartScanRunReport};
 use swept_gui_core::{
     self as gui, Acknowledged, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto,
@@ -369,10 +370,67 @@ fn main() {
             put_back,
             space_lens,
             smart_scan,
-            dispatch_smart_scan
+            dispatch_smart_scan,
+            terms_status,
+            terms_text,
+            accept_terms,
+            quit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running Swept");
+}
+
+/// Whether the Terms of Use this build carries have already been accepted.
+///
+/// Read-only and never fails: an absent, unreadable or stale record all report
+/// as not accepted, so the shell asks again rather than assuming consent it
+/// cannot see. See `swept_gui_core::acceptance`.
+#[tauri::command]
+async fn terms_status() -> Result<AcceptanceStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let home = gui::default_home().map_err(|e| e.to_string())?;
+        Ok(acceptance::status(&home))
+    })
+    .await
+    .map_err(|e| format!("terms-status task failed: {e}"))?
+}
+
+/// The full text of the terms, compiled into this binary.
+///
+/// Served from the binary rather than fetched, because the app has no network
+/// code and grants no general URL-opening permission — and because the text a
+/// build shows must be the text that build was made from.
+#[tauri::command]
+fn terms_text() -> &'static str {
+    acceptance::terms_text()
+}
+
+/// Quit the app.
+///
+/// Exists only for the terms gate: declining the terms means not running Swept,
+/// and offering that as a real button is more honest than a modal with no way
+/// out. Takes no arguments and can do nothing else.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+/// Record that the user accepted the terms.
+///
+/// **A write failure is a hard error**, and the frontend must not proceed on
+/// one. The same rule the audit log follows: if consent cannot be recorded, we
+/// have no evidence it was given.
+#[tauri::command]
+async fn accept_terms() -> Result<AcceptanceStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let home = gui::default_home().map_err(|e| e.to_string())?;
+        acceptance::accept(&home, env!("CARGO_PKG_VERSION")).map_err(|e| {
+            format!("could not record your acceptance, so nothing will proceed: {e}")
+        })?;
+        Ok(acceptance::status(&home))
+    })
+    .await
+    .map_err(|e| format!("accept-terms task failed: {e}"))?
 }
 
 // ---------------------------------------------------------------------------

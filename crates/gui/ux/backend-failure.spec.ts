@@ -16,6 +16,17 @@ async function stubBackend(page: Page, behavior: string) {
       invoke: (cmd) => {
         if (cmd === "plugin:event|listen") return Promise.resolve(1);
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The harness stands in for a user who has already accepted the
+        // terms, the same way the perms fixture stands in for one who granted
+        // full disk access — otherwise every screenshot below would be of the
+        // first-run sheet. The gate itself is captured by its own test.
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
         return ${behavior};
       },
       transformCallback: (cb) => cb,
@@ -117,6 +128,17 @@ test("a failed re-scan closes the confirmation instead of emptying it", async ({
       invoke: (cmd: string, args: unknown) => {
         if (cmd === "plugin:event|listen") return Promise.resolve(1);
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The harness stands in for a user who has already accepted the
+        // terms, the same way the perms fixture stands in for one who granted
+        // full disk access — otherwise every screenshot below would be of the
+        // first-run sheet. The gate itself is captured by its own test.
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
         if (cmd === "scan") {
           scans += 1;
           if (scans > 1) return Promise.reject("permission denied");
@@ -198,6 +220,17 @@ test("the Smart Scan request names only what the report offered", async ({
       invoke: (cmd: string, args: unknown) => {
         if (cmd === "plugin:event|listen") return Promise.resolve(1);
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The harness stands in for a user who has already accepted the
+        // terms, the same way the perms fixture stands in for one who granted
+        // full disk access — otherwise every screenshot below would be of the
+        // first-run sheet. The gate itself is captured by its own test.
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
         if (cmd === "smart_scan") {
           return Promise.resolve({
             scanned_at_ms: 1_757_000_000_000,

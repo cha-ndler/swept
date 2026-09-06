@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened Runtime entitlements for the Developer ID build: DELIBERATELY EMPTY.
+
+  Notarization requires the Hardened Runtime, and the Hardened Runtime blocks
+  things by default. Swept needs none of them unblocked. This file exists rather
+  than being absent so that the reasoning has a home, and so that a future
+  sidecar has somewhere to declare its needs -- not because anything is granted.
+
+  Keep it empty unless a signed build proves otherwise. Every entitlement below
+  was considered and rejected on evidence.
+
+  com.apple.security.cs.allow-jit
+      NOT NEEDED, and this is the one that gets copied in by mistake most
+      often. JavaScriptCore's JIT does not run in this process. It runs in
+      `com.apple.WebKit.WebContent.xpc`, which:
+
+        * carries `com.apple.security.cs.allow-jit` itself, and is signed by
+          Apple with `TeamIdentifier=not set` -- verified with
+          `codesign -d --entitlements :-` against the system framework; and
+        * runs with PPID 1. launchd spawns it as an XPC service, so it is not
+          forked from us and cannot inherit our signature or entitlements at
+          all. Apple's Hardened Runtime documentation grants inheritance only
+          to "shared libraries, frameworks, and in-process plug-ins".
+
+      Verified empirically as well as by inspection: a minimal WKWebView app
+      signed `--options runtime` with zero entitlements launches, spawns
+      WebContent and executes JavaScript. A `mmap(MAP_JIT)` control probe on
+      the same machine confirmed the runtime really was denying in-process JIT,
+      so that was a live test rather than a vacuous one.
+
+      Electron genuinely does need this, because it bundles V8 and JITs
+      in-process. That is where the advice comes from, and it does not transfer
+      to a Tauri app which bundles no JS engine (no Contents/Frameworks).
+
+      It would become necessary if Swept ever ships a sidecar that JITs --
+      Python/PyInstaller, Node, .NET, a JVM -- or calls JavaScriptCore itself.
+
+  com.apple.security.cs.allow-unsigned-executable-memory
+      NOT NEEDED, and never alongside allow-jit: Apple's own DTS guidance is
+      that including both is pointless, because this one permits MAP_JIT "and
+      more". It is strictly broader and blunter. If something ever does need
+      JIT, reach for allow-jit, not this.
+
+  com.apple.security.cs.disable-library-validation
+      NOT NEEDED. Lets the process load libraries signed by anyone. Swept loads
+      no plug-ins and no external binaries. Widely cargo-culted into Tauri
+      entitlement files; do not copy it in without a crash log that names
+      library validation as the cause.
+
+  com.apple.security.app-sandbox
+      IMPOSSIBLE, not merely unnecessary. Swept reads other applications'
+      caches, ~/Library/Logs, browser profiles and LaunchAgents. No sandbox
+      entitlement makes that possible, which is why this app is not on the Mac
+      App Store at all (docs/LEGAL.md). Adding it would break every scanner.
+
+  com.apple.security.automation.apple-events
+      NOT NEEDED, for a subtler reason than the others, and the reasoning is
+      worth keeping because the obvious reading of the code is wrong.
+
+      Swept DOES cause Apple Events to be sent. The `trash` crate's macOS
+      default is `DeleteMethod::Finder`, not NSFileManager -- verified in the
+      vendored source of the pinned 5.2.6, where `DeleteMethod::new()` returns
+      `Finder` -- and nothing in this repository calls `set_delete_method`. So
+      disposal shells out to `osascript` with a `tell application "Finder"`
+      script.
+
+      The entitlement is still not needed, because the Hardened Runtime checks
+      entitlements per PROCESS, and those events are sent by
+      `/usr/bin/osascript` -- a separate, Apple-signed executable that is not
+      itself hardened. Adding the entitlement here would gate nothing that is
+      currently ungated.
+
+      What those events DO require is TCC consent, attributed to the
+      responsible process -- us -- which is why `Info.plist` carries
+      `NSAppleEventsUsageDescription`. Without that string the user gets an
+      unexplained "Swept wants to control Finder" prompt.
+
+  ASCII only: Apple's documentation says the entitlements file must be
+  ASCII-encoded. Nothing here should acquire a smart quote or an em dash.
+-->
+<plist version="1.0">
+<dict/>
+</plist>

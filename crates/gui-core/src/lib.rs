@@ -35,6 +35,7 @@ use swept_core::uninstall::{
     UninstallConfig, UninstallError,
 };
 
+pub mod acceptance;
 pub mod smartscan;
 
 /// Scan/clean filters as the frontend sends them.

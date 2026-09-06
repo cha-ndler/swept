@@ -33,10 +33,13 @@ what it would do and acts only on explicit consent.
 Everything it plans and everything it carries out is appended to a JSON-lines
 audit log at `~/Library/Application Support/swept/audit.jsonl`.
 
-**Not here yet, stated so you do not go looking:** there is no auto-update and
-no signed build — so installing it still means walking macOS through an unsigned
-app, and updating means downloading again. Those are the next things; see
-[`ROADMAP.md`](ROADMAP.md), which is candid about what is unfinished and why.
+**Not here yet, stated so you do not go looking:** there is no auto-update, so
+updating means downloading again — and the published `.dmg` is not signed.
+Signing and notarization are wired up and wait only on a Developer ID
+certificate; until one exists, installing still means walking macOS through an
+unsigned app, and [`docs/RELEASING.md`](docs/RELEASING.md) is the sequence for
+getting there. Those are the next things; see [`ROADMAP.md`](ROADMAP.md), which
+is candid about what is unfinished and why.
 
 <details>
 <summary>More screenshots</summary>
@@ -80,11 +83,13 @@ real thing is a screenshot of somebody's actual files.
 
 ## Install
 
-**There is no signed release yet, and nothing is wired up for one.** There is
-no `bundle.macOS` block, no entitlements file and no signing step in CI, so
-anything you download or build is unsigned and macOS will say so. Adding the
-signing path is a roadmap item (D2) that only becomes useful once a Developer
-ID certificate exists.
+**There is no signed release yet, but everything for one is wired up.** The
+`bundle.macOS` block, the entitlements file and the signing + notarization
+steps in CI are all in place and inert: with no Developer ID certificate in the
+repository secrets they are skipped, and anything you download or build is
+unsigned, so macOS will say so. The remaining step is the certificate itself —
+[`docs/RELEASING.md`](docs/RELEASING.md) is the sequence, and it starts with
+forming the entity rather than with anything in this repository.
 
 ### Download
 
@@ -261,6 +266,29 @@ than the rest:
 - Any diff that adds or changes deletion, move, or overwrite logic gets an
   adversarial safety review before it is opened.
 
-## License
+## License, terms and privacy
 
-MIT — see [`LICENSE`](LICENSE).
+The **source** is MIT — see [`LICENSE`](LICENSE). Do what you like with it.
+
+The **official signed builds** additionally carry
+[`TERMS.md`](TERMS.md), which the app presents on first launch and asks you to
+accept. They do not restrict anything the MIT licence grants you; they state,
+specifically and where you will actually read it, that this program removes
+files, that it comes with no warranty, and that its author is not liable for
+lost data. Swept records that acceptance on your own Mac and sends it nowhere.
+
+- [`TERMS.md`](TERMS.md) — the terms, in full. Sections 4 and 5 are the ones
+  that matter.
+- [`PRIVACY.md`](PRIVACY.md) — short version: it collects nothing, sends
+  nothing, and has no network code at all.
+- [`NOTICE.md`](NOTICE.md) — trademarks and third-party licences.
+- [`docs/LEGAL.md`](docs/LEGAL.md) — why it is arranged this way, including why
+  Swept is not and cannot be on the Mac App Store.
+
+**Back up before you use this.** Time Machine, or any backup you have actually
+restored from once. Swept previews everything and moves files to the Trash
+rather than removing them outright, but neither of those is a backup.
+
+Swept is an independent project and is **not affiliated with, endorsed by, or
+sponsored by** Apple Inc. or MacPaw Inc. CleanMyMac is a trademark of MacPaw
+Inc., used here only to say what kind of program this is.

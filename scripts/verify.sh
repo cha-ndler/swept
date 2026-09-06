@@ -142,6 +142,45 @@ no_real_home() {
   echo "OK: no test resolves the real home directory."
 }
 
+# The legal documents carry two placeholders until the entity exists —
+# `__LEGAL_ENTITY__` and `__GOVERNING_STATE__`. Shipping a build whose Terms of
+# Use name a blank is worse than shipping none: it reads as boilerplate nobody
+# meant, which is exactly the impression the whole assent layer exists to avoid.
+# See docs/LEGAL.md, "The open questions".
+no_legal_placeholders() {
+  # The three files that name the placeholders *as* placeholders are exempt:
+  # this gate, the document explaining them, and the instructions for filling
+  # them in. Everything else naming one is a document that would ship with a
+  # blank where a company should be.
+  if rg -n '__LEGAL_ENTITY__|__GOVERNING_STATE__' \
+        --glob '!scripts/verify.sh' \
+        --glob '!docs/LEGAL.md' \
+        --glob '!docs/RELEASING.md' "$ROOT"; then
+    echo "Legal placeholders are still present. Fill them in before releasing." >&2
+    return 1
+  fi
+  echo "OK: no legal placeholders remain."
+}
+
+# `acceptance::TERMS_VERSION` is what the app records the user as having
+# accepted, and TERMS.md is what it shows them. If those two disagree the record
+# names a document that was never presented, which makes the record worthless.
+# Same reasoning as `versions_agree`, and the same fix: assert it.
+terms_version_agrees() {
+  doc=$(sed -n 's/^\*\*Version \([0-9][^.]*\.[0-9]*\)\.\*\*.*/\1/p' "$ROOT/TERMS.md" | head -1)
+  code=$(sed -n 's/^pub const TERMS_VERSION: &str = "\(.*\)";$/\1/p' \
+         "$ROOT/crates/gui-core/src/acceptance.rs" | head -1)
+  if [ -z "$doc" ]; then
+    echo "no '**Version X.Y.**' line in TERMS.md — the gate cannot read it" >&2
+    return 1
+  fi
+  if [ "$doc" != "$code" ]; then
+    echo "terms version mismatch: TERMS.md is $doc, acceptance.rs is $code" >&2
+    return 1
+  fi
+  echo "OK: terms version reads $doc in both places."
+}
+
 if [ "$WANT_RUST" = 1 ]; then
   step "cargo fmt --all --check"     cargo fmt --all --check
   step "cargo clippy -D warnings"    cargo clippy --workspace --all-targets -- -D warnings
@@ -149,6 +188,17 @@ if [ "$WANT_RUST" = 1 ]; then
   step "no real \$HOME in tests"     no_real_home
   step "versions agree"            versions_agree
   step "changelog has the version" changelog_has_version
+  step "terms version agrees"      terms_version_agrees
+  # Release-only. Placeholders are expected while the entity is being formed;
+  # what must never happen is a *bundle* carrying them. `--bundle` is already
+  # the "before you tag" gate, so this rides along with it rather than failing
+  # the everyday loop over work that is legitimately unfinished.
+  if [ "$WANT_BUNDLE" = 1 ]; then
+    step "no legal placeholders"   no_legal_placeholders
+  else
+    skip "no legal placeholders" \
+         "release-only — run with --bundle before tagging"
+  fi
 fi
 
 if [ "$WANT_GUI" = 1 ]; then

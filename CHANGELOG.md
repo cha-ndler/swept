@@ -6,6 +6,53 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Swept asks you to accept its terms before it will run.** A first-launch
+  screen stating, in three sentences before any legal text, that this program
+  removes files, that it carries no warranty, and that you should have a backup.
+  Two separate boxes — one for the terms, one for the backup — neither
+  pre-ticked, and no way past the screen except through it or Quit. The same
+  shape as the Privacy screen's per-consequence acknowledgements, for the same
+  reason: a tick nobody made is not an acknowledgement.
+  The terms are **compiled into the binary** and shown in full on that screen
+  rather than linked, so the text you are shown is necessarily the text the
+  build was made from — and the app still needs no network and no
+  URL-opening permission. Your acceptance is written to
+  `~/Library/Application Support/swept/acceptance.json`, beside the audit log,
+  and goes nowhere else. Everything about it fails closed: absent, unreadable,
+  malformed or recorded against different terms all mean *ask again*.
+- **`TERMS.md`, `PRIVACY.md` and `NOTICE.md`**, with `docs/LEGAL.md` recording
+  why they are arranged this way — including why MIT was kept rather than
+  swapping to Apache-2.0, and why the Mac App Store was never available to a
+  tool that has to read other applications' caches.
+- **Signing and notarization, behind optional secrets.** `tauri.conf.json` gains
+  a `bundle.macOS` block (Hardened Runtime plus an entitlements file that is
+  **deliberately empty** -- every entitlement was considered and rejected on
+  evidence, `allow-jit` included: JavaScriptCore runs in Apple's own WebContent
+  XPC service, which carries that entitlement itself and is a child of launchd,
+  so nothing could inherit ours), and
+  the `package` job signs, notarizes and then **verifies** — `codesign`,
+  `spctl` and `stapler validate`, because `cargo tauri build` reports success
+  whether or not it signed anything. With no secrets set it builds the same
+  unsigned `.dmg` as before, so forks are unaffected. Releases now carry a
+  `SHA256SUMS.txt`. `docs/RELEASING.md` is the sequence, entity first.
+- **Two new gates in `scripts/verify.sh`**: the terms version in `TERMS.md` must
+  match `acceptance::TERMS_VERSION`, and `--bundle` refuses to pass while the
+  legal documents still contain entity placeholders.
+
+- The first-run screen renders the terms as a **document** rather than as raw
+  Markdown source. A ~150-line renderer with no dependency and no
+  `dangerouslySetInnerHTML`, covering exactly what `TERMS.md` uses; anything it
+  does not recognise falls through as text, because silently dropping a clause
+  from a contract is the one failure it must not have. Links render as their
+  label: the app grants no URL-opening permission, and a control that looks
+  clickable and is not would be a small lie.
+
+### Changed
+- The CLI prints a one-line warranty notice to stderr before it acts for real.
+  A notice rather than a prompt: `--execute` is already an affirmative act, and
+  a question here would break the scripted use the CLI exists for.
+
 ## [0.4.1] — 2026-09-06
 
 **A safety fix, shipped on its own rather than held for the next feature.** The

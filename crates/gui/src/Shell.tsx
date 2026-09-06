@@ -328,17 +328,24 @@ export function AccessNotice({ perms }: { perms: Permissions }) {
 }
 
 /**
- * Reversibility. An arrow curving back on itself — the Trash's "put back",
- * not a bin. The three icons below exist so the first-run terms screen can
- * say three *different* things: repeating one warning glyph three times reads
- * as three alarms for what is a single advisory, and it also spends the
- * circled-`!` that artboard-06 reserves for the permanent-erase callout.
+ * Irreversibility. An arrow curving back on itself, struck through.
+ *
+ * The slash is the whole point: a plain undo arrow beside "Removal is not
+ * reliably reversible" states the opposite of the sentence it labels, which is
+ * worse than no icon at all on a screen whose subject is what you cannot take
+ * back.
+ *
+ * This and the two below exist so the first-run terms screen can say three
+ * *different* things. Repeating one warning glyph three times reads as three
+ * alarms for a single advisory, and it spends the circled-`!` that
+ * artboard-06 reserves for the permanent-erase callout.
  */
-export function UndoIcon({ size }: { size?: number }) {
+export function NoUndoIcon({ size }: { size?: number }) {
   return (
     <Icon size={size}>
       <path d="M2.6 6.4h6.6a3.6 3.6 0 0 1 0 7.2H5.4" />
       <path d="M5.2 3.2 2.2 6.4l3 3.2" />
+      <path d="M13.4 2.6 2.6 13.4" />
     </Icon>
   );
 }

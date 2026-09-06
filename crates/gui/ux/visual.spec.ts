@@ -1607,6 +1607,12 @@ test("terms gate", async ({ page }, testInfo) => {
 // is the same bug `SmartScanView`'s confirm sheet already carries a comment
 // about.
 test("terms gate at the minimum window size", async ({ page }, testInfo) => {
+  // This case sets its own viewport, so both projects rendered byte-identical
+  // baselines. One is enough; the second was a second copy of the same picture.
+  test.skip(
+    testInfo.project.name !== "desktop",
+    "viewport is fixed here, so the narrow project adds no coverage",
+  );
   await page.setViewportSize({ width: 860, height: 560 });
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, unknown>;
@@ -1654,6 +1660,12 @@ test("terms gate at the minimum window size", async ({ page }, testInfo) => {
     expect(box!.y).toBeGreaterThanOrEqual(0);
   }
 
+  // Captured at rest, before any tick. `.check()` scrolls the sheet to bring
+  // its target into view, so capturing afterwards recorded a scrolled frame
+  // with the title and first risk point off the top — again not the state a
+  // first-run user opens on.
+  await capture(page, "terms-gate-min-window", testInfo.project.name);
+
   // And the checkboxes must still be reachable rather than overlapped by the
   // terms region above them.
   await page
@@ -1661,6 +1673,4 @@ test("terms gate at the minimum window size", async ({ page }, testInfo) => {
     .check();
   await page.getByRole("checkbox", { name: /keep a current backup/i }).check();
   await expect(accept).toBeEnabled();
-
-  await capture(page, "terms-gate-min-window", testInfo.project.name);
 });

@@ -100,17 +100,28 @@ function blocks(source: string): ReactNode[] {
 
     if (lines.some((l) => /^\s*(?:[-*]|\d+\.)\s+/.test(l))) {
       const items = groupListItems(lines);
+      // Numbered when the source is numbered. In a contract the ordinals are
+      // not decoration — `TERMS.md` §2 enumerates five acknowledgements, and
+      // rendering them as anonymous bullets loses the only handle anyone has
+      // for referring to one of them.
+      const ordered = /^\s*\d+\.\s+/.test(lines.find((l) => l.trim()) ?? "");
+      const List = ordered ? "ol" : "ul";
       out.push(
-        <ul key={key} className="my-2 space-y-1.5 pl-4">
+        <List
+          key={key}
+          className={`my-2 space-y-1.5 pl-5 ${
+            ordered ? "list-decimal" : "list-disc"
+          }`}
+        >
           {items.map((item, n) => (
             <li
               key={n}
-              className="text-muted list-disc text-caption leading-relaxed marker:text-subtle"
+              className="text-muted text-caption leading-relaxed marker:text-subtle"
             >
               {inline(item)}
             </li>
           ))}
-        </ul>,
+        </List>,
       );
       return;
     }

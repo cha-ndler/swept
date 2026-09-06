@@ -6,8 +6,8 @@ import {
   ClockIcon,
   DocumentIcon,
   InfoIcon,
+  NoUndoIcon,
   ShieldIcon,
-  UndoIcon,
 } from "./Shell";
 import TermsMarkdown from "./TermsMarkdown";
 
@@ -68,6 +68,11 @@ export default function TermsGate({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const doc = useRef<HTMLDivElement>(null);
+  const sheet = useRef<HTMLDivElement>(null);
+  // Whether the sheet has content under the pinned action row. Drives the only
+  // cue that there is more below it: the row is opaque, so without one the
+  // form simply appears to end at the hairline.
+  const [scrollable, setScrollable] = useState(false);
 
   useEffect(() => {
     if (!isDesktopApp()) {
@@ -128,6 +133,16 @@ export default function TermsGate({ children }: { children: ReactNode }) {
     if (status && !status.accepted) doc.current?.focus();
   }, [status]);
 
+  useEffect(() => {
+    const el = sheet.current;
+    if (!el) return;
+    const update = () => setScrollable(el.scrollHeight > el.clientHeight + 1);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [status, text]);
+
   if (status === null) return null;
   if (status.accepted) return <>{children}</>;
 
@@ -166,7 +181,10 @@ export default function TermsGate({ children }: { children: ReactNode }) {
       />
 
       {/* Caps and scrolls rather than growing — see the layout note above. */}
-      <div className="sheet-in flex max-h-[calc(100vh-3rem)] w-full max-w-xl flex-col overflow-y-auto rounded-panel border border-border bg-surface3 p-6 shadow-e3">
+      <div
+        ref={sheet}
+        className="sheet-in flex max-h-[calc(100vh-3rem)] w-full max-w-xl flex-col overflow-y-auto rounded-panel border border-border bg-surface3 p-6 pb-0 shadow-e3"
+      >
         <div className="flex flex-none items-start gap-3">
           <span className="grid h-9 w-9 flex-none place-items-center rounded-card bg-warning/[.16] text-warning">
             <InfoIcon size={18} />
@@ -201,7 +219,7 @@ export default function TermsGate({ children }: { children: ReactNode }) {
             for what is one advisory, and spend the circled-! that artboard-06
             reserves for the permanent-erase callout. */}
         <ul className="mt-4 flex-none divide-y divide-separator overflow-hidden rounded-card border border-separator bg-surface">
-          <Point icon={<UndoIcon size={14} />}>
+          <Point icon={<NoUndoIcon size={14} />}>
             <b className="text-text font-semibold">
               Removal is not reliably reversible.
             </b>{" "}
@@ -222,7 +240,7 @@ export default function TermsGate({ children }: { children: ReactNode }) {
           </Point>
         </ul>
 
-        <div className="mt-4 flex min-h-[6rem] flex-1 flex-col">
+        <div className="mt-4 flex min-h-[11rem] flex-1 flex-col">
           <p className="text-subtle mb-1.5 flex-none text-micro font-semibold uppercase">
             Terms of Use · version {status.terms_version}
           </p>
@@ -269,9 +287,6 @@ export default function TermsGate({ children }: { children: ReactNode }) {
               for what I confirm Swept may remove.
             </Ack>
           </div>
-          <p className="text-subtle mt-1.5 text-caption">
-            Tick both to enable <b>Accept and continue</b>.
-          </p>
         </fieldset>
 
         {error && (
@@ -288,14 +303,33 @@ export default function TermsGate({ children }: { children: ReactNode }) {
             but at 860x560 the content is genuinely taller than the sheet, so
             the buttons still scrolled out of the sheet's own view — reachable,
             but the one screen a user cannot skip should never hide the way
-            through it. Full-bleed via negative margins so the hairline meets
-            both edges. */}
-        <div className="sticky bottom-0 -mx-6 -mb-6 mt-4 flex flex-none items-center gap-3 border-t border-separator bg-surface3 px-6 py-4">
+            through it.
+            `-mx-6` full-bleeds the hairline; there is deliberately no `-mb-6`
+            to match. A negative bottom margin shortens the flow content by its
+            own height, which parks a sticky element *above* its static
+            position — that is how the first version of this row came to sit on
+            top of the line below it, permanently, at window sizes where the
+            sheet could not scroll at all. The sheet carries `pb-0` instead and
+            this row's own `py-4` supplies the bottom padding. */}
+        <div
+          className={`sticky bottom-0 -mx-6 mt-4 flex flex-none items-center gap-3 border-t border-separator bg-surface3 px-6 py-4 ${
+            scrollable
+              ? "before:pointer-events-none before:absolute before:inset-x-0 before:-top-3 before:h-3 before:bg-gradient-to-t before:from-surface3 before:to-transparent before:content-['']"
+              : ""
+          }`}
+        >
           <span className="text-success flex-none">
             <ShieldIcon size={13} />
           </span>
+          {/* The enabling condition lives here rather than beside the boxes,
+              because beside the boxes it is the first thing to go below the
+              fold: at 660px the frame showed a dead primary with the reason
+              for it off-screen. Here it is always in view, next to the control
+              it explains. */}
           <p className="text-subtle flex-1 text-caption leading-snug">
-            Recorded on this Mac only, and never sent anywhere.
+            {understands && hasBackups
+              ? "Recorded on this Mac only, and never sent anywhere."
+              : "Tick both boxes to continue."}
           </p>
           {/* The house secondary, matching every other sheet's Cancel. A bare
               text button beside a filled *disabled* primary inverted the
@@ -307,7 +341,7 @@ export default function TermsGate({ children }: { children: ReactNode }) {
             Quit
           </button>
           <button
-            className="rounded-control bg-accent px-4 py-2 text-body font-semibold text-white transition-colors duration-fast ease-mac disabled:cursor-not-allowed disabled:border disabled:border-separator disabled:bg-surface2 disabled:text-subtle"
+            className="rounded-control border border-transparent bg-accent px-4 py-2 text-body font-semibold text-white transition-colors duration-fast ease-mac disabled:cursor-not-allowed disabled:border-separator disabled:bg-surface2 disabled:text-subtle"
             onClick={() => void accept()}
             disabled={!ready}
           >

@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-09-06
+
+**A safety fix, shipped on its own rather than held for the next feature.** The
+0.4.0 binaries were published a few hours earlier and do not have it, and a tool
+that removes files should not leave a known way to lose its own guarantees
+sitting in the latest download.
+
 ### Security
 - **Swept refuses to run as the super-user.** `sudo swept clean --execute
   --permanent --yes` was reachable, and two guarantees quietly depended on it
@@ -343,7 +350,8 @@ property-tested safety substrate.
 - Recursive/large removals require confirmation; audit failures abort the run.
 - Tests run only against throwaway temp-dir fixtures.
 
-[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/cha-ndler/swept/releases/tag/v0.4.1
 [0.4.0]: https://github.com/cha-ndler/swept/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cha-ndler/swept/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cha-ndler/swept/releases/tag/v0.2.0

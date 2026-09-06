@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
-import { formatBytes } from "./format";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { formatBytes, formatWhen, split } from "./format";
 import type {
   CategorySummary,
   CleanSummary,
+  LargeOldItem,
   PrivacyRow,
   SmartScanReport,
   SmartScanRunReport,
@@ -24,9 +25,10 @@ import {
   Toolbar,
 } from "./Shell";
 import { Checkbox } from "./Controls";
+import { CategoryRow } from "./CategoryRow";
 import { ScanRing } from "./ScanRing";
 import type { RingSegment } from "./ScanRing";
-import { hue, PRIVACY_HUE } from "./hues";
+import { hue, LARGE_HUE, PRIVACY_HUE } from "./hues";
 
 /**
  * Smart Scan — one gesture across the sources that can be acted on together.
@@ -45,14 +47,17 @@ import { hue, PRIVACY_HUE } from "./hues";
  *   everything else this app does, so emptying it here would destroy the undo
  *   for the same click that made it necessary. It appears below, under a
  *   heading that says so, with no checkbox.
- * - **Large & Old is a finding, not a selection.** The aggregator already
- *   excludes it from `selected` for a reason the UI must not undo: its rows need
- *   a human looking at each one, with the path and the age in front of them,
- *   which is what its own screen is for. Rebuilding a thinner version of that
- *   list inside a screen whose whole affordance is "one button" would be the
- *   worst place in the app to make a per-file decision. So this screen never
- *   sends `large_old_paths`, and the ledger afterwards says `not selected` for
- *   it — which is precisely what that outcome exists to say.
+ * - **Large & old files come only from `large_old_offerable`.** That list is
+ *   narrower than `large_old.items` in two ways the UI must not try to
+ *   reconstruct: rows inside a browser's data, which the dispatcher refuses
+ *   outright, and everything under `~/Library/Application Support`, which it
+ *   would accept but which this screen declines to offer — a password vault, a
+ *   messaging database and an app's only copy of your documents all live there,
+ *   and a one-gesture surface should not carry a source whose contents nobody
+ *   can enumerate. The Large & Old screen still offers them, where a person
+ *   arrived on purpose and read the path. They are also never pre-ticked here,
+ *   and they live in their own collapsed section rather than the manifest,
+ *   because every row in that manifest arrives already selected.
  * - **No acknowledgement axis.** Every privacy row here is `regenerable` — the
  *   backend hands `Acknowledged::default()` to the verb whatever we send, so
  *   there is nothing to ask and asking would imply otherwise.
@@ -71,6 +76,9 @@ type Phase = "none" | "confirm" | "running" | "done";
 // which is why the request carries three booleans and not one.
 const MASS_COUNT = 100;
 const MASS_BYTES = 5 * 1024 ** 3;
+
+/** How many names a sheet line spells out before it starts counting. */
+const PARTS_SHOWN = 8;
 
 /** The sources, in the order the backend dispatches them. */
 const SOURCE_LABEL: Record<string, string> = {
@@ -102,6 +110,11 @@ export default function SmartScanView({
   const [report, setReport] = useState<SmartScanReport | null>(null);
   const [cats, setCats] = useState<Set<string>>(new Set());
   const [rows, setRows] = useState<Set<string>>(new Set());
+  /** Large & old files the user has picked. **Never seeded from a report** —
+   *  a scan that pre-ticked one of these would have made the decision this
+   *  module exists to leave with a person. */
+  const [files, setFiles] = useState<Set<string>>(new Set());
+  const [filesOpen, setFilesOpen] = useState(false);
   const [error, setError] = useState("");
   const [phase, setPhase] = useState<Phase>("none");
   const [run, setRun] = useState<SmartScanRunReport | null>(null);
@@ -116,6 +129,10 @@ export default function SmartScanView({
     [report],
   );
   const privacyRows = report?.privacy ?? [];
+  // Only ever this list. `large_old.items` is the module's wider answer and
+  // includes rows the dispatcher refuses; ticking from it would build a request
+  // that fails as a whole for a row this screen had shown.
+  const offerableFiles = report?.large_old_offerable ?? [];
 
   const chosenCats = useMemo(
     () => offered.filter((c) => cats.has(c.category)),
@@ -126,13 +143,19 @@ export default function SmartScanView({
     [privacyRows, rows],
   );
 
+  const chosenFiles = useMemo(
+    () => offerableFiles.filter((i) => files.has(i.path)),
+    [offerableFiles, files],
+  );
+
   const cleanupBytes = chosenCats.reduce((n, c) => n + c.bytes, 0);
   const cleanupCount = chosenCats.reduce((n, c) => n + c.count, 0);
   const privacyBytes = chosenRows.reduce((n, r) => n + r.size_bytes, 0);
   const privacyItems = chosenRows.reduce((n, r) => n + r.member_count, 0);
   const privacyDirs = chosenRows.filter((r) => r.is_dir).length;
   const privacyFiles = chosenRows.reduce((n, r) => n + r.file_count, 0);
-  const selBytes = cleanupBytes + privacyBytes;
+  const filesBytes = chosenFiles.reduce((n, i) => n + i.size_bytes, 0);
+  const selBytes = cleanupBytes + privacyBytes + filesBytes;
 
   // Derived, not asked. Each verb applies its own threshold to its own count,
   // so this says "the figures on the sheet crossed the line for this source" —
@@ -141,6 +164,9 @@ export default function SmartScanView({
   const cleanupMass = cleanupCount > MASS_COUNT || cleanupBytes > MASS_BYTES;
   const privacyMass =
     privacyDirs > 0 || privacyItems > MASS_COUNT || privacyBytes > MASS_BYTES;
+  // Large files cross the byte threshold almost by definition, which is the
+  // point: this is the source where a single tick can be several gigabytes.
+  const filesMass = chosenFiles.length > MASS_COUNT || filesBytes > MASS_BYTES;
 
   const segments: RingSegment[] = [
     ...chosenCats.map((c) => ({
@@ -150,6 +176,9 @@ export default function SmartScanView({
     })),
     ...(privacyBytes > 0
       ? [{ id: "privacy", bytes: privacyBytes, color: PRIVACY_HUE }]
+      : []),
+    ...(filesBytes > 0
+      ? [{ id: "large-old", bytes: filesBytes, color: LARGE_HUE }]
       : []),
   ];
 
@@ -174,23 +203,27 @@ export default function SmartScanView({
         ),
       );
       setRows(new Set(r.privacy.map((p) => p.path)));
-      const label = labelFor(r.selected);
-      onTotal?.(label);
-      void call("set_tray_label", { label }).catch(() => {});
+      // Not seeded, and cleared on every re-scan: a pick made against the last
+      // report is a pick against a disk that has been looked at again since.
+      setFiles(new Set());
+      setFilesOpen(false);
       setView("results");
     } catch (e) {
       setReport(null);
       setCats(new Set());
       setRows(new Set());
-      onTotal?.(null);
-      void call("set_tray_label", { label: null }).catch(() => {});
+      setFiles(new Set());
       setError(describeError(e));
       setView("error");
     }
   }
 
   async function dispatch() {
-    if (chosenCats.length === 0 && chosenRows.length === 0) {
+    if (
+      chosenCats.length === 0 &&
+      chosenRows.length === 0 &&
+      chosenFiles.length === 0
+    ) {
       setPhase("none");
       return;
     }
@@ -207,8 +240,9 @@ export default function SmartScanView({
           filters: {},
           categories: chosenCats.map((c) => c.category),
           privacy_paths: chosenRows.map((r) => r.path),
-          // Never populated from here — see the note at the top of this file.
-          large_old_paths: [],
+          // Only paths from `large_old_offerable`, which is the report's own
+          // statement of what this gesture may act on.
+          large_old_paths: chosenFiles.map((i) => i.path),
           // Three magnitudes, never one. Each goes to its own verb, which
           // re-scans inside the call and refuses if its own selection drifted.
           // `null` where nothing was named, so a source cannot inherit another's
@@ -220,22 +254,19 @@ export default function SmartScanView({
             privacy: chosenRows.length
               ? { count: chosenRows.length, bytes: privacyBytes }
               : null,
-            large_old: null,
+            large_old: chosenFiles.length
+              ? { count: chosenFiles.length, bytes: filesBytes }
+              : null,
           },
           confirm_mass_delete: {
             cleanup: cleanupMass,
             privacy: privacyMass,
-            large_old: false,
+            large_old: filesMass,
           },
         },
       });
       setRun(result);
       setPhase("done");
-      // The figures on screen no longer describe the disk. Rather than leave a
-      // stale total in the sidebar and the menu bar, clear both: the next scan
-      // is one button away, and a wrong number is worse than no number.
-      onTotal?.(null);
-      void call("set_tray_label", { label: null }).catch(() => {});
     } catch (e) {
       // A rejection here is the whole gesture refusing before any step ran —
       // staleness, a category the scan does not offer, a source that named rows
@@ -253,6 +284,14 @@ export default function SmartScanView({
     });
   }
 
+  function toggleFile(path: string) {
+    setFiles((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(path)) next.add(path);
+      return next;
+    });
+  }
+
   function toggleRow(path: string) {
     setRows((prev) => {
       const next = new Set(prev);
@@ -262,6 +301,44 @@ export default function SmartScanView({
   }
 
   const done = phase === "done" && run !== null;
+
+  /**
+   * The figure the sidebar badge and the menu bar carry — **the live
+   * selection**, not the report's default.
+   *
+   * This screen is the one place where those two can differ by a lot in the
+   * wrong direction. Cleanup's badge is its scan total and its ring is a
+   * subset, so the badge is never smaller than the ring. Here a person can add
+   * an 18 GiB video to a 6.5 GiB sweep, and a badge showing the default would
+   * sit two inches from a ring showing four times as much. Null everywhere the
+   * figure would be a claim: before a scan, during one, and after a run has
+   * made the numbers describe a disk that no longer exists.
+   */
+  const liveLabel =
+    view === "results" && report && !done
+      ? floor
+        ? `≥ ${formatBytes(selBytes)}`
+        : formatBytes(selBytes)
+      : null;
+
+  // Whether *this* screen is the one currently speaking for the menu bar.
+  const ownsTray = useRef(false);
+
+  useEffect(() => {
+    onTotal?.(liveLabel);
+    // Mounting must not blank a label another screen set. The effect runs once
+    // on mount with `liveLabel === null`, and without this guard that first run
+    // wiped whatever Cleanup had put there — Smart Scan being the module the
+    // app opens on, that meant the menu bar was cleared by simply launching.
+    if (liveLabel === null && !ownsTray.current) return;
+    ownsTray.current = liveLabel !== null;
+    // Best effort: a scan that succeeded must not surface an error because a
+    // menu-bar label failed to update.
+    void call("set_tray_label", { label: liveLabel }).catch(() => {});
+    // `onTotal` is a `useState` setter from the shell, which React guarantees
+    // is stable; depending on it would re-fire on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveLabel]);
 
   return (
     <>
@@ -342,6 +419,9 @@ export default function SmartScanView({
                       {chosenCats.length === 1 ? "y" : "ies"} ·{" "}
                       {chosenRows.length} location
                       {chosenRows.length === 1 ? "" : "s"}
+                      {chosenFiles.length > 0
+                        ? ` · ${chosenFiles.length} file${chosenFiles.length === 1 ? "" : "s"}`
+                        : ""}
                     </p>
                   </div>
 
@@ -363,6 +443,7 @@ export default function SmartScanView({
                             cat={c}
                             checked={cats.has(c.category)}
                             onToggle={() => toggleCat(c.category)}
+                            verb="Include"
                           />
                         ))}
                         {privacyRows.map((r) => (
@@ -380,6 +461,38 @@ export default function SmartScanView({
                         </p>
                       )}
                     </section>
+
+                    {offerableFiles.length > 0 ? (
+                      <LargeOldChoice
+                        items={offerableFiles}
+                        chosen={files}
+                        onToggle={toggleFile}
+                        open={filesOpen}
+                        onOpenList={() => setFilesOpen((o) => !o)}
+                        onClear={() => setFiles(new Set())}
+                        truncated={report.large_old.truncated}
+                        matched={report.large_old.matched}
+                        onOpenModule={onOpenModule}
+                      />
+                    ) : (
+                      // Every match was somewhere this gesture does not offer.
+                      // Rendering nothing would let a scan that found 40 GiB of
+                      // large files say nothing at all about them.
+                      report.large_old.matched > 0 && (
+                        <section>
+                          <SectionLabel>Large &amp; old files</SectionLabel>
+                          <Group role="list" label="Large and old files" className="mt-2">
+                            <FindingRow
+                              name="Large &amp; old files"
+                              detail="Every match is somewhere this gesture does not offer — a browser's own data, or an app's private store"
+                              figure={`${report.large_old.matched.toLocaleString()} file${report.large_old.matched === 1 ? "" : "s"}`}
+                              action="Large & Old"
+                              onOpen={() => onOpenModule?.("large-old")}
+                            />
+                          </Group>
+                        </section>
+                      )
+                    )}
 
                     <AlsoFound
                       report={report}
@@ -446,6 +559,16 @@ export default function SmartScanView({
                 }
               : null
           }
+          files={
+            chosenFiles.length
+              ? {
+                  count: chosenFiles.length,
+                  bytes: filesBytes,
+                  note: filesMass ? "a large removal" : null,
+                  parts: chosenFiles.map((i) => split(i.path).name),
+                }
+              : null
+          }
           total={selBytes}
           busy={phase === "running"}
           error={runError}
@@ -474,13 +597,6 @@ function readable(msg: string): string {
   const collapsed = msg.replace(/(?:refused:\s*)+/gi, "refused: ").trim();
   const bare = collapsed.replace(/^refused:\s*/i, "");
   return bare.charAt(0).toUpperCase() + bare.slice(1);
-}
-
-/** `≥` when the figure is a floor. Same string in the sidebar and the menu bar. */
-function labelFor(total: Total): string {
-  return total.incomplete.length > 0
-    ? `≥ ${formatBytes(total.bytes)}`
-    : formatBytes(total.bytes);
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -554,52 +670,6 @@ function Scanning() {
   );
 }
 
-function CategoryRow({
-  cat,
-  checked,
-  onToggle,
-}: {
-  cat: CategorySummary;
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <label
-      role="listitem"
-      className={`flex cursor-pointer items-center gap-3 border-t border-separator px-4 py-3 transition-colors duration-fast ease-mac first:border-t-0 ${
-        checked ? "bg-accentTint" : "hover:bg-surface2"
-      }`}
-    >
-      <Checkbox
-        checked={checked}
-        onChange={onToggle}
-        label={`Include ${cat.name}`}
-      />
-      {/* A coloured dot on this screen means one thing: this row is an arc in
-          the ring. Nothing in "also found" carries one. */}
-      <span
-        className="h-2 w-2 flex-none rounded-full"
-        style={{ background: hue(cat.category) }}
-        aria-hidden="true"
-      />
-      <div className="min-w-0 flex-1">
-        <span className="truncate text-body font-medium">{cat.name}</span>
-        <p className="text-subtle mt-0.5 truncate text-caption">
-          {cat.description}
-        </p>
-      </div>
-      <div className="shrink-0 text-right">
-        <span className="block font-mono text-body font-semibold tabular-nums">
-          {formatBytes(cat.bytes)}
-        </span>
-        <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
-          {cat.count.toLocaleString()} item{cat.count === 1 ? "" : "s"}
-        </span>
-      </div>
-    </label>
-  );
-}
-
 function PrivacyLine({
   row,
   checked,
@@ -657,11 +727,12 @@ function PrivacyLine({
 /**
  * What the scan saw and this gesture will not touch.
  *
- * The figure is `found − selected`, which is exact: both come from the report,
- * and the difference is by construction everything a source reported that the
- * default set leaves out. It does not move when the user unticks a row — and
- * should not, because this band is about what Smart Scan *never* acts on, not
- * about the current selection.
+ * The figure is `found − selected − offerable`: everything a source reported
+ * that the default set leaves out, minus the large files, which have a section
+ * of their own above and would otherwise be counted in both places. All three
+ * terms come from the report, so the arithmetic is exact. It does not move when
+ * the user unticks a row — and should not, because this band is about what
+ * Smart Scan *never* acts on, not about the current selection.
  *
  * No coloured dots and no checkboxes here. Both would say "this is in the ring".
  */
@@ -674,14 +745,23 @@ function AlsoFound({
   withheld: CategorySummary[];
   onOpenModule?: (module: "cleanup" | "large-old" | "privacy" | "startup") => void;
 }) {
-  const extra = Math.max(report.found.bytes - report.selected.bytes, 0);
-  const large = report.large_old;
+  // `found − selected` is everything a source reported that the default gesture
+  // leaves out — but Large & Old now has a section of its own above, so its
+  // contribution has to come back out or this figure counts it twice.
+  const offered = report.large_old_offerable.reduce(
+    (n, i) => n + i.size_bytes,
+    0,
+  );
+  const extra = Math.max(
+    report.found.bytes - report.selected.bytes - offered,
+    0,
+  );
   const startup = report.startup;
 
   return (
     <section>
       <div className="flex items-baseline justify-between gap-3">
-        <SectionLabel>Also found — not part of this scan</SectionLabel>
+        <SectionLabel>Also found — asked about on their own screens</SectionLabel>
         {extra > 0 && (
           <span className="text-subtle font-mono text-caption tabular-nums">
             {formatBytes(extra)}
@@ -703,15 +783,6 @@ function AlsoFound({
             onOpen={() => onOpenModule?.("cleanup")}
           />
         ))}
-        {large.matched > 0 && (
-          <FindingRow
-            name="Large & old files"
-            detail="Each one needs your consent, with the path and the age in front of you"
-            figure={`${large.matched.toLocaleString()} file${large.matched === 1 ? "" : "s"}`}
-            action="Large & Old"
-            onOpen={() => onOpenModule?.("large-old")}
-          />
-        )}
         <FindingRow
           name="Browser data with consequences"
           detail="Cookies sign you out; history cannot be brought back"
@@ -735,6 +806,171 @@ function AlsoFound({
         )}
       </Group>
     </section>
+  );
+}
+
+/**
+ * Large & old files: offered, and never chosen for you.
+ *
+ * The middle ground between the two things this screen could have done, and
+ * both of the alternatives were worse. Leaving these out entirely meant a third
+ * of the dispatcher was unreachable from the UI and a person who wanted them in
+ * the sweep had to do the sweep twice. Putting them in the manifest above meant
+ * a per-file decision made in a list whose every other row arrives pre-ticked —
+ * which is the context most likely to produce a careless tick, on the one source
+ * where the file is somebody's own document rather than a cache.
+ *
+ * So: its own section, collapsed, with a count of zero until a person opens it
+ * and starts ticking. Each row carries what the decision actually needs — the
+ * folder, the name, the size and how long it has sat there — because that is
+ * what the Large & Old screen shows and this is the same decision.
+ */
+function LargeOldChoice({
+  items,
+  chosen,
+  onToggle,
+  open,
+  onOpenList,
+  onClear,
+  truncated,
+  matched,
+  onOpenModule,
+}: {
+  items: LargeOldItem[];
+  chosen: Set<string>;
+  onToggle: (path: string) => void;
+  open: boolean;
+  onOpenList: () => void;
+  onClear: () => void;
+  truncated: boolean;
+  matched: number;
+  onOpenModule?: (module: "cleanup" | "large-old" | "privacy" | "startup") => void;
+}) {
+  const total = items.reduce((n, i) => n + i.size_bytes, 0);
+  const picked = items.filter((i) => chosen.has(i.path));
+  const pickedBytes = picked.reduce((n, i) => n + i.size_bytes, 0);
+
+  return (
+    <section>
+      <div className="flex items-baseline justify-between gap-3">
+        <SectionLabel>Large &amp; old files</SectionLabel>
+        {/* `≥` when the walk stopped early. The note explaining the cap only
+            renders once the list is open, so without this a person who never
+            expands the section reads a floor as a total. */}
+        <span className="text-subtle font-mono text-caption tabular-nums">
+          {truncated ? "≥ " : ""}
+          {formatBytes(total)}
+        </span>
+      </div>
+      <Group className="mt-2">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <span className="text-body font-medium">
+              {picked.length === 0
+                ? "Nothing chosen"
+                : `${picked.length} chosen · ${formatBytes(pickedBytes)}`}
+            </span>
+            <p className="text-subtle mt-0.5 text-caption">
+              {truncated
+                ? `${items.length.toLocaleString()} of ${matched.toLocaleString()} matches`
+                : `${items.length.toLocaleString()} file${items.length === 1 ? "" : "s"}`}{" "}
+              this scan could act on.{" "}
+              <strong className="font-semibold">
+                Nothing here is ever chosen for you.
+              </strong>
+            </p>
+          </div>
+          {picked.length > 0 && (
+            <button
+              onClick={onClear}
+              className="shrink-0 rounded-control border border-border bg-surface2 px-3 py-1.5 text-caption font-medium text-text transition-colors duration-fast ease-mac hover:border-borderStrong"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            onClick={onOpenList}
+            aria-expanded={open}
+            className="shrink-0 rounded-control border border-border bg-surface2 px-3 py-1.5 text-caption font-medium text-text transition-colors duration-fast ease-mac hover:border-borderStrong"
+          >
+            {open ? "Hide files" : "Choose files…"}
+          </button>
+        </div>
+
+        {open && (
+          <div role="list" aria-label="Large and old files">
+            {items.map((i) => (
+              <FileLine
+                key={i.path}
+                item={i}
+                checked={chosen.has(i.path)}
+                onToggle={() => onToggle(i.path)}
+              />
+            ))}
+            {/* The list is capped, and saying "38.2 GiB" over a capped list
+                without saying so would present a floor as a total. */}
+            {truncated && (
+              <div className="border-t border-separator px-4 py-3">
+                <p className="text-subtle text-caption">
+                  Showing {items.length.toLocaleString()} of{" "}
+                  {matched.toLocaleString()} matches. The rest are on the{" "}
+                  <button
+                    onClick={() => onOpenModule?.("large-old")}
+                    className="text-accentText underline underline-offset-2"
+                  >
+                    Large &amp; Old
+                  </button>{" "}
+                  screen, which can filter them.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </Group>
+    </section>
+  );
+}
+
+function FileLine({
+  item,
+  checked,
+  onToggle,
+}: {
+  item: LargeOldItem;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const { dir, name } = split(item.path);
+  return (
+    <label
+      role="listitem"
+      className={`flex cursor-pointer items-center gap-3 border-t border-separator px-4 py-3 transition-colors duration-fast ease-mac ${
+        checked ? "bg-accentTint" : "hover:bg-surface2"
+      }`}
+    >
+      <Checkbox checked={checked} onChange={onToggle} label={`Choose ${name}`} />
+      <span
+        className="h-2 w-2 flex-none rounded-full"
+        style={{ background: LARGE_HUE }}
+        aria-hidden="true"
+      />
+      <div className="min-w-0 flex-1">
+        <span className="block truncate text-body font-medium">{name}</span>
+        {/* The folder, not the whole path: the name is above it, and a path
+            truncated from the right hides the part that says where it lives. */}
+        <p className="text-subtle mt-0.5 truncate text-caption" title={item.path}>
+          {dir}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <span className="block font-mono text-body font-semibold tabular-nums">
+          {formatBytes(item.size_bytes)}
+        </span>
+        <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
+          {formatWhen(item.modified_ms)}
+        </span>
+      </div>
+    </label>
   );
 }
 
@@ -828,6 +1064,7 @@ function FloorNotice({
 function ConfirmSheet({
   cleanup,
   privacy,
+  files,
   total,
   busy,
   error,
@@ -848,6 +1085,12 @@ function ConfirmSheet({
     note: string | null;
     parts: string[];
   } | null;
+  files: {
+    count: number;
+    bytes: number;
+    note: string | null;
+    parts: string[];
+  } | null;
   total: number;
   busy: boolean;
   error: string;
@@ -855,7 +1098,7 @@ function ConfirmSheet({
   onConfirm: () => void;
   onRescan: () => void;
 }) {
-  const sources = [cleanup, privacy].filter(Boolean).length;
+  const sources = [cleanup, privacy, files].filter(Boolean).length;
   return (
     <div
       className="overlay-in fixed inset-0 z-10 flex items-center justify-center bg-black/60 p-6 pl-[256px]"
@@ -863,7 +1106,14 @@ function ConfirmSheet({
       aria-modal="true"
       aria-labelledby="smart-confirm-title"
     >
-      <div className="sheet-in w-full max-w-md rounded-panel border border-border bg-surface3 p-6 shadow-e3">
+      {/* `max-h` + scroll is load-bearing, not tidiness. The files list is the
+          only part of this sheet that can grow without bound, and measured in
+          a 1200x800 viewport it pushed the title off the top at ~32 ticked
+          files and both buttons below the fold at ~36 — with no Escape handler
+          and no backdrop dismissal, an unclosable modal. It failed safe (you
+          cannot confirm what you cannot reach), which is exactly why it could
+          have shipped unnoticed. */}
+      <div className="sheet-in flex max-h-[calc(100vh-3rem)] w-full max-w-md flex-col overflow-y-auto rounded-panel border border-border bg-surface3 p-6 shadow-e3">
         <div className="flex items-start gap-3">
           <span className="grid h-9 w-9 flex-none place-items-center rounded-[8px] bg-accentTint text-accentText">
             <ShieldIcon size={18} />
@@ -905,6 +1155,19 @@ function ConfirmSheet({
               parts={privacy.parts}
             />
           )}
+          {files && (
+            <SheetLine
+              name="Large & old files"
+              detail={
+                files.count === 1
+                  ? "1 file you picked yourself"
+                  : `${files.count} files you picked one at a time`
+              }
+              bytes={files.bytes}
+              note={files.note}
+              parts={files.parts}
+            />
+          )}
         </Group>
 
         <div className="mt-4 flex gap-2.5 rounded-card border border-success/25 bg-success/[.08] px-3.5 py-3">
@@ -920,6 +1183,9 @@ function ConfirmSheet({
                 letting a single gesture touch browser data. */}
             {privacy
               ? " Nothing here signs you out or erases your history."
+              : ""}
+            {files
+              ? " The files you picked are your own documents, and the Trash is the only copy left once they move."
               : ""}
           </p>
         </div>
@@ -1005,8 +1271,14 @@ function SheetLine({
         {note ? ` · ${note}` : ""}
       </p>
       {parts.length > 0 && (
+        // Capped. Cleanup names at most five categories and privacy dedupes to
+        // a handful of browsers, but a file list is one entry per tick and the
+        // backend will return up to 500 of them.
         <p className="text-subtle mt-1 text-caption leading-snug">
-          {parts.join(" · ")}
+          {parts.slice(0, PARTS_SHOWN).join(" · ")}
+          {parts.length > PARTS_SHOWN
+            ? ` · and ${(parts.length - PARTS_SHOWN).toLocaleString()} more`
+            : ""}
         </p>
       )}
     </div>

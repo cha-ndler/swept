@@ -422,7 +422,17 @@ export interface SmartScanReport {
   /** Only rows with no consequence. The rest stay on Privacy, which has the
    *  acknowledgement axis for them. */
   privacy: PrivacyRow[];
+  /** Everything the Large & Old walk found, for the picture: counts, totals,
+   *  and what it could not read. */
   large_old: LargeOldReport;
+  /** The subset of `large_old.items` this gesture may be asked to act on.
+   *
+   *  Separate on purpose: `large_old.items` includes rows inside a browser's
+   *  own data, which the dispatcher refuses outright — so a screen that let
+   *  someone tick from that list could assemble a request that fails as a
+   *  whole, for a row the report had just shown them. The offer set is a fact
+   *  in the report, not a predicate the UI is trusted to reimplement. */
+  large_old_offerable: LargeOldItem[];
   startup: StartupFinding;
   permissions: Permissions;
 }

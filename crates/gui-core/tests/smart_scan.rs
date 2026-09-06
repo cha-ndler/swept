@@ -336,6 +336,153 @@ fn a_large_old_row_inside_a_browser_is_not_counted() {
     );
 }
 
+/// **The offer set is a fact in the report, not a predicate the UI reimplements.**
+///
+/// `large_old.items` is the module's own answer and includes rows the
+/// dispatcher refuses outright. A screen that let a person tick from it would
+/// assemble a request that fails *as a whole* — for a row that report had just
+/// shown them. So the report carries the subset separately, and it is built by
+/// the identical filter that decides the `found` contribution.
+#[test]
+fn the_large_old_rows_a_gesture_may_offer_are_named_separately_from_the_walk() {
+    let (_g, home) = fixture_home();
+    let profile = chromium_profile(&home, "Default");
+    write_sized(&profile.join("Login Data"), 4096);
+    write_sized(&home.join("Downloads/big.iso"), 2048);
+
+    let report = smart_scan_in(&config(&home));
+
+    // The walk lists both — the read-only half stays honest.
+    assert!(report
+        .large_old
+        .items
+        .iter()
+        .any(|i| i.path.ends_with("Login Data")));
+    // What may be offered lists only the one outside the browser.
+    assert!(
+        !report
+            .large_old_offerable
+            .iter()
+            .any(|i| i.path.ends_with("Login Data")),
+        "a row the dispatcher refuses must never be offerable"
+    );
+    assert_eq!(
+        report.large_old_offerable.len(),
+        1,
+        "exactly the row outside the browser"
+    );
+    // And the bytes offered are the bytes counted. Two lists built by one
+    // predicate; this is what stops them drifting.
+    let counted = report.found.bytes - report.cleanup.iter().map(|c| c.bytes).sum::<u64>();
+    assert_eq!(
+        report
+            .large_old_offerable
+            .iter()
+            .map(|i| i.size_bytes)
+            .sum::<u64>(),
+        counted
+    );
+}
+
+/// **`~/Library/Application Support` is readable here and never offerable.**
+///
+/// `browser_root_for` only knows the browsers `privacy::BROWSERS` names, and
+/// this directory is where everything *else* an app owns lives too — a password
+/// vault, a messaging database, the only copy of some app's documents. The
+/// dispatcher would accept those; this screen does not offer them, because a
+/// one-gesture surface should not carry a source whose contents nobody can
+/// enumerate. The Large & Old screen still does, where a person arrived on
+/// purpose and read the path.
+#[test]
+fn nothing_under_application_support_is_offerable_however_ordinary_it_looks() {
+    let (_g, home) = fixture_home();
+    let vault = home.join("Library/Application Support/SomeVault/vault.db");
+    std::fs::create_dir_all(vault.parent().unwrap()).unwrap();
+    write_sized(&vault, 4096);
+    // A browser this app has no recorded layout for, so `browser_root_for`
+    // cannot help — which is the whole point.
+    let opera = home.join("Library/Application Support/com.operasoftware.Opera/Login Data");
+    std::fs::create_dir_all(opera.parent().unwrap()).unwrap();
+    write_sized(&opera, 4096);
+    write_sized(&home.join("Downloads/big.iso"), 2048);
+
+    let report = smart_scan_in(&config(&home));
+
+    // The walk sees them: the read-only half stays honest, and Space Lens and
+    // the Large & Old screen still need the picture.
+    assert!(report
+        .large_old
+        .items
+        .iter()
+        .any(|i| i.path.ends_with("vault.db")));
+    // The gesture does not offer them.
+    for tell in ["vault.db", "Login Data"] {
+        assert!(
+            !report
+                .large_old_offerable
+                .iter()
+                .any(|i| i.path.ends_with(tell)),
+            "{tell} must not be offerable from the one-gesture screen"
+        );
+    }
+    assert_eq!(
+        report.large_old_offerable.len(),
+        1,
+        "only Downloads/big.iso"
+    );
+    // And the figure agrees with the offer, as it must.
+    let counted = report.found.bytes - report.cleanup.iter().map(|c| c.bytes).sum::<u64>();
+    assert_eq!(counted, 2048);
+}
+
+/// The strongest form of the same claim: **every row the report offers is one a
+/// confirmed run actually frees.**
+///
+/// Not "the filter looks right" — the offer set is handed straight to the
+/// dispatcher and the bytes freed are compared with the bytes offered. It
+/// cannot pass while the report offers anything the verbs would decline.
+#[test]
+fn every_large_old_row_the_report_offers_is_one_the_dispatcher_frees() {
+    let (_g, home) = fixture_home();
+    let profile = chromium_profile(&home, "Default");
+    write_sized(&profile.join("Login Data"), 4096);
+    write_sized(&home.join("Downloads/big.iso"), 2048);
+    write_sized(&home.join("Documents/archive.zip"), 3072);
+
+    let report = smart_scan_in(&config(&home));
+    let offered: Vec<String> = report
+        .large_old_offerable
+        .iter()
+        .map(|i| i.path.clone())
+        .collect();
+    let promised: u64 = report
+        .large_old_offerable
+        .iter()
+        .map(|i| i.size_bytes)
+        .sum();
+    assert_eq!(offered.len(), 2, "both rows outside the browser");
+
+    let mut req = request(report.scanned_at_ms);
+    req.large_old_paths = offered;
+    req.expected.large_old = confirmed(2, promised);
+
+    let mut log = audit(&home);
+    let run = dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap();
+
+    assert!(matches!(
+        outcome(&run, "large-old"),
+        StepOutcome::Executed { .. }
+    ));
+    assert_eq!(
+        run.bytes_freed, promised,
+        "the bytes offered are the bytes freed"
+    );
+    assert!(
+        profile.join("Login Data").exists(),
+        "the row that was never offered is still there"
+    );
+}
+
 // --- what is not a source ---------------------------------------------------
 
 /// The Uninstaller is not a Smart Scan source: including it means building the

@@ -245,15 +245,22 @@ test("the Smart Scan request names only what the report offered", async ({
               },
             ],
             large_old: {
+              // The module's own answer, which includes a row inside a
+              // browser's data. The dispatcher refuses those outright.
               items: [
                 {
                   path: "/Users/tester/Downloads/big.iso",
                   size_bytes: 2048,
                   modified_ms: null,
                 },
+                {
+                  path: "/Users/tester/Library/Application Support/Firefox/Profiles/x/places.sqlite",
+                  size_bytes: 4096,
+                  modified_ms: null,
+                },
               ],
-              matched: 1,
-              matched_bytes: 2048,
+              matched: 2,
+              matched_bytes: 6144,
               examined: 10,
               truncated: false,
               skipped_unreadable: 0,
@@ -261,6 +268,15 @@ test("the Smart Scan request names only what the report offered", async ({
               skipped_unrepresentable: 0,
               partial: false,
             },
+            // What the gesture may be asked to act on: the browser row is not
+            // in it, so the screen has no control that could name it.
+            large_old_offerable: [
+              {
+                path: "/Users/tester/Downloads/big.iso",
+                size_bytes: 2048,
+                modified_ms: null,
+              },
+            ],
             startup: {
               starts_at_login: 0,
               can_act_on: 0,
@@ -293,6 +309,22 @@ test("the Smart Scan request names only what the report offered", async ({
 
   await page.goto("/");
   await page.getByRole("button", { name: "Scan My Mac" }).click();
+
+  // Open the large-file chooser and tick the one row the report offers.
+  await page.getByRole("button", { name: /choose files/i }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "Choose big.iso" }),
+  ).toBeVisible();
+  // And the row the report did NOT offer has no control at all. This is the
+  // property, not an incidental: a screen that rendered a checkbox here would
+  // let a person assemble a request the backend refuses *as a whole*, for a row
+  // that same report had just shown them.
+  await expect(
+    page.getByRole("checkbox", { name: /places\.sqlite/ }),
+  ).toHaveCount(0);
+  await expect(page.getByText("places.sqlite")).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "Choose big.iso" }).check();
+
   await page.getByRole("button", { name: /review & clean/i }).click();
   await page.getByRole("button", { name: "Move to Trash" }).click();
   await expect(page.getByRole("button", { name: /scan again/i })).toBeVisible();
@@ -305,15 +337,15 @@ test("the Smart Scan request names only what the report offered", async ({
 
   // The Trash was on the report and is not on the request.
   expect(req.categories).toEqual(["user-logs"]);
-  // Large & Old is a finding on this screen, so the gesture never names a path
-  // from it — and the ledger says `not selected` rather than pretending it ran.
-  expect(req.large_old_paths).toEqual([]);
+  // Exactly the row the report offered — never the browser one beside it in
+  // the walk.
+  expect(req.large_old_paths).toEqual(["/Users/tester/Downloads/big.iso"]);
   expect(req.privacy_paths).toHaveLength(1);
   // Three magnitudes, never one, and none inherited from another source.
   expect(req.expected).toEqual({
     cleanup: { count: 12, bytes: 2048 },
     privacy: { count: 1, bytes: 1024 },
-    large_old: null,
+    large_old: { count: 1, bytes: 2048 },
   });
   // `deny_unknown_fields` on the backend would refuse an extra key; the screen
   // must not send one in the first place. `acknowledged` in particular does not

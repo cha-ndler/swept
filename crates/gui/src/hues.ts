@@ -45,3 +45,10 @@ export function hue(id: string): string {
  * both caches earning the same colour says exactly what it looks like.
  */
 export const PRIVACY_HUE = "rgb(var(--cat-caches))";
+
+/**
+ * The hue Smart Scan gives the large-files arc, and Large & Old's own colour
+ * everywhere else — its dots, its bars, its confirmation sheet. It is free for
+ * this ring precisely because the browser arc stopped borrowing it.
+ */
+export const LARGE_HUE = "rgb(var(--cat-large))";

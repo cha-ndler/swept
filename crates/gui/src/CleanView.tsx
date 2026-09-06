@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBytes } from "./format";
 import type {
-  CategorySummary,
   CleanSummary,
   Filters,
   Permissions,
@@ -19,7 +18,8 @@ import {
   Toolbar,
 } from "./Shell";
 import { hue } from "./hues";
-import { Checkbox, NumberField, Segmented } from "./Controls";
+import { NumberField, Segmented } from "./Controls";
+import { CategoryRow } from "./CategoryRow";
 import { ScanRing } from "./ScanRing";
 import type { RingSegment } from "./ScanRing";
 
@@ -374,51 +374,6 @@ function FiltersBar({
  * this says so, on every scan it applies to, rather than once in a first-run
  * screen the user has already clicked past.
  */
-function CategoryRow({
-  cat,
-  checked,
-  onToggle,
-}: {
-  cat: CategorySummary;
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <label
-      role="listitem"
-      className={`flex cursor-pointer items-center gap-3 border-t border-separator px-4 py-3 transition-colors duration-fast ease-mac first:border-t-0 ${
-        checked ? "bg-accentTint" : "hover:bg-surface2"
-      }`}
-    >
-      <Checkbox
-        checked={checked}
-        onChange={onToggle}
-        label={`Select ${cat.name}`}
-      />
-      {/* Ties this row to its arc in the ring. */}
-      <span
-        className="h-2 w-2 flex-none rounded-full"
-        style={{ background: hue(cat.category) }}
-        aria-hidden="true"
-      />
-      <div className="min-w-0 flex-1">
-        <span className="truncate text-body font-medium">{cat.name}</span>
-        <p className="text-subtle mt-0.5 truncate text-caption">
-          {cat.description}
-        </p>
-      </div>
-      <div className="shrink-0 text-right">
-        <span className="block font-mono text-body font-semibold tabular-nums">
-          {formatBytes(cat.bytes)}
-        </span>
-        <span className="text-subtle mt-0.5 block font-mono text-caption tabular-nums">
-          {cat.count.toLocaleString()} item{cat.count === 1 ? "" : "s"}
-        </span>
-      </div>
-    </label>
-  );
-}
-
 function ConfirmModal({
   count,
   bytes,

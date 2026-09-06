@@ -81,7 +81,7 @@ use crate::{
     browser_root_for, build_config, clean_with_sink, dispose_privacy_with_sink,
     dispose_selected_with_sink, gui_consent, large_and_old, privacy_report_from, probe_permissions,
     refuse_and_record, startup_report_in, Acknowledged, CleanSummary, Expected, Filters,
-    LargeOldReportDto, Permissions, PrivacyRowDto,
+    LargeOldItem, LargeOldReportDto, Permissions, PrivacyRowDto,
 };
 
 /// Something a source could not see, named by the source that could not see it.
@@ -165,7 +165,30 @@ pub struct SmartScanReportDto {
     /// Rows this screen may offer. Never the ones that carry a consequence —
     /// those stay on Privacy, which has the acknowledgement axis for them.
     pub privacy: Vec<PrivacyRowDto>,
+    /// Everything the Large & Old walk found, for the *picture*: counts,
+    /// totals, and what it could not read.
     pub large_old: LargeOldReportDto,
+    /// The subset of `large_old.items` this gesture may be asked to act on.
+    ///
+    /// **Separate from `large_old.items` on purpose.** That list is the
+    /// module's own answer and includes rows inside a browser's data, which
+    /// `dispatch_smart_scan_with_sink` refuses outright — so a frontend that
+    /// ticked from it could assemble a request that fails as a whole, for a row
+    /// this report had shown it. The offer set has to be a fact in the report,
+    /// not a predicate the UI is trusted to reimplement; that is the same
+    /// lesson `smart_scan_default` and `smart_scan_eligible` each record.
+    ///
+    /// Narrower than the dispatcher's own ceiling, deliberately. Two things are
+    /// excluded: anything inside a browser's data, which the dispatcher refuses
+    /// outright, and everything under `~/Library/Application Support`, which it
+    /// would happily accept. The second is a judgement about *this screen* — a
+    /// one-gesture surface should not offer a directory whose contents nobody
+    /// can enumerate. The Large & Old screen still offers those rows.
+    ///
+    /// Built with the identical predicate that decides `found`'s Large & Old
+    /// contribution, and pinned by a test — so the bytes offered and the bytes
+    /// counted cannot drift apart.
+    pub large_old_offerable: Vec<LargeOldItem>,
     pub startup: StartupFindingDto,
     pub permissions: Permissions,
 }
@@ -288,12 +311,34 @@ pub fn smart_scan_in(cfg: &SmartScanConfig) -> SmartScanReportDto {
     // that a human chooses each row — so it contributes to `found` only, and
     // only the rows its own verb would actually accept. Counting a row the
     // dispatch would refuse would promise bytes no confirmed run could free.
-    let acceptable: u64 = large_old
+    let app_support = home.join("Library/Application Support");
+    let offerable: Vec<LargeOldItem> = large_old
         .items
         .iter()
+        // Inside a browser's own data: refused by the dispatcher, so offering it
+        // would build a request that fails as a whole for a row this report
+        // showed. `browser_root_for` is the dispatcher's own predicate.
         .filter(|i| browser_root_for(home, Path::new(&i.path)).is_none())
-        .map(|i| i.size_bytes)
-        .sum();
+        // Anywhere under `~/Library/Application Support`, browser or not.
+        //
+        // `browser_root_for` only knows the browsers `privacy::BROWSERS` names,
+        // and this directory is where everything else an app owns also lives: a
+        // password manager's vault, a messaging database, an iOS backup, the
+        // only copy of some app's documents. None of those has a privacy row to
+        // protect it, and closing that by listing more paths is the
+        // exclusion-list posture `privacy.rs` argues against.
+        //
+        // So the boundary is the directory, and it is drawn **here rather than
+        // in the verb**: the Large & Old screen still offers these rows, where a
+        // person arrived on purpose, chose one file, and read its path. This is
+        // the one-gesture screen, and a source whose blast radius nobody can
+        // enumerate does not belong on it. See `ROADMAP.md` under M2 — the
+        // attestation axis that will let someone opt back in belongs with that
+        // screen and is a change of its own.
+        .filter(|i| !Path::new(&i.path).starts_with(&app_support))
+        .cloned()
+        .collect();
+    let acceptable: u64 = offerable.iter().map(|i| i.size_bytes).sum();
     found.add("large-old", acceptable);
     if large_old.partial {
         found.note("large-old", "some folders could not be read");
@@ -320,6 +365,7 @@ pub fn smart_scan_in(cfg: &SmartScanConfig) -> SmartScanReportDto {
         found,
         cleanup: cleanup.by_category,
         privacy: eligible,
+        large_old_offerable: offerable,
         large_old,
         startup: StartupFindingDto {
             starts_at_login: startup.starts_at_login,

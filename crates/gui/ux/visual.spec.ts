@@ -13,6 +13,7 @@ import {
   SAMPLE_PRIVACY_SUMMARY,
   SAMPLE_REPORT,
   SAMPLE_SMART_SCAN,
+  SAMPLE_SMART_SCAN_MANY_FILES,
   SAMPLE_SMART_SCAN_PARTIAL,
   SAMPLE_SMART_SCAN_RUN,
   SAMPLE_SMART_SCAN_STOPPED,
@@ -1316,11 +1317,74 @@ test("smart scan also-found", async ({ page }, testInfo) => {
     page.getByRole("button", { name: /review & clean/i }),
   ).toBeVisible();
   await page
-    .getByText("Also found — not part of this scan")
+    .getByText("Also found — asked about on their own screens")
     .scrollIntoViewIfNeeded();
   // The Trash is here, and it is the row that must never have a checkbox.
   await expect(page.getByText("Trash", { exact: true })).toBeVisible();
   await capture(page, "smart-scan-also-found", testInfo.project.name);
+});
+
+// Large & old files are offered and never chosen for you. The section starts
+// collapsed and reading "Nothing chosen", and every row carries what the
+// decision needs: the folder, the name, the size and how long it has sat there.
+test("smart scan choosing files", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await expect(page.getByText("Nothing chosen")).toBeVisible();
+  await page.getByRole("button", { name: /choose files/i }).click();
+
+  // The walk found a Firefox history file; the gesture may not offer it, so
+  // there is no control for it here.
+  await expect(page.getByText("places.sqlite")).toHaveCount(0);
+
+  await page
+    .getByRole("checkbox", { name: "Choose wedding-master-4k.mov" })
+    .check();
+  await expect(page.getByText(/1 chosen/)).toBeVisible();
+  await capture(page, "smart-scan-files", testInfo.project.name);
+});
+
+// Three sources on one sheet, each with its own count, its own byte figure and
+// its own contents named.
+test("smart scan confirm with files", async ({ page }, testInfo) => {
+  await installBackend(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /choose files/i }).click();
+  await page
+    .getByRole("checkbox", { name: "Choose wedding-master-4k.mov" })
+    .check();
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByText("From 3 sources")).toBeVisible();
+  await capture(page, "smart-scan-confirm-files", testInfo.project.name);
+});
+
+// The sheet is the only surface here that grows with the selection, and it grew
+// past the viewport: at ~32 ticked files the title clipped off the top, at ~36
+// both buttons were below the fold — on a modal with no Escape handler and no
+// backdrop dismissal. Clicking the button is the assertion, not just seeing it.
+test("smart scan confirm stays reachable with many files", async ({
+  page,
+}, testInfo) => {
+  await installBackend(page, { smart: SAMPLE_SMART_SCAN_MANY_FILES });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /choose files/i }).click();
+
+  const boxes = page.getByRole("checkbox", { name: /^Choose render-pass-/ });
+  for (let i = 0; i < 40; i += 1) await boxes.nth(i).check();
+  await expect(page.getByText(/40 chosen/)).toBeVisible();
+
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  const go = page.getByRole("button", { name: "Move to Trash" });
+  await expect(go).toBeInViewport();
+  await capture(page, "smart-scan-confirm-many", testInfo.project.name);
+
+  // Reachable, not merely rendered.
+  await go.click();
+  await expect(page.getByRole("button", { name: /scan again/i })).toBeVisible();
 });
 
 // The headline is a floor, attributed per source, with the permission notice

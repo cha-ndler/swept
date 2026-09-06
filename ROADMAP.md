@@ -368,6 +368,21 @@ instead.**
     is the scope: keep the directory readable for Space Lens and Large & Old's
     *picture*, and stop it being grantable. That narrows a shipped feature, so
     it needs the human's word.
+    **Answered (2026-09-06): keep it readable, stop it being grantable, and let
+    the user override with the risk stated and attested to.** The design that
+    follows, to be built and reviewed on its own:
+    `~/Library/Application Support` stays in `discovery_roots`, so nothing about
+    the picture changes. `dispose_selected_with_sink` refuses a path under it
+    unless the request carries an explicit attestation — a second consent axis,
+    exactly the shape `Acknowledged` already has for Privacy, and **refused by
+    default via `#[serde(default)]`** so a frontend that loses the field gets a
+    refusal rather than the wider behaviour. The GUI asks for it in words that
+    make the risk concrete (a password manager's vault, a messaging database,
+    the only copy of an app's data), per run and never remembered; the CLI takes
+    the same attestation as a flag whose name says what it is. What this must
+    *not* become is a preference set once and forgotten — "attested" has to mean
+    attested for this action, or it is the old behaviour with a checkbox in
+    front of it.
   - [ ] **The scope line under-states the scope.** `LargeOldView` prints
     "Documents · Downloads · Desktop · Movies · Music · Pictures", but
     `discovery_roots` also includes `~/Library/Application Support` — which the
@@ -934,18 +949,53 @@ instead.**
     requiring a request to reference one would make the offer set a fact rather
     than a reconstruction. **It also means backend session state — lifetime,
     multiple windows, memory — so it is a design decision, not a fix.**
+    **Decided (2026-09-06), with the smallest shape that closes the class:** a
+    bounded in-process map of issued reports keyed by `scanned_at_ms`, capped at
+    a handful of entries and evicted by the `MAX_REPORT_AGE_MS` budget that
+    already exists. `dispatch_smart_scan` looks the report up and verifies that
+    every category, privacy path and large-old path the request names was in
+    what was actually issued. Nothing on disk, nothing shared between processes,
+    and no new lifetime to reason about beyond the freshness window the
+    dispatcher already enforces. **The happy path is unchanged and no
+    functionality is lost:** a request whose report has been evicted gets the
+    staleness refusal it would already have got, in the same words. The cap
+    bounds the memory, and it is small because more than a few live reports
+    means several windows mid-review, which is not a case worth holding
+    megabytes for.
+    Worth stating plainly: this makes the predicates the dispatcher checks today
+    redundant rather than obsolete, and they should stay. They are cheap, and a
+    lookup that silently missed would otherwise remove every check at once —
+    which is the failure mode a single point of truth introduces.
   - [x] **The screen.** `SmartScanView.tsx`, and it is the module the app now
     opens on. Four decisions in it are worth keeping written down, because each
     one is a place the screen could have quietly widened what the engine
     offers.
-    **Large & Old is a finding here, not a selection**, so this screen never
-    sends `large_old_paths` and the ledger says `not selected` for that step —
-    which is what that outcome exists to say. The aggregator already excludes it
-    from `selected`, and the reason is one the UI must not undo: those rows need
-    a human looking at each one with the path and the age in front of them,
-    which is what its own screen is for. Rebuilding a thinner version of that
-    list inside a screen whose whole affordance is *one button* would put the
-    app's most consequential per-file decision in its least careful context.
+    **Large & old files are offered here and never chosen for you** — their own
+    collapsed section between the manifest and the findings, reading "Nothing
+    chosen" until someone opens it, and a zero count until they tick something.
+    *(Shipped finding-only first. The human asked for the drill-in and was
+    right: leaving it out meant a third of the dispatcher was unreachable from
+    the UI, and anyone who wanted those files in the sweep had to do the sweep
+    twice.)*
+    The two rejected alternatives are the design. Putting these rows in the
+    manifest above would make a per-file decision inside a list whose every
+    other row arrives pre-ticked — the context most likely to produce a careless
+    tick, on the one source where the file is somebody's own document rather
+    than a cache. Leaving them out entirely was the first attempt, and it cost
+    more than it bought. A separate section, collapsed and empty by default,
+    keeps "nothing here is ever chosen for you" literally true while still
+    letting one gesture cover it. Each row carries what the decision needs —
+    folder, name, size, and how long it has sat there — because that is what the
+    Large & Old screen shows and it is the same decision.
+    **The offer set had to become a fact in the report before any of that was
+    safe.** `large_old.items` is the module's own answer and includes rows
+    inside a browser's data, which the dispatcher refuses outright — so a screen
+    ticking from that list could assemble a request that fails *as a whole*, for
+    a row it had just shown. `SmartScanReportDto` carries `large_old_offerable`
+    now, built by the identical predicate that decides the `found` contribution.
+    Two tests pin it: the browser row is in the walk and not in the offer set,
+    and the entire offer set handed to the dispatcher frees exactly the bytes it
+    promised. Verified to bite — dropping the filter turns three tests red.
     **Only `smart_scan_default` categories are tickable.** The Trash is on the
     report, in "also found", with no checkbox and a line saying why.
     **The preview shell starts at the error state.** Every other module scans on
@@ -953,16 +1003,24 @@ instead.**
     a button, and an idle "Ready to scan" hero outside the app would have looked
     like a working app right up until the button did nothing — the sample-data
     lie arriving one click later.
-    **The "also found" figure is `found − selected`**, which is exact by
-    construction and needs no new backend field. Per-source bytes for that band
-    do not exist on the DTO; the rows there carry counts and a link to the
-    module instead of a number the report never computed.
-    The offer-set property is now asserted from the side that can violate it:
-    `ux/backend-failure.spec.ts` records the dispatch request and pins that the
-    Trash is not in `categories`, `large_old_paths` is empty, `expected` names
-    three magnitudes with none inherited, and the request has exactly the seven
-    keys the backend accepts. The backend refuses each of these independently —
-    the point of the gate is that a UI change cannot start relying on that.
+    **The "also found" figure is `found − selected − offerable`.** It was
+    `found − selected` while Large & Old was a finding; now that those bytes
+    have a section of their own, leaving them in would count them twice.
+    **The sidebar badge tracks the live selection here**, unlike every other
+    module, whose badge is its scan total. Those screens can only ever tick a
+    subset, so the badge is never smaller than the ring. This one can add an
+    18 GiB video to a 6.5 GiB sweep, and a badge showing the default would sit
+    two inches from a ring showing four times as much.
+    The offer-set property is asserted from the side that can violate it:
+    `ux/backend-failure.spec.ts` renders a report whose walk holds a Firefox
+    history file the offer set does not, opens the chooser, and pins that there
+    is no control for that row at all — then records the dispatch request and
+    checks that the Trash is absent from `categories`, `large_old_paths` is
+    exactly the row that was offered, `expected` names three magnitudes with
+    none inherited, and the request has the seven keys the backend accepts and
+    no eighth. The backend refuses each of these independently; the point of the
+    gate is that a UI change cannot start relying on that. Verified to bite by
+    pointing the screen at `large_old.items` instead.
     Found by rendering rather than by reading: two Chrome profiles produced two
     rows reading *Google Chrome — GPU cache* word for word, distinguishable only
     by their sizes. The subtitle carries the profile now. And the ledger said
@@ -995,6 +1053,45 @@ instead.**
     contradicts — it takes the cache hue now, which is what Privacy already
     gives a cache row; and refusals reached the screen doubled
     (`refused: refused:`) because two honest layers each add the prefix.
+  - [x] **The `deletion-safety-reviewer` round on the drill-in: PASS, seven
+    findings, and the first one was a scope question rather than a bug.**
+    **`~/Library/Application Support` is no longer offerable from Smart Scan.**
+    `browser_root_for` only knows the browsers `privacy::BROWSERS` names, so
+    everything *else* an app owns under that directory was offerable — probed
+    against a fixture, both a `SomeVault/vault.db` and an Opera login database
+    were listed and moved to the Trash, while Chrome's were correctly withheld.
+    The reviewer called it the human's decision, and the human had already made
+    it that morning: keep the directory readable, stop it being grantable, allow
+    an override that states the risk and is attested to. The secure half of that
+    lands here, narrowly — **this screen** stops offering the directory, while
+    the Large & Old screen is untouched, because that is where a person arrives
+    on purpose, chooses one file and reads its path. The override belongs with
+    the attestation axis under M2 and is a change of its own. Verified to bite.
+    **The confirmation sheet grew past the viewport and took its buttons with
+    it.** Measured at 1200x800: at ~32 ticked files the title clipped off the
+    top, at ~36 both Cancel and Move to Trash sat below the fold — on a modal
+    with no Escape handler and no backdrop dismissal, so it could not be closed
+    either. It failed *safe* (nobody confirms a button they cannot reach), which
+    is exactly why it would have shipped unnoticed. The sheet scrolls now and a
+    line names at most eight files before it starts counting; a test ticks forty
+    and **clicks** the button rather than merely seeing it.
+    **A load-bearing comment asserted the opposite of the code.** The module
+    header still said "this screen never sends `large_old_paths`" 190 lines
+    above the code that now does. `README`, `CHANGELOG` and this file had all
+    been updated; the comment had not. In a codebase whose safety argument is
+    carried in prose this dense, that is what makes the next reviewer skip the
+    check.
+    Plus three smaller ones, all fixed: the "also found" docstring still
+    described the arithmetic it had before the section split; a scan whose every
+    large-file match sat inside a browser said nothing about them at all; the
+    collapsed header showed a capped list's floor as a total; and the tray effect
+    blanked, on mount, a menu-bar label another screen had set — which mattered
+    because this is the module the app opens on.
+  - [ ] **Sheets have no Escape handler and no backdrop dismissal**, app-wide:
+    `ConfirmSheet` here, `ConfirmModal` on Cleanup, and the Privacy and Large &
+    Old sheets. Found while measuring the overflow above, and not caused by it.
+    A modal that can only be left by a button is fine until the button is
+    unreachable, which is the state that made this worth writing down.
   - [ ] **The gate cannot see below the fold.** `capture()` passes
     `fullPage: true`, but the shell puts content in an `overflow-y-auto` flex
     child — so "full page" is the viewport, and **every baseline in this repo

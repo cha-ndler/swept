@@ -23,3 +23,28 @@ export function formatBytesParts(bytes: number): {
     ? { value: String(bytes), unit: "B" }
     : { value: size.toFixed(1), unit: units[unit] };
 }
+
+/** `/Users/someone/Downloads/x` → `~/Downloads/x`. Display only. */
+export function tilde(path: string): string {
+  return path.replace(/^\/Users\/[^/]+\//, "~/");
+}
+
+/** The folded path split into the part that locates it and the part that names it. */
+export function split(path: string): { dir: string; name: string } {
+  const p = tilde(path);
+  const slash = p.lastIndexOf("/");
+  return slash > 0
+    ? { dir: p.slice(0, slash), name: p.slice(slash + 1) }
+    : { dir: "", name: p };
+}
+
+/** "3y ago" / "8mo ago". An em dash when the mtime could not be read. */
+export function formatWhen(ms: number | null): string {
+  if (ms === null) return "\u2014";
+  const days = Math.floor((Date.now() - ms) / 86_400_000);
+  if (days < 1) return "today";
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}

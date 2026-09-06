@@ -8,6 +8,7 @@ import type {
   PrivacyBrowser,
   PrivacyReport,
   PrivacyRow,
+  LargeOldItem,
   ScanReport,
   SmartScanReport,
   SmartScanRunReport,
@@ -935,10 +936,35 @@ const smartSelectedBytes =
     .reduce((n, c) => n + c.bytes, 0) +
   smartPrivacy.reduce((n, r) => n + r.size_bytes, 0);
 
+/**
+ * The Large & Old rows a Smart Scan may offer.
+ *
+ * A strict subset of the module's own answer: `Firefox/Profiles/…/places.sqlite`
+ * is in the walk and **not** here, because the dispatcher refuses anything
+ * inside a browser's own data — history is Privacy's question, and it is asked
+ * there with the acknowledgement this screen does not have. The fixture carries
+ * both so a screenshot shows a list that is genuinely shorter than the scan.
+ */
+const smartLargeOfferable: LargeOldItem[] = SAMPLE_LARGE_OLD.items;
+
+const smartLargeWalk: LargeOldReport = {
+  ...SAMPLE_LARGE_OLD,
+  items: [
+    ...SAMPLE_LARGE_OLD.items,
+    {
+      path: `${L}/Application Support/Firefox/Profiles/8x1.default/places.sqlite`,
+      size_bytes: Math.round(1.4 * GiB),
+      modified_ms: Date.now() - 3 * DAY,
+    },
+  ],
+  matched: SAMPLE_LARGE_OLD.matched + 1,
+  matched_bytes: SAMPLE_LARGE_OLD.matched_bytes + Math.round(1.4 * GiB),
+};
+
 const smartFoundBytes =
   smartCleanup.reduce((n, c) => n + c.bytes, 0) +
   privacyOfferable.reduce((n, r) => n + r.size_bytes, 0) +
-  SAMPLE_LARGE_OLD.matched_bytes;
+  smartLargeOfferable.reduce((n, i) => n + i.size_bytes, 0);
 
 export const SAMPLE_SMART_SCAN: SmartScanReport = {
   // Fixed, so a screenshot is reproducible. Nothing renders it: it exists to be
@@ -956,7 +982,8 @@ export const SAMPLE_SMART_SCAN: SmartScanReport = {
   },
   cleanup: smartCleanup,
   privacy: smartPrivacy,
-  large_old: SAMPLE_LARGE_OLD,
+  large_old: smartLargeWalk,
+  large_old_offerable: smartLargeOfferable,
   startup: {
     starts_at_login: SAMPLE_STARTUP.starts_at_login,
     can_act_on: SAMPLE_STARTUP.items.filter((i) => i.offerable).length,
@@ -1086,4 +1113,23 @@ export const SAMPLE_SMART_SCAN_STOPPED: SmartScanRunReport = {
   bytes_freed: Math.round(1.2 * GiB),
   entries_freed: 0,
   actions_refused: 2,
+};
+
+/**
+ * A scan whose large-file list is long enough to overflow the sheet.
+ *
+ * Sixty rows, because the confirmation sheet is the one surface here that grows
+ * with the selection: measured before the fix, the title clipped off the top at
+ * ~32 ticked files and both buttons sat below the fold at ~36, on a modal with
+ * no Escape handler and no backdrop dismissal. It failed *safe* — nobody can
+ * confirm a button they cannot reach — which is precisely why it would have
+ * shipped unnoticed.
+ */
+export const SAMPLE_SMART_SCAN_MANY_FILES: SmartScanReport = {
+  ...SAMPLE_SMART_SCAN,
+  large_old_offerable: Array.from({ length: 60 }, (_, i) => ({
+    path: `/Users/tester/Movies/render-pass-${String(i + 1).padStart(3, "0")}.mov`,
+    size_bytes: Math.round((1.4 + (i % 7) * 0.3) * GiB),
+    modified_ms: Date.now() - (120 + i * 11) * DAY,
+  })),
 };

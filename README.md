@@ -53,6 +53,15 @@ when the walk could not see everything:
 
 ![Confirmation](docs/screenshot-confirm.png)
 
+**Applications** — what an app left behind after you removed it, matched on the
+exact bundle id:
+
+![Applications](docs/screenshot-applications.png)
+
+**Privacy** — organised by what it costs you, not by size:
+
+![Privacy](docs/screenshot-privacy.png)
+
 **Startup** — what runs at login, and what this app can and cannot change:
 
 ![Startup](docs/screenshot-startup.png)

@@ -26,6 +26,7 @@ use safety::{allowlist, guard, guard_dir, DirLimits, SafeDir, SafePath};
 
 use crate::audit::{now_ms, AuditEntry, AuditLog, Disposition, Phase};
 use crate::plan::{Disposal, Plan, PlannedMove, StashPlan};
+use crate::privilege;
 
 /// Where disposed files go. Abstracted so tests avoid the real system Trash.
 ///
@@ -61,13 +62,18 @@ pub trait Sink {
     /// worst outcome is a refusal instead of a recursive unlink of a tree
     /// nobody vetted.
     ///
-    /// One caveat, stated because a safety property in the trust boundary
-    /// should not overstate: `unlink(2)` documents that `EPERM` for a directory
-    /// applies when the effective user is **not** the super-user. Running this
-    /// tool under `sudo` is neither required nor prevented, and nothing here
-    /// checks `geteuid`. Even then the exposure is a stray directory-entry
-    /// removal rather than a recursive unlink — but it is not the flat
-    /// guarantee the non-root case gives.
+    /// The caveat that used to sit here — `unlink(2)` documents that `EPERM`
+    /// for a directory applies when the effective user is **not** the
+    /// super-user, so the backstop is absent under `sudo` — is now closed
+    /// rather than merely stated: [`execute`] refuses the whole run as root,
+    /// before the sink is reached and before the audit log is touched. See
+    /// [`crate::privilege`] for why the refusal is whole-run and why a preview
+    /// is refused too.
+    ///
+    /// So the guarantee here is unconditional *for callers that come through
+    /// [`execute`]*, which is every caller in this workspace. A caller holding
+    /// a `SystemSink` directly still gets `unlink(2)`'s own semantics, which is
+    /// why the refusal lives at the run boundary rather than only here.
     fn delete(&self, path: &Path) -> io::Result<()>;
 }
 
@@ -200,6 +206,16 @@ pub enum ExecError {
     },
     /// The audit log could not be written. We refuse to act without a record.
     Audit(io::Error),
+    /// The run is happening as the super-user. Refused whole-run, in both
+    /// modes — see [`crate::privilege`] for why a dry run is refused too.
+    ///
+    /// This layer is defence in depth rather than the enforcement: by the time
+    /// `execute` is reached the caller is holding an open [`AuditLog`], and
+    /// [`AuditLog::open`] is where the refusal actually prevents the root-owned
+    /// file. Unlike every other whole-run refusal here this one is not recorded
+    /// on the way out — appending to a log that should not exist would only add
+    /// to it — but the reason the file does not exist lives one layer up.
+    SuperUser(&'static str),
 }
 
 impl fmt::Display for ExecError {
@@ -219,6 +235,7 @@ impl fmt::Display for ExecError {
                     "refused: cannot write audit log (aborting to stay safe): {e}"
                 )
             }
+            ExecError::SuperUser(why) => write!(f, "{why}"),
         }
     }
 }
@@ -233,6 +250,36 @@ pub fn execute(
     sink: &dyn Sink,
     audit: &mut AuditLog,
 ) -> Result<ExecReport, ExecError> {
+    execute_as(plan, consent, home, sink, audit, privilege::effective_uid())
+}
+
+/// [`execute`], with the effective user supplied rather than read.
+///
+/// Private, and private is the point: a test process cannot become root, so the
+/// refusal below would otherwise be wired-but-unexercised — the shape of bug
+/// this project treats as worse than no check at all. Keeping the seam inside
+/// the module means the in-module tests can drive it while no caller outside
+/// this crate can hand it a uid it does not have.
+fn execute_as(
+    plan: &Plan,
+    consent: Consent,
+    home: &Path,
+    sink: &dyn Sink,
+    audit: &mut AuditLog,
+    euid: u32,
+) -> Result<ExecReport, ExecError> {
+    // Not recorded on the way out, unlike every other whole-run refusal here.
+    //
+    // Stated precisely, because the obvious version of this sentence is false:
+    // the log file already exists by now — the caller opened it before calling
+    // us — so declining to append does not prevent a root-owned file. What
+    // prevents it is `AuditLog::open`, which refuses first. This is the second
+    // layer, and all it can honestly claim is that it does not add to a log
+    // that should not have been openable.
+    if let Some(why) = privilege::refusal(euid) {
+        return Err(ExecError::SuperUser(why));
+    }
+
     let mut report = ExecReport::default();
 
     // --- Bound the grant lists, in both modes. ---
@@ -826,6 +873,9 @@ pub enum StashError {
         max: usize,
     },
     Audit(io::Error),
+    /// The run is happening as the super-user. See [`ExecError::SuperUser`];
+    /// this one is likewise not recorded on the way out.
+    SuperUser(&'static str),
 }
 
 impl std::fmt::Display for StashError {
@@ -842,6 +892,7 @@ impl std::fmt::Display for StashError {
                 "{count} granted paths is more than the {max} this run allows"
             ),
             StashError::Audit(e) => write!(f, "the audit log could not be written: {e}"),
+            StashError::SuperUser(why) => write!(f, "{why}"),
         }
     }
 }
@@ -998,7 +1049,16 @@ pub fn stash(
     sink: &dyn StashSink,
     audit: &mut AuditLog,
 ) -> Result<StashReport, StashError> {
-    move_files(plan, consent, store, home, sink, audit, Direction::Aside)
+    move_files(
+        plan,
+        consent,
+        store,
+        home,
+        sink,
+        audit,
+        Direction::Aside,
+        privilege::effective_uid(),
+    )
 }
 
 /// Put each planned file back under the name it had.
@@ -1014,7 +1074,16 @@ pub fn restore(
     sink: &dyn StashSink,
     audit: &mut AuditLog,
 ) -> Result<StashReport, StashError> {
-    move_files(plan, consent, store, home, sink, audit, Direction::Back)
+    move_files(
+        plan,
+        consent,
+        store,
+        home,
+        sink,
+        audit,
+        Direction::Back,
+        privilege::effective_uid(),
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1023,6 +1092,7 @@ enum Direction {
     Back,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn move_files(
     plan: &StashPlan,
     consent: StashConsent,
@@ -1031,7 +1101,16 @@ fn move_files(
     sink: &dyn StashSink,
     audit: &mut AuditLog,
     direction: Direction,
+    euid: u32,
 ) -> Result<StashReport, StashError> {
+    // Before the gate below, which records its refusals. Same layering as
+    // `execute_as`: the file was already opened by the caller, so this adds
+    // nothing to a log rather than preventing one. `AuditLog::open` is the
+    // layer that prevents it.
+    if let Some(why) = privilege::refusal(euid) {
+        return Err(StashError::SuperUser(why));
+    }
+
     // Every whole-run refusal leaves a record, for the reason
     // `record_run_refusal` exists: a caller sending a protected or foreign path
     // is exactly the signal worth having in the log, and it was the one thing
@@ -1497,5 +1576,153 @@ mod stash_tests {
 
         let wrong = crate::loginitems::default_dir(&home).join("Something else");
         assert!(validate_store(&wrong, &home).is_err());
+    }
+}
+
+#[cfg(test)]
+mod privilege_tests {
+    use super::*;
+    use crate::privilege::SUPER_USER;
+    use crate::scanner::{scan, ScanConfig};
+    use std::fs;
+
+    /// A throwaway home with one cache file in it, and a plan that would
+    /// dispose of it. SAFETY CONTRACT item 7 — never a real path.
+    fn fixture() -> (tempfile::TempDir, PathBuf, Plan) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = fs::canonicalize(dir.path()).unwrap();
+        fs::create_dir_all(home.join("Library/Caches/app")).unwrap();
+        fs::write(home.join("Library/Caches/app/a.bin"), b"12345").unwrap();
+        let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+        assert_eq!(plan.actions.len(), 1, "fixture should plan one disposal");
+        (dir, home, plan)
+    }
+
+    fn log_at(home: &Path) -> (PathBuf, AuditLog) {
+        let p = home.join("audit.jsonl");
+        let log = AuditLog::open(&p).unwrap();
+        (p, log)
+    }
+
+    /// The whole point. Without the check this is a successful run that moves
+    /// the file to the sink.
+    #[test]
+    fn a_run_as_the_super_user_is_refused_and_disposes_of_nothing() {
+        let (_g, home, plan) = fixture();
+        let (_p, mut log) = log_at(&home);
+        let sink = DirSink {
+            trash_dir: home.join("fixture-trash"),
+        };
+        let consent = Consent {
+            execute: true,
+            confirmed_mass_delete: true,
+            ..Default::default()
+        };
+
+        let err = execute_as(&plan, consent, &home, &sink, &mut log, SUPER_USER).unwrap_err();
+        assert!(matches!(err, ExecError::SuperUser(_)), "{err:?}");
+        assert!(
+            home.join("Library/Caches/app/a.bin").exists(),
+            "the file was disposed of despite the refusal"
+        );
+    }
+
+    /// A dry run mutates nothing, so refusing it is a choice rather than a
+    /// necessity — and it is the right one. See `crate::privilege`: a preview
+    /// still appends its plan to the audit log, and an audit log created by
+    /// root is what stops every later ordinary run from recording itself.
+    #[test]
+    fn even_a_preview_is_refused_as_the_super_user() {
+        let (_g, home, plan) = fixture();
+        let (_p, mut log) = log_at(&home);
+        let sink = DirSink {
+            trash_dir: home.join("fixture-trash"),
+        };
+
+        let err = execute_as(
+            &plan,
+            Consent::default(),
+            &home,
+            &sink,
+            &mut log,
+            SUPER_USER,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ExecError::SuperUser(_)), "{err:?}");
+    }
+
+    /// Every other whole-run refusal in this module records itself on the way
+    /// out; this one does not.
+    ///
+    /// What this pins is exactly "no bytes appended", and no more than that —
+    /// worth naming, because an earlier version of the comment above claimed it
+    /// pinned "no root-owned file created", which it cannot: the fixture has to
+    /// open the log before calling, so the file exists by construction. That
+    /// property belongs to `AuditLog::open` and is tested there.
+    #[test]
+    fn the_refusal_writes_nothing_to_the_audit_log() {
+        let (_g, home, plan) = fixture();
+        let (path, mut log) = log_at(&home);
+        let sink = DirSink {
+            trash_dir: home.join("fixture-trash"),
+        };
+        let consent = Consent {
+            execute: true,
+            confirmed_mass_delete: true,
+            ..Default::default()
+        };
+
+        execute_as(&plan, consent, &home, &sink, &mut log, SUPER_USER).unwrap_err();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            written.is_empty(),
+            "the refusal appended to the audit log: {written:?}"
+        );
+    }
+
+    /// The same uid that is refused above is accepted here, so the test above
+    /// is pinning the refusal rather than some other failure the fixture would
+    /// have produced anyway.
+    #[test]
+    fn an_ordinary_user_is_not_refused() {
+        let (_g, home, plan) = fixture();
+        let (_p, mut log) = log_at(&home);
+        let sink = DirSink {
+            trash_dir: home.join("fixture-trash"),
+        };
+        let consent = Consent {
+            execute: true,
+            confirmed_mass_delete: true,
+            ..Default::default()
+        };
+
+        let report = execute_as(&plan, consent, &home, &sink, &mut log, 501).unwrap();
+        assert_eq!(report.executed, 1);
+        assert!(!home.join("Library/Caches/app/a.bin").exists());
+    }
+
+    /// Moving a login item aside is the other mutator in this module, and it
+    /// has its own entry point — so it needs its own refusal rather than
+    /// inheriting `execute`'s.
+    #[test]
+    fn moving_a_file_aside_is_refused_as_the_super_user() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = fs::canonicalize(dir.path()).unwrap();
+        let store = crate::loginitems::store_dir(&home);
+        fs::create_dir_all(&store).unwrap();
+        let (_p, mut log) = log_at(&home);
+
+        let err = move_files(
+            &StashPlan::default(),
+            StashConsent::default(),
+            &store,
+            &home,
+            &SystemStashSink,
+            &mut log,
+            Direction::Aside,
+            SUPER_USER,
+        )
+        .unwrap_err();
+        assert!(matches!(err, StashError::SuperUser(_)), "{err}");
     }
 }

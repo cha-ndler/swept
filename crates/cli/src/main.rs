@@ -17,6 +17,7 @@ use swept_core::executor::{execute, Consent, SystemSink};
 use swept_core::loginitems::{self, LoginItem, StartClass};
 use swept_core::plan::{Plan, MASS_DELETE_BYTES, MASS_DELETE_COUNT};
 use swept_core::privacy;
+use swept_core::privilege;
 use swept_core::report::ScanReport;
 use swept_core::scanner::{scan, ScanConfig};
 
@@ -93,6 +94,19 @@ fn main() -> ExitCode {
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    // Before anything else, and in particular before the audit log is opened.
+    //
+    // `executor::execute` refuses a privileged run too, and that is the
+    // guarantee — but by the time it is reached the log file has already been
+    // created by `AuditLog::open`, and creating it as root is half of the harm
+    // this refusal exists to prevent: the file stays root-owned, and every
+    // later ordinary run aborts because it cannot record itself. So the front
+    // door has to refuse first, even for a read-only `scan`, which also writes
+    // its plan to the log.
+    if let Some(why) = privilege::refusal(privilege::effective_uid()) {
+        return Err(why.into());
+    }
 
     let home = dirs::home_dir().ok_or("cannot determine home directory")?;
     let home = canonical_home(&home)?;

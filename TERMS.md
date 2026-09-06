@@ -205,9 +205,11 @@ the remainder stays in force. In particular, if any part of section 5 is held
 unenforceable, the remaining limitations continue to apply.
 
 **Governing law.** These Terms are governed by the laws of the State of
-__GOVERNING_STATE__, United States, without regard to its conflict-of-laws
-rules. The United Nations Convention on Contracts for the International Sale of
-Goods does not apply.
+Maryland, United States, without regard to its conflict-of-laws rules. The
+United Nations Convention on Contracts for the International Sale of Goods does
+not apply. Nothing here deprives you of the protection of mandatory consumer
+law in your own place of residence, where that law applies regardless of this
+clause.
 
 **Entire agreement.** These Terms, together with the MIT License as it applies
 to the source code, are the entire agreement between you and us regarding the

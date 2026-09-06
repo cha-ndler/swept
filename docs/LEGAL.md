@@ -112,16 +112,71 @@ natural home for a paid tier later.
 - **It only holds if you keep it separate.** Commingle personal and business
   money, skip the annual filing, sign in your own name instead of the
   company's, and a court can pierce the veil. The formalities are the product.
-- **It is not free.** Formation is $50–500, a registered agent is $100–150/yr,
-  and the annual state cost ranges from roughly nothing (New Mexico) to $800/yr
-  (California's minimum franchise tax, owed even on zero revenue). Form in the
-  state you actually live and work in unless there is a specific reason not to
-  — a Wyoming LLC operating from another state usually has to register there as
-  a foreign entity anyway, and you pay both.
+- **It is not free.** In Maryland: $100 to form, then **$300 every year** for
+  the Annual Report / Personal Property Return, owed on zero revenue, plus
+  $100–150/yr if you would rather not have your home address on SDAT's public
+  business search. Miss the annual filing long enough and the charter is
+  forfeited, which removes the shield entirely — the one failure mode here that
+  is both cheap to avoid and total if ignored.
 
 For a free tool the realistic probability of being sued is low. The LLC is
 cheap insurance and a prerequisite for the Apple organization enrollment you
 want anyway; it is not the main protection.
+
+### Why Maryland and not Delaware
+
+The received wisdom is to form in Delaware. It does not apply here, and the
+arithmetic runs the other way.
+
+**Delaware costs more, every year, forever.** Forming in Delaware does not stop
+Swept from being developed and published from Maryland, so the LLC would be
+doing business in Maryland and would have to register there as a foreign entity
+anyway — $100, plus a Delaware certificate of good standing. After that you owe
+*both* states annually:
+
+| | Maryland only | Delaware + Maryland |
+|---|---|---|
+| Formation | $100 | $110 DE + $100 MD foreign registration |
+| Annual, state 1 | $300 (Form 1, Apr 15) | $400 DE franchise tax (Jun 1) |
+| Annual, state 2 | — | $300 MD Form 1 (Apr 15) |
+| Resident/registered agent | optional | **mandatory** in DE, ~$50–300/yr |
+| **Ongoing total** | **$300/yr** | **~$750–1,000/yr** |
+
+Delaware's LLC franchise tax rose from $300 to **$400** — the state's own page
+now states the higher figure, so the $300 quoted in most guides is stale.
+
+**And it buys nothing this project needs.** Delaware's advantages are real but
+specific: the Court of Chancery, a deep body of case law, and predictable
+default rules for disputes *among owners and managers*. Those are internal
+affairs. A single-member LLC with no investors, no co-founders and no board has
+no internal affairs to litigate. The reason startups incorporate in Delaware is
+that institutional investors require it, and there are no investors here.
+
+**The risk you actually have is a tort claim from a user whose data went away,
+and Delaware does not help with that.** The internal affairs doctrine sends
+governance questions to the state of formation; it does not send a product
+liability or negligence claim there. That claim is governed by the forum's
+choice-of-law rules, which generally point at where the harm happened — the
+user's state — regardless of where the LLC was filed.
+
+**Maryland is, if anything, the better forum for the one question that matters.**
+Where the state of formation *does* bear on the shield is veil-piercing, and
+Maryland is among the most protective states in the country. Under *Bart
+Arconti & Sons v. Ames-Ennis*, 275 Md. 295 (1975), the veil is pierced only "to
+prevent fraud or enforce a paramount equity" — and Maryland's appellate courts
+have never found a paramount equity sufficient on its own, so in practice fraud
+is required. Forming at home costs less *and* lands you in a jurisdiction that
+is hostile to the argument a plaintiff would need to make.
+
+**Wyoming, Nevada and New Mexico fail the same way** — cheaper annual fees, but
+you still register in Maryland, still pay Maryland, and still add a second
+state's filings. The "$50/yr Wyoming LLC" is $50 *on top of* Maryland, not
+instead of it.
+
+The one thing that genuinely does not care about the state line is the
+participation doctrine: Maryland, like most states, holds a member personally
+liable for torts they personally commit, however the entity is organised. That
+is why the entity is layer 5 of five, and the code is layer 1.
 
 ## Why not the Mac App Store
 
@@ -170,9 +225,16 @@ and the icon are all built is the expensive version.
 
 ## The open questions, tracked
 
-- [ ] Attorney review of `TERMS.md` and `PRIVACY.md` in the formation state.
-- [ ] `__LEGAL_ENTITY__` and `__GOVERNING_STATE__` replaced everywhere
-      (`scripts/verify.sh` fails while any placeholder remains).
+- [ ] Attorney review of `TERMS.md` and `PRIVACY.md` — a Maryland attorney,
+      now that the governing law is Maryland.
+- [x] `__GOVERNING_STATE__` resolved to Maryland — see "Why Maryland and not
+      Delaware" above.
+- [ ] `__LEGAL_ENTITY__` replaced everywhere (`scripts/verify.sh --bundle`
+      fails while any placeholder remains).
+- [ ] Tech E&O / professional liability quote. For a free tool the premium is
+      small, and it is the only layer here that *pays* rather than merely
+      capping exposure — the entity limits what a loss can reach, insurance is
+      what answers the loss.
 - [ ] Trademark knockout search for "Swept" in class 9.
 - [ ] Copyright line in `LICENSE` updated from `cha-ndler` to the entity.
 - [ ] Decide whether the repository goes public at launch (MIT already assumes

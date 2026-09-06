@@ -22,18 +22,34 @@ later means a new Team ID, which means a new Developer ID certificate, which
 means macOS treats the next release as a different developer.** So the entity
 comes first.
 
-- [ ] Form the LLC in the state you actually live and work in. A Wyoming or
-      Delaware LLC operated from elsewhere generally has to register as a
-      foreign entity in the state you operate from anyway — you pay both, and
-      gain nothing at this scale.
+- [ ] Form the LLC **in Maryland** — the state the work is actually done in.
+      See [`LEGAL.md`](LEGAL.md), "Why Maryland and not Delaware", for the
+      arithmetic and the case law. The short version: Delaware would cost two
+      to three times Maryland's $300/yr and would not improve the shield,
+      because Maryland is one of the hardest states in the country to pierce.
 - [ ] Get an EIN from the IRS. Free, online, issued immediately.
 - [ ] Open a business bank account and **keep it strictly separate**. The
       liability shield depends on the formalities being observed, not on the
       filing existing.
-- [ ] Appoint a registered agent (~$100–150/yr) unless you are serving as your
-      own and are comfortable with your address being public record.
-- [ ] Put the entity's name and formation state into the placeholders — see
-      step 6.
+- [ ] Appoint a resident agent — Maryland's term for a registered agent
+      (~$100–150/yr) — unless you are serving as your own and are comfortable
+      with your home address being public record on SDAT's business search.
+- [ ] Adopt a written operating agreement. Maryland does not file it, but for a
+      single-member LLC it is a large part of what makes the entity look like an
+      entity rather than a bank account with a name.
+- [ ] **Diary April 15, every year.** Maryland's Annual Report / Personal
+      Property Return (SDAT Form 1) is $300 and is not optional. Miss it for
+      long enough and SDAT forfeits the charter — at which point there is no
+      shield at all, which is the failure mode that matters here. The 2022
+      proposal to zero-rate online filings did not become law; the only
+      practical waiver requires employees and MarylandSaves payroll
+      contributions, so it will not apply.
+- [ ] Assign the copyright in the existing code to the LLC in writing, and
+      update [`LICENSE`](../LICENSE) — see step 6. If the entity is the
+      publisher but you personally still own the copyright, the two layers do
+      not line up.
+- [ ] Put the entity's exact legal name into `__LEGAL_ENTITY__` — see step 6.
+      `__GOVERNING_STATE__` is already resolved to Maryland.
 
 ### 2. Get a D-U-N-S number
 
@@ -106,8 +122,12 @@ Two placeholders are seeded through the repository and
 rg -l '__LEGAL_ENTITY__|__GOVERNING_STATE__'
 ```
 
-- [ ] Replace `__LEGAL_ENTITY__` with the entity's exact legal name.
-- [ ] Replace `__GOVERNING_STATE__` with the formation state.
+- [ ] Replace `__LEGAL_ENTITY__` with the entity's exact legal name — the same
+      string, character for character, as the D-U-N-S record and the Apple
+      enrollment. A mismatch between the three is what stalls enrollment.
+- [ ] `__GOVERNING_STATE__` is **already resolved to Maryland** in
+      [`TERMS.md`](../TERMS.md). Nothing to do unless the entity is formed
+      somewhere else, in which case revisit `LEGAL.md` first.
 - [ ] Update the copyright line in [`LICENSE`](../LICENSE) from `cha-ndler` to
       the entity.
 - [ ] Have an attorney read [`TERMS.md`](../TERMS.md) and

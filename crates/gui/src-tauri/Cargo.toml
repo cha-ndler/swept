@@ -1,3 +1,11 @@
+# This crate is its own workspace root. The repo root's `workspace.exclude`
+# already achieves that in the main checkout, but a git worktree lives at
+# `.claude/worktrees/<name>/` *inside* the main repo, so cargo's upward search
+# finds the outer root `Cargo.toml` — whose `exclude` path does not match the
+# nested location. An empty `[workspace]` makes the crate self-describing
+# wherever the checkout sits, so `scripts/verify.sh --gui` runs from a worktree.
+[workspace]
+
 [package]
 name = "swept-gui"
 version = "0.4.1"

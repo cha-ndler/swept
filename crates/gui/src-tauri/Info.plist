@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the generated Info.plist by the Tauri CLI. Only keys the CLI does
+  not already produce belong here — do not restate the name, version or bundle
+  identifier, which come from tauri.conf.json.
+
+  These are the TCC purpose strings. macOS shows the matching one in the consent
+  dialog the first time a scan reaches a protected folder, and an app that has
+  no string for a folder it touches gets a generic prompt or is refused outright.
+
+  They are written to say what Swept actually does with the access, and to be
+  true about the limits, because this dialog is the only place many users will
+  read anything about the app's intentions. "To improve your experience" would
+  be worthless here.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Swept lists the largest and oldest files on your Desktop so you can see what is taking up space. It never removes anything from here without you selecting it first.</string>
+
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Swept lists the largest and oldest files in your Documents folder so you can see what is taking up space. It never removes anything from here without you selecting it first.</string>
+
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Swept lists the largest and oldest files in your Downloads folder so you can see what is taking up space. It never removes anything from here without you selecting it first.</string>
+
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Swept measures space used on connected volumes so its totals are accurate. It does not clean removable volumes.</string>
+
+	<!--
+	  Declares that the app uses no non-exempt encryption, which is true: it has
+	  no network code at all. Without this key, every notarized upload asks the
+	  export-compliance question again. Revisit if the updater (roadmap D3) ever
+	  ships, since TLS is exempt but the answer should be made deliberately.
+	-->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+
+	<!--
+	  Swept reads and writes only inside the user's home directory and offers no
+	  document types, so it opts out of being a document-based app entirely.
+	-->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 __LEGAL_ENTITY__. Provided as is, with no warranty. See TERMS.md.</string>
+</dict>
+</plist>

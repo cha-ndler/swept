@@ -41,6 +41,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "copyright": "Copyright © 2026 __LEGAL_ENTITY__. MIT licensed; see TERMS.md.",
+    "licenseFile": "../../../LICENSE",
+    "macOS": {
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist"
+    }
   }
 }

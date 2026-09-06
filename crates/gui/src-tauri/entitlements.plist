@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened Runtime entitlements for the Developer ID build.
+
+  Notarization requires the Hardened Runtime, and the Hardened Runtime blocks
+  several things by default. This file re-enables the minimum needed and
+  nothing else.
+
+  DELIBERATELY ABSENT, and each one should stay absent unless a signed build
+  actually proves it necessary:
+
+    com.apple.security.app-sandbox
+        Swept reads other applications' caches, ~/Library/Logs, browser
+        profiles and LaunchAgents. No sandbox entitlement makes that possible,
+        which is the reason this app is not on the Mac App Store at all
+        (docs/LEGAL.md). Adding it here would break every scanner.
+
+    com.apple.security.cs.disable-library-validation
+        Lets the process load libraries signed by anyone. Swept loads no
+        plug-ins and no external binaries, so it has no reason to. Widely
+        cargo-culted into Tauri entitlement files; do not copy it in without a
+        crash log that names library validation as the cause.
+
+    com.apple.security.cs.allow-unsigned-executable-memory
+        Strictly broader than allow-jit below, and blunter. If the webview
+        turns out to need something, try it only after allow-jit has been
+        proven insufficient.
+
+    com.apple.security.automation.apple-events
+        Only needed to drive other apps. Disposal goes through NSFileManager's
+        trashItem (the `trash` crate's default path on macOS), not Finder
+        Apple Events, so nothing here sends one.
+
+  UNVERIFIED UNTIL THE FIRST SIGNED BUILD: allow-jit below is included because
+  WKWebView's JavaScript engine may need it in the host process. It is the
+  narrow, correct entitlement for JIT and does not weaken the runtime the way
+  the two alternatives above do. If a *notarized* build launches cleanly
+  without it, take it out — see docs/RELEASING.md, "Verifying the signed build".
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>

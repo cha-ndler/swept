@@ -10,8 +10,10 @@ description = "Frontend-facing command layer for the Swept GUI: thin, tested wra
 swept-core = { path = "../core" }
 swept-safety = { path = "../safety" }
 serde.workspace = true
+serde_json.workspace = true
 dirs.workspace = true
+# For atomically staging the acceptance record: a randomly named staging file
+# closes the planted-symlink hole a predictable one opens. See acceptance.rs.
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
-serde_json.workspace = true

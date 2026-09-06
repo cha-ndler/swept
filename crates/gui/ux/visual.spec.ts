@@ -133,6 +133,17 @@ async function installBackend(
           return Promise.resolve(1);
         }
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The harness stands in for a user who has already accepted the
+        // terms, the same way the perms fixture stands in for one who granted
+        // full disk access — otherwise every screenshot below would be of the
+        // first-run sheet. The gate itself is captured by its own test.
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
         // The permission probe is advisory and must answer even while a scan
         // hangs, otherwise the loading screenshot would race it.
         if (cmd === "permissions") return Promise.resolve(p.perms);
@@ -409,6 +420,17 @@ test("scan error", async ({ page }, testInfo) => {
       invoke: (cmd: string) => {
         if (cmd === "plugin:event|listen") return Promise.resolve(1);
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The harness stands in for a user who has already accepted the
+        // terms, the same way the perms fixture stands in for one who granted
+        // full disk access — otherwise every screenshot below would be of the
+        // first-run sheet. The gate itself is captured by its own test.
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
         return Promise.reject(
           "Couldn’t read ~/Library/Caches (permission denied).",
         );
@@ -543,6 +565,17 @@ test("a refused disposal is surfaced, not swallowed", async ({
       invoke: (cmd: string) => {
         if (cmd === "plugin:event|listen") return Promise.resolve(1);
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The harness stands in for a user who has already accepted the
+        // terms, the same way the perms fixture stands in for one who granted
+        // full disk access — otherwise every screenshot below would be of the
+        // first-run sheet. The gate itself is captured by its own test.
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
         if (cmd === "permissions")
           return Promise.resolve({
             trash_readable: true,
@@ -605,6 +638,17 @@ test("large-old error", async ({ page }, testInfo) => {
       invoke: (cmd: string) => {
         if (cmd === "plugin:event|listen") return Promise.resolve(1);
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The harness stands in for a user who has already accepted the
+        // terms, the same way the perms fixture stands in for one who granted
+        // full disk access — otherwise every screenshot below would be of the
+        // first-run sheet. The gate itself is captured by its own test.
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
         if (cmd === "permissions")
           return Promise.resolve({
             trash_readable: true,
@@ -741,6 +785,17 @@ test("space-lens error", async ({ page }, testInfo) => {
       invoke: (cmd: string) => {
         if (cmd === "plugin:event|listen") return Promise.resolve(1);
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The harness stands in for a user who has already accepted the
+        // terms, the same way the perms fixture stands in for one who granted
+        // full disk access — otherwise every screenshot below would be of the
+        // first-run sheet. The gate itself is captured by its own test.
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
         if (cmd === "permissions")
           return Promise.resolve({
             trash_readable: true,
@@ -925,6 +980,17 @@ test("applications error", async ({ page }, testInfo) => {
       invoke: (cmd: string) => {
         if (cmd === "plugin:event|listen") return Promise.resolve(1);
         if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // The harness stands in for a user who has already accepted the
+        // terms, the same way the perms fixture stands in for one who granted
+        // full disk access — otherwise every screenshot below would be of the
+        // first-run sheet. The gate itself is captured by its own test.
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
         if (cmd === "permissions")
           return Promise.resolve({
             trash_readable: true,
@@ -1453,4 +1519,69 @@ test("smart scan refused", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Move to Trash" }).click();
   await expect(page.getByText(/14 minutes old/)).toBeVisible();
   await capture(page, "smart-scan-refused", testInfo.project.name);
+});
+
+// --- First-run terms gate ---------------------------------------------------
+//
+// The one screen every user sees before any other. It is captured with a mock
+// that answers `terms_status` as NOT accepted — the inverse of the fixture
+// every other test here uses — because that is the only state in which it
+// renders.
+//
+// NOTE for review: this component and its baseline arrive in the same commit,
+// so the snapshot below records the render rather than checking it (see
+// CLAUDE.md). The assertions are therefore deliberately about *behaviour* —
+// that the primary is disabled until both boxes are ticked, and that the app
+// behind the gate is not reachable — rather than about pixels, and `ux-critic`
+// should measure this one rather than read it.
+test("terms gate", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__TAURI_INTERNALS__ = {
+      invoke: (cmd: string) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: false,
+            terms_version: "1.0",
+            terms_digest: "0123456789abcdef",
+            accepted_version: null,
+          });
+        if (cmd === "terms_text")
+          return Promise.resolve(
+            "# Terms of Use — Swept\n\n**Version 1.0.**\n\n" +
+              "## 4. DISCLAIMER OF WARRANTIES\n\nTHE SOFTWARE IS PROVIDED " +
+              '"AS IS" AND "AS AVAILABLE", WITH ALL FAULTS AND WITHOUT ' +
+              "WARRANTY OF ANY KIND.\n\n## 5. LIMITATION OF LIABILITY\n\n" +
+              "IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY LOSS OF, " +
+              "CORRUPTION OF, OR INABILITY TO RECOVER DATA.\n",
+          );
+        return Promise.resolve(null);
+      },
+      transformCallback: (cb: unknown) => cb,
+    };
+  });
+  await page.goto("/");
+
+  const accept = page.getByRole("button", { name: /accept and continue/i });
+  await expect(accept).toBeVisible();
+
+  // The app must not be reachable behind the gate — a modal you can ignore is
+  // not consent.
+  await expect(page.getByRole("navigation", { name: "Modules" })).toHaveCount(0);
+
+  // Neither box is pre-ticked, so the primary starts disabled.
+  await expect(accept).toBeDisabled();
+
+  // One box is not enough: they are separate promises.
+  await page
+    .getByRole("checkbox", { name: /read and accept the terms/i })
+    .check();
+  await expect(accept).toBeDisabled();
+
+  await page.getByRole("checkbox", { name: /keep a current backup/i }).check();
+  await expect(accept).toBeEnabled();
+
+  await capture(page, "terms-gate", testInfo.project.name);
 });

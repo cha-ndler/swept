@@ -74,6 +74,34 @@ be wrong. If a review changed your mind, say so; that is the most useful part.
 Anything you can *see* goes through screenshots and a human's eye before it
 lands. Backend work merges on a green gate.
 
+## Licensing your contribution
+
+Swept is MIT, and contributions come in under the same terms — there is no CLA
+to sign and no copyright to assign. What is asked instead is a **Developer
+Certificate of Origin** sign-off: one line certifying that you wrote the patch,
+or otherwise have the right to submit it under MIT.
+
+```bash
+git commit -s -m "your message"
+```
+
+`-s` appends `Signed-off-by: Your Name <your@email>`. The full text of what you
+are certifying is at <https://developercertificate.org/> — it is eleven lines
+and worth the minute.
+
+This exists because Swept is distributed as a signed binary under a legal
+entity's name, and that entity has to be able to say where the code came from.
+It is the lightest mechanism that achieves it: the kernel, Git and Docker all
+use the same one. See [`docs/LEGAL.md`](docs/LEGAL.md) if you want the
+reasoning.
+
+**If you change anything a user reads before agreeing to it** — `TERMS.md`, the
+first-run gate in `crates/gui/src/TermsGate.tsx`, or the notice the CLI prints —
+say so prominently in the PR. Revising `TERMS.md` means bumping its version
+line, which asks every existing user to accept again on their next launch.
+`./scripts/verify.sh` fails if that version and
+`acceptance::TERMS_VERSION` disagree.
+
 ## What is likely to be turned down
 
 - Widening `default_roots`, or carving an exception into the denylist.

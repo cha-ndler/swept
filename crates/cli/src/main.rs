@@ -153,6 +153,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::FAILURE);
             }
 
+            // Notice, not a prompt, and only once every gate above has passed
+            // so it never precedes a refusal that means nothing happened.
+            // `--execute` is already an affirmative act, and a blocking
+            // question here would make the CLI unusable from a script — which
+            // is what it is for. stderr, so `--json` consumers are unaffected.
+            print_terms_notice();
+
             let consent = Consent {
                 execute: true,
                 allow_permanent: permanent,
@@ -256,6 +263,20 @@ fn parse_size(input: &str) -> Result<u64, String> {
     value
         .checked_mul(multiplier)
         .ok_or_else(|| format!("size too large: {input:?}"))
+}
+
+/// One-line risk notice printed before the CLI acts for real.
+///
+/// The GUI presents the full terms and records an acceptance; the CLI does not,
+/// because a modal has no equivalent here and a prompt would break scripted
+/// use. What it can honestly do is state the position and say where to read it,
+/// every time it is about to change something.
+fn print_terms_notice() {
+    eprintln!();
+    eprintln!("Swept is provided as is, with no warranty, and its author is not");
+    eprintln!("liable for lost data (MIT License; TERMS.md sections 4 and 5).");
+    eprintln!("Files go to the Trash unless --permanent is given. Make sure your");
+    eprintln!("backup is current.");
 }
 
 /// Resolve the audit-log path to an absolute location, create its parent, and

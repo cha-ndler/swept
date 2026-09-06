@@ -1,0 +1,188 @@
+# The legal posture, and why it is shaped this way
+
+> **Not legal advice.** This is an engineering document recording the reasoning
+> behind decisions already made. Before the first public release, have a
+> licensed attorney in the formation state review [`TERMS.md`](../TERMS.md) and
+> [`PRIVACY.md`](../PRIVACY.md). Budget one to three hours of their time; this
+> is a well-trodden document set and should not be expensive.
+
+Swept destroys data on purpose. That single fact drives everything below.
+
+## The five layers
+
+No one of these is the defence. They work because they overlap: a plaintiff has
+to get past all five, and each one fails differently.
+
+| # | Layer | Where it lives | What it does |
+|---|---|---|---|
+| 1 | **Design** — preview, consent, Trash-not-unlink, audit log | `crates/safety`, `crates/core` | Prevents the harm, and reduces damages when harm occurs |
+| 2 | **Licence disclaimer** | [`LICENSE`](../LICENSE) | Disclaims warranty and liability for the source |
+| 3 | **Supplemental terms** | [`TERMS.md`](../TERMS.md) | Enumerates the specific damages disclaimed, adds a cap |
+| 4 | **Assent** | First-run acknowledgement in the GUI and CLI | Turns 2 and 3 from *published* into *agreed* |
+| 5 | **Entity** | The LLC | Separates business liability from personal assets |
+
+**Layer 1 is the strongest and it is made of code.** Every safety property in
+the SAFETY CONTRACT is also a legal asset: the preview means the user saw what
+would happen, the per-consequence acknowledgements mean they were told what it
+would cost, and the audit log is a contemporaneous business record of exactly
+what was shown and what was confirmed. If there is ever a dispute about whether
+someone was warned, `audit.jsonl` is the answer.
+
+This is worth stating plainly because it inverts the usual instinct: **the
+disclaimers are the weaker half of this.** Do not let anyone weaken the
+consent design on the grounds that the terms cover it.
+
+## Why MIT stayed, and how it was made equivalent
+
+Apache-2.0 was considered and rejected. Its §8 is the better-drafted liability
+clause — it names "loss of data" and "computer failure or malfunction"
+explicitly, where MIT stops at "ANY CLAIM, DAMAGES OR OTHER LIABILITY". For a
+tool whose failure mode is destroyed data, that specificity is exactly the
+thing you want.
+
+**But specificity is portable and assent is not.** Four observations decided it:
+
+1. **MIT's disclaimer is already real.** It disclaims warranty in all caps,
+   names `MERCHANTABILITY` and `FITNESS FOR A PARTICULAR PURPOSE` by name —
+   which is what UCC §2-316 asks for — and its liability clause is broad rather
+   than narrow: *any* claim, *any* liability, arising from **or in connection
+   with** the software. MIT's weakness is that it is terse, not that it is
+   permissive.
+
+2. **The enumeration can be added without touching the licence.** §5 of
+   `TERMS.md` does what Apache §8 does and then more: it names data loss first
+   and separately, adds "even if advised of the possibility", forecloses the
+   *failure of essential purpose* escape hatch, and sets an aggregate cap. None
+   of that required changing `LICENSE`.
+
+3. **Assent beats drafting.** A disclaimer in a file nobody opened is
+   *browsewrap*, and courts enforce it inconsistently. A disclaimer the user
+   was shown and actively agreed to is *clickwrap*, and courts enforce it
+   routinely. Swapping MIT for Apache-2.0 would have improved the wording of
+   something the user never reads. The first-run acknowledgement improves
+   whether any of it binds at all. **That is the larger effect by a wide
+   margin**, and it is available under either licence.
+
+4. **MIT is what a small open-source Mac utility is expected to carry.** It is
+   read at a glance, needs no compliance work from anyone redistributing it,
+   and Homebrew, Nix and every packager already know what to do with it.
+
+**What MIT genuinely lacks and terms cannot supply:** Apache-2.0 §3's express
+patent grant, and §5's rule that contributions come in under the same terms.
+For a file-scanning utility built on `walkdir` and `plist`, patent exposure is
+about as close to zero as software gets — and the contributor question is
+handled instead by the DCO sign-off in [`CONTRIBUTING.md`](../CONTRIBUTING.md),
+which is lighter than a CLA and is what the kernel, Git and Docker use.
+
+If Swept ever grows a commercial tier, an enterprise customer base, or
+corporate contributors, revisit this. Relicensing is cheap while there is one
+copyright holder and expensive afterwards.
+
+### The constraint that must not be broken
+
+`TERMS.md` must never add a **restriction** to the MIT grant on the source. It
+may add disclosures, acknowledgements and terms that apply to *our official
+binaries*; it may not tell anyone what they can do with the code. Cross that
+line and two things happen: Swept stops being open source in any meaningful
+sense, and the contradiction between the two documents gives a plaintiff an
+argument that neither controls.
+
+This is why `TERMS.md` §0 exists and why it says the MIT License wins on
+conflict. Keep that section intact.
+
+## Why an LLC, and what it does not do
+
+**What it does.** It is the party to the terms, the Apple Developer Program
+member, the copyright holder, and the defendant. A user who loses data sues the
+LLC, and the LLC's assets — which is to say, not the house — are what is
+exposed. It also gives the app a publisher name that is not a personal legal
+name, keeps program fees and any future revenue on their own books, and is the
+natural home for a paid tier later.
+
+**What it does not do.** Four honest limits:
+
+- **It does not replace the disclaimer.** An entity limits *who* is liable, not
+  *whether* anyone is. Sections 4 and 5 of `TERMS.md` do the second job, and
+  they are what actually gets a case dismissed early.
+- **It does not shield you from your own conduct.** Most US states let a
+  plaintiff name the individual who personally committed a tort, even when they
+  acted for an LLC. Sole-member software LLCs are named alongside their owner
+  routinely. The shield is real for contract claims and business debts; it is
+  softer for "the person who wrote the code did it negligently".
+- **It only holds if you keep it separate.** Commingle personal and business
+  money, skip the annual filing, sign in your own name instead of the
+  company's, and a court can pierce the veil. The formalities are the product.
+- **It is not free.** Formation is $50–500, a registered agent is $100–150/yr,
+  and the annual state cost ranges from roughly nothing (New Mexico) to $800/yr
+  (California's minimum franchise tax, owed even on zero revenue). Form in the
+  state you actually live and work in unless there is a specific reason not to
+  — a Wyoming LLC operating from another state usually has to register there as
+  a foreign entity anyway, and you pay both.
+
+For a free tool the realistic probability of being sued is low. The LLC is
+cheap insurance and a prerequisite for the Apple organization enrollment you
+want anyway; it is not the main protection.
+
+## Why not the Mac App Store
+
+Two independent blockers, either sufficient:
+
+1. **The sandbox.** App Store apps must be sandboxed and cannot read or write
+   outside their container without a user-selected file grant per item. Swept
+   enumerates other applications' caches, `~/Library/Logs`, Xcode derived data,
+   browser profiles and `LaunchAgents`. There is no sandbox entitlement that
+   makes that possible, and a per-file open panel for thousands of cache files
+   is not a product.
+2. **`macOSPrivateApi`.** The transparent window and `NSVisualEffectView`
+   sidebar (roadmap U1) require Tauri's private-API flag, which forecloses App
+   Store review on its own.
+
+Cleaner utilities are also a category App Review treats with suspicion
+independently of the above. CleanMyMac itself is distributed under Developer ID
+rather than through the store, for the same reasons.
+
+**Developer ID + notarization + a direct `.dmg` is the only viable channel**, and
+it is what roadmap D2 already describes. See
+[`docs/RELEASING.md`](RELEASING.md) for the mechanics.
+
+One consequence worth internalising: with no App Store between you and the
+user, **there are no platform terms doing any of this work for you.** Apple's
+licence agreement is not standing in front of you. `TERMS.md` and the first-run
+acknowledgement are the entire contractual surface, which is why they are
+built rather than borrowed.
+
+## Trademarks
+
+The README calls Swept "an open-source alternative to CleanMyMac". That is
+nominative fair use — using MacPaw's mark to refer to MacPaw's product in a
+truthful comparison — and it is lawful. It stays lawful only while the use is
+minimal and unmistakably unaffiliated, which is what the rules in
+[`NOTICE.md`](../NOTICE.md) are for.
+
+**Before the first public release**, run a knockout search for "Swept" in
+class 9 (computer software) on the [USPTO TESS
+database](https://tmsearch.uspto.gov/) and a plain web search. The name is a
+common English word, which cuts both ways: harder for anyone to own broadly,
+easier for someone to already be using it. Registration is optional — common-law
+rights attach from use — but the search is not, because discovering a conflict
+after the Developer ID, the bundle identifier `net.chandler.swept`, the domain
+and the icon are all built is the expensive version.
+
+## The open questions, tracked
+
+- [ ] Attorney review of `TERMS.md` and `PRIVACY.md` in the formation state.
+- [ ] `__LEGAL_ENTITY__` and `__GOVERNING_STATE__` replaced everywhere
+      (`scripts/verify.sh` fails while any placeholder remains).
+- [ ] Trademark knockout search for "Swept" in class 9.
+- [ ] Copyright line in `LICENSE` updated from `cha-ndler` to the entity.
+- [ ] Decide whether the repository goes public at launch (MIT already assumes
+      the source is available; a private repo with a public binary is a
+      coherent but different posture).
+- [ ] Revisit if a paid tier appears: consumer-refund law, sales-tax nexus and
+      an EULA with payment terms all become relevant at once.
+- [ ] Technology E&O insurance is **not** worth it for a free tool — the premium
+      exceeds the expected loss by a wide margin. It becomes worth pricing if
+      Swept is ever sold, deployed under contract, or used at organisational
+      scale, because at that point a single claim has a plausible path to real
+      damages. Noted here so the question is answered deliberately rather than
+      never asked.

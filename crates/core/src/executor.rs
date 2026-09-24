@@ -42,7 +42,7 @@ pub trait Sink {
     /// record.
     ///
     /// It also has **no** directory backstop for the *file* path, and that
-    /// asymmetry is deliberate rather than an oversight. `trash::delete` and
+    /// asymmetry is deliberate rather than an oversight. `trashItemAtURL` and
     /// `fs::rename` both accept a directory, and neither has a file-only
     /// variant — so if a directory were swapped onto a file's name after
     /// `authorize` inspected it, a whole tree would move to the Trash. That
@@ -80,9 +80,49 @@ pub trait Sink {
 /// Production sink: real macOS Trash, real `unlink`.
 pub struct SystemSink;
 
+/// How a file reaches the Trash: `NSFileManager.trashItemAtURL`, in process.
+///
+/// The `trash` crate's default asks Finder over `osascript` — one process
+/// spawn, one AppleScript round-trip and one Finder trash *sound* per call. The
+/// executor calls once per file, and a real cleanup is ~190k files, so the
+/// default meant a sound playing for as long as the run took (hours at that
+/// rate) and a Finder automation prompt besides. The destination is the same
+/// Trash, so the move is exactly as recoverable (item 4); the one thing given
+/// up is Finder's per-item "Put Back", which no one uses across 190k cache
+/// files, and which the audit log's absolute paths replace.
+///
+/// Batching the Finder call instead was considered and rejected: the whole
+/// selection does not fit one `osascript` argument list, it would fail or
+/// succeed wholesale where the executor audits per file, and it would widen
+/// the window between each file's re-guard and its move.
+#[cfg(target_os = "macos")]
+fn trash_context() -> trash::TrashContext {
+    use trash::macos::{DeleteMethod, TrashContextExtMacos};
+    let mut ctx = trash::TrashContext::default();
+    ctx.set_delete_method(DeleteMethod::NsFileManager);
+    ctx
+}
+
+#[cfg(not(target_os = "macos"))]
+fn trash_context() -> trash::TrashContext {
+    trash::TrashContext::default()
+}
+
 impl Sink for SystemSink {
     fn trash(&self, path: &Path) -> io::Result<()> {
-        trash::delete(path).map_err(|e| io::Error::other(e.to_string()))
+        // The `trash` crate percent-encodes a non-UTF-8 path, and
+        // `fileURLWithPath` does not decode it — so `a\xFF` would be sent as
+        // the literal name `a%FF`, a different file nobody guarded. APFS and
+        // HFS+ reject such names, so this should never fire; it fails closed
+        // if it does.
+        if path.to_str().is_none() {
+            return Err(io::Error::other(
+                "the path is not valid UTF-8, so the Trash could not be asked for it exactly",
+            ));
+        }
+        trash_context()
+            .delete(path)
+            .map_err(|e| io::Error::other(e.to_string()))
     }
 
     fn delete(&self, path: &Path) -> io::Result<()> {

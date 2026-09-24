@@ -69,3 +69,25 @@ export async function onScanProgress(
     handler(e.payload),
   );
 }
+
+/**
+ * One step of a confirmed Smart Scan run, mirroring
+ * `swept_gui_core::smartscan::DispatchProgress`. `done` is disposals attempted
+ * so far in that step; a step's first event is always `done: 0`, sent while it
+ * re-checks the disk and before it moves anything.
+ */
+export type DispatchProgress = {
+  source: "cleanup" | "privacy" | "large-old";
+  done: number;
+};
+
+/** Subscribe to Smart Scan run progress. Returns an unsubscribe function. */
+export async function onDispatchProgress(
+  handler: (p: DispatchProgress) => void,
+): Promise<() => void> {
+  if (!isDesktopApp()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return await listen<DispatchProgress>("smartscan://progress", (e) =>
+    handler(e.payload),
+  );
+}

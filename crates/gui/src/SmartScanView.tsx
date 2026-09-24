@@ -10,7 +10,13 @@ import type {
   SmartScanStep,
   Total,
 } from "./types";
-import { call, describeError, isDesktopApp } from "./backend";
+import {
+  call,
+  describeError,
+  isDesktopApp,
+  onDispatchProgress,
+} from "./backend";
+import type { DispatchProgress } from "./backend";
 import {
   AccessNotice,
   Banner,
@@ -119,6 +125,11 @@ export default function SmartScanView({
   const [phase, setPhase] = useState<Phase>("none");
   const [run, setRun] = useState<SmartScanRunReport | null>(null);
   const [runError, setRunError] = useState("");
+  /** The latest reading from the step now running, or null before any. */
+  const [progress, setProgress] = useState<DispatchProgress | null>(null);
+  /** Final counts of the steps that have finished, so the bar never drops back
+   *  when the next step starts at zero. */
+  const [finished, setFinished] = useState<Record<string, number>>({});
 
   const offered = useMemo(
     () => (report?.cleanup ?? []).filter((c) => c.smart_scan_default),
@@ -229,7 +240,20 @@ export default function SmartScanView({
     }
     if (!report) return;
     setRunError("");
+    setProgress(null);
+    setFinished({});
     setPhase("running");
+    // For the length of this one run. A step's events arrive in order and a
+    // new source means the previous one is over, so its last count is banked.
+    let last: DispatchProgress | null = null;
+    const stop = await onDispatchProgress((p) => {
+      const prev = last;
+      if (prev && prev.source !== p.source) {
+        setFinished((f) => ({ ...f, [prev.source]: prev.done }));
+      }
+      last = p;
+      setProgress(p);
+    });
     try {
       const result = await call<SmartScanRunReport>("dispatch_smart_scan", {
         request: {
@@ -273,6 +297,8 @@ export default function SmartScanView({
       // without saying how many. Back to the sheet with the reason on it.
       setRunError(describeError(e));
       setPhase("confirm");
+    } finally {
+      stop();
     }
   }
 
@@ -571,6 +597,19 @@ export default function SmartScanView({
           }
           total={selBytes}
           busy={phase === "running"}
+          progress={
+            phase === "running"
+              ? runProgress(
+                  [
+                    ["cleanup", chosenCats.length ? cleanupCount : 0],
+                    ["privacy", chosenRows.length],
+                    ["large-old", chosenFiles.length],
+                  ],
+                  finished,
+                  progress,
+                )
+              : null
+          }
           error={runError}
           onCancel={() => setPhase("none")}
           onConfirm={dispatch}
@@ -1061,12 +1100,64 @@ function FloorNotice({
   );
 }
 
+/** What the running sheet shows about how far the run has got. */
+type RunProgress = {
+  /** 0..1 across every selected source. */
+  fraction: number;
+  label: string;
+  /** True while a step re-checks the disk and has moved nothing yet. */
+  checking: boolean;
+};
+
+const SOURCE_NAME: Record<DispatchProgress["source"], string> = {
+  cleanup: "Cleanup",
+  privacy: "Browser data",
+  "large-old": "Large & old files",
+};
+
+/**
+ * Fold the backend's per-step counts into one bar.
+ *
+ * The denominators are the counts the sheet confirmed, not anything the
+ * backend sends — each verb's drift check keeps its real count close to that,
+ * and each step's contribution is clamped so a few files of cache churn can
+ * never push the bar past its end.
+ */
+function runProgress(
+  totals: [DispatchProgress["source"], number][],
+  finished: Record<string, number>,
+  current: DispatchProgress | null,
+): RunProgress {
+  const all = totals.reduce((n, [, t]) => n + t, 0);
+  const done = totals.reduce((n, [src, t]) => {
+    const d = finished[src] ?? (current?.source === src ? current.done : 0);
+    return n + Math.min(d, t);
+  }, 0);
+  const fraction = all > 0 ? done / all : 0;
+  if (!current) return { fraction, label: "Starting…", checking: true };
+  const name = SOURCE_NAME[current.source];
+  if (current.done === 0) {
+    return {
+      fraction,
+      label: `Checking ${name} against the disk…`,
+      checking: true,
+    };
+  }
+  const of = totals.find(([src]) => src === current.source)?.[1] ?? 0;
+  return {
+    fraction,
+    label: `Moving ${name} · ${Math.min(current.done, of).toLocaleString()} of ${of.toLocaleString()}`,
+    checking: false,
+  };
+}
+
 function ConfirmSheet({
   cleanup,
   privacy,
   files,
   total,
   busy,
+  progress,
   error,
   onCancel,
   onConfirm,
@@ -1093,6 +1184,7 @@ function ConfirmSheet({
   } | null;
   total: number;
   busy: boolean;
+  progress: RunProgress | null;
   error: string;
   onCancel: () => void;
   onConfirm: () => void;
@@ -1200,6 +1292,38 @@ function ConfirmSheet({
 
         {error && (
           <p className="text-danger mt-3 text-body">{readable(error)}</p>
+        )}
+
+        {/* A run over a real home is ~190k moves. Without this the sheet reads
+            "Moving…" for minutes, which is indistinguishable from a hang. */}
+        {progress && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between gap-3">
+              <p
+                className="text-muted min-w-0 truncate text-caption tabular-nums"
+                aria-live="polite"
+              >
+                {progress.label}
+              </p>
+              <span className="text-subtle font-mono text-caption tabular-nums">
+                {Math.floor(progress.fraction * 100)}%
+              </span>
+            </div>
+            <div
+              role="progressbar"
+              aria-label="Moving to the Trash"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.floor(progress.fraction * 100)}
+              aria-valuetext={progress.label}
+              className={`mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface2 ${progress.checking ? "animate-pulse" : ""}`}
+            >
+              <div
+                className="h-full rounded-full bg-accent transition-[width] duration-fast ease-mac"
+                style={{ width: `${progress.fraction * 100}%` }}
+              />
+            </div>
+          </div>
         )}
 
         <div className="mt-6 flex justify-end gap-3">

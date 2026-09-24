@@ -82,6 +82,8 @@ async function installBackend(
     hangSmart?: boolean;
     /** When set, `dispatch_smart_scan` rejects with this message. */
     smartReject?: string;
+    /** Hang only the dispatch, for the moving-with-progress state. */
+    hangSmartRun?: boolean;
     /** What `check_for_update` answers. Every call is counted. */
     update?: unknown;
   } = {},
@@ -116,6 +118,7 @@ async function installBackend(
     smartRun: opts.smartRun ?? SAMPLE_SMART_SCAN_RUN,
     hangSmart: opts.hangSmart ?? false,
     smartReject: opts.smartReject ?? null,
+    hangSmartRun: opts.hangSmartRun ?? false,
     largeOld: opts.largeOld ?? SAMPLE_LARGE_OLD,
     disposeSummary: opts.disposeSummary ?? SAMPLE_DISPOSE_SUMMARY,
     spaceLens: opts.spaceLens ?? SAMPLE_SPACE_LENS,
@@ -165,7 +168,9 @@ async function installBackend(
         if (cmd === "smart_scan")
           return p.hangSmart ? new Promise(() => {}) : Promise.resolve(p.smart);
         if (cmd === "dispatch_smart_scan")
-          return p.smartReject
+          return p.hangSmartRun
+            ? new Promise(() => {})
+            : p.smartReject
             ? Promise.reject(p.smartReject)
             : Promise.resolve(p.smartRun);
         // The app's one network request. Counted, because the property that
@@ -1681,6 +1686,34 @@ test("smart scan confirm", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: /review & clean/i }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await capture(page, "smart-scan-confirm", testInfo.project.name);
+});
+
+// A run over a real home is ~190k moves; the sheet must say how far it has
+// got. Driven through the real event path: the dispatch hangs, and progress
+// arrives as the backend would send it.
+test("smart scan moving", async ({ page }, testInfo) => {
+  await installBackend(page, { hangSmartRun: true });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan My Mac" }).click();
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await page.getByRole("button", { name: "Move to Trash" }).click();
+  const bar = page.getByRole("progressbar", { name: "Moving to the Trash" });
+  await expect(bar).toBeVisible();
+
+  const emit = (payload: unknown) =>
+    page.evaluate((p) => {
+      (window as unknown as { __emit: (x: unknown) => void }).__emit(p);
+    }, payload);
+  await emit({ source: "cleanup", done: 0 });
+  await expect(page.getByText(/checking cleanup against the disk/i)).toBeVisible();
+  await emit({ source: "cleanup", done: 2000 });
+  await expect(page.getByText(/moving cleanup · 2,000 of/i)).toBeVisible();
+  expect(Number(await bar.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+  // Measured, not read: a bar whose fill renders at zero width passes every
+  // markup check.
+  const fill = await bar.locator("div").boundingBox();
+  expect(fill?.width ?? 0).toBeGreaterThan(0);
+  await capture(page, "smart-scan-moving", testInfo.project.name);
 });
 
 test("smart scan done", async ({ page }, testInfo) => {

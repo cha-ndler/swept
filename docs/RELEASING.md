@@ -252,17 +252,19 @@ names each entitlement considered, why it was rejected, and what would change
 that. Add the narrowest one that actually fixes it and write down why, rather
 than pasting in the usual three.
 
-### The Trash goes through the Finder
+### The Trash does not go through the Finder
 
-Worth knowing before the first signed build, because it produces a prompt
-nobody added on purpose. The `trash` crate's macOS default is
-`DeleteMethod::Finder`, which shells out to `osascript` — so the first disposal
-triggers a TCC automation consent dialog naming Swept. `Info.plist` carries an
-`NSAppleEventsUsageDescription` explaining it, and no entitlement is required;
-`entitlements.plist` says why. Switching to `DeleteMethod::NsFileManager` would
-remove the prompt entirely, at the cost of Finder's "Put Back" — a real
-trade-off for a tool whose recovery story is the Trash, and one to decide
-deliberately rather than by leaving the default in place unexamined.
+Decided deliberately, not left at the default. The `trash` crate's macOS
+default is `DeleteMethod::Finder`, which runs one `osascript` per call — one
+Finder sound and one process spawn per file, which on a ~190k-file cleanup
+meant a sound playing for hours and a TCC automation prompt besides.
+`SystemSink` sets `DeleteMethod::NsFileManager` instead: silent, in-process, no
+prompt, no `NSAppleEventsUsageDescription`. The app plays the Trash sound once
+per gesture itself.
+
+The cost is Finder's "Put Back". Items are still in the Trash and restorable by
+dragging out, and the audit log records every original path — but say so in
+the release notes, because the Trash is this tool's recovery story.
 
 ---
 

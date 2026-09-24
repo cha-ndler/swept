@@ -167,6 +167,11 @@ async function installBackend(
         if (cmd === "space_lens") return Promise.resolve(p.spaceLens);
         if (cmd === "smart_scan")
           return p.hangSmart ? new Promise(() => {}) : Promise.resolve(p.smart);
+        if (cmd === "dispatch_smart_scan") {
+          // The view subscribes to progress *before* it invokes this, so a
+          // test that waits for this flag knows the listener is live.
+          w.__dispatched = true;
+        }
         if (cmd === "dispatch_smart_scan")
           return p.hangSmartRun
             ? new Promise(() => {})
@@ -1699,6 +1704,11 @@ test("smart scan moving", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Move to Trash" }).click();
   const bar = page.getByRole("progressbar", { name: "Moving to the Trash" });
   await expect(bar).toBeVisible();
+  // The sheet shows the bar before the listener's async import resolves; the
+  // dispatch call is the point after which events can arrive.
+  await page.waitForFunction(
+    () => (window as unknown as { __dispatched?: boolean }).__dispatched === true,
+  );
 
   const emit = (payload: unknown) =>
     page.evaluate((p) => {

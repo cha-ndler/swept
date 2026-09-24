@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Check for updates**, in the sidebar — Swept's first and only network
+  request, and **only when you ask**: press the button, or turn on *Check at
+  launch* (off unless you turn it on). It asks GitHub for the newest release's
+  version number and shows a link if yours is older. It downloads nothing and
+  installs nothing. **`PRIVACY.md` is revised to 1.1** to describe exactly
+  what the request carries (your IP address and Swept's version) and when.
+
 ### Changed
 - **An app's own data needs its own confirmation.** Large & Old still *lists*
   files in `~/Library/Application Support`, but moving one to the Trash now

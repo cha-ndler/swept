@@ -1235,9 +1235,16 @@ un-notarized, so macOS treats it as suspect, and there is no auto-update.
   `minimumSystemVersion`), CI guarded by `if: secrets.APPLE_CERTIFICATE != ''`.
   **Unsigned builds keep working unchanged when the secret is absent**, so none
   of this is wasted if a certificate never appears.
-- [ ] **D3 — Auto-update** — `tauri-plugin-updater`, a signing keypair,
-  `createUpdaterArtifacts`, `latest.json` on the release. Without it every user
-  is stranded on whatever version they downloaded.
+- [x] **D3 — Update check (opt-in), not auto-update.** Decided 2026-09-24: an
+  update *check* that is off until asked, rather than `tauri-plugin-updater`.
+  The updater would install code on its own and put network on by default,
+  against `PRIVACY.md`'s promise; the check reports a version and a link and
+  touches nothing. `gui-core/src/update.rs` is the only network code: the
+  system `/usr/bin/curl`, HTTPS-only, a fixed URL, 10 s, and the link is
+  rebuilt from the parsed version so the response never chooses where the
+  user is sent. The webview CSP stays closed. `PRIVACY.md` 1.1 describes it.
+  **Still open:** real auto-*install* would need a signing keypair for update
+  artifacts and is only worth it with notarized builds; revisit with D2.
 - [ ] **D4 — Install story** — *mostly done; two items left and both need a
   human decision rather than a commit.*
   **Done:** the landing README with a download button, the macOS 15+ walkthrough

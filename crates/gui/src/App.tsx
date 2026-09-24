@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { UpdateCheck } from "./UpdateCheck";
 import CleanView from "./CleanView";
 import SmartScanView from "./SmartScanView";
 import LargeOldView from "./LargeOldView";
@@ -179,6 +180,9 @@ export default function App() {
         />
 
         <div className="mt-auto flex-1" data-tauri-drag-region />
+
+        {/* Opt-in: nothing here touches the network until asked. */}
+        <UpdateCheck />
 
         {/* The promise the whole tool rests on, kept on screen rather than
             stated once in a dialog the user has already dismissed. */}

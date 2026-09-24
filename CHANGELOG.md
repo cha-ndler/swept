@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-09-24
+
+**A signed app bundle, and an app's own data asks first.** Every `.dmg`
+published before this one held an app bundle that was not signed at all, which
+Apple Silicon may refuse outright as "damaged"; this build is signed ad-hoc,
+which Apple's own pre-distribution check rates as the ordinary unsigned-app
+warning — the case the README's *Open Anyway* walkthrough is written for. It also closes a hole through which Smart Scan could move
+a file out of `~/Library/Application Support`, and makes Large & Old ask
+separately — every time — before it touches anything there.
+
+Still unsigned and published by an individual; `docs/LEGAL.md` says why. Check
+the `.sha256` beside each download before you open it.
+
 ### Added
 - **Check for updates**, in the sidebar — Swept's first and only network
   request, and **only when you ask**: press the button, or turn on *Check at
@@ -484,7 +497,8 @@ property-tested safety substrate.
 - Recursive/large removals require confirmation; audit failures abort the run.
 - Tests run only against throwaway temp-dir fixtures.
 
-[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/cha-ndler/swept/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/cha-ndler/swept/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/cha-ndler/swept/releases/tag/v0.4.1
 [0.4.0]: https://github.com/cha-ndler/swept/releases/tag/v0.4.0

@@ -405,8 +405,8 @@ jobs:
           else
             # Ad-hoc, not unsigned. Without an identity Tauri skips signing
             # entirely, leaving only the linker's signature on the executable:
-            # a bundle that is "not signed at all", which a quarantined Apple
-            # Silicon download reports as "damaged" with no Open Anyway.
+            # a bundle that is "not signed at all", which syspolicy_check rates
+            # Fatal and which risks the "damaged" dialog on Apple Silicon.
             # `-` needs no certificate. See scripts/check-bundle-signature.sh.
             echo "No signing identity present — signing ad-hoc."
             export APPLE_SIGNING_IDENTITY=-

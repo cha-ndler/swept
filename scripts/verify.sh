@@ -213,6 +213,7 @@ if [ "$WANT_GUI" = 1 ]; then
     step "tauri fmt"                 in_gui cargo fmt --manifest-path src-tauri/Cargo.toml --check
     step "tauri clippy -D warnings"  in_gui cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
     step "tauri build"               in_gui cargo build --manifest-path src-tauri/Cargo.toml
+    step "entitlements parse (codesign)" "$ROOT/scripts/check-entitlements.sh"
 
     # The bundle, which the step above does not cover. Release codegen and the
     # `.app`/`.dmg` bundler are the two things CI stopped running on every

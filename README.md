@@ -150,11 +150,11 @@ If you download a `.dmg` from a CI run or a release:
 Only do this for a build you obtained from this repository and are willing to
 trust. If that is not you, build from source instead — it is three commands.
 
-**If macOS says Swept "is damaged and can't be opened"**, you have a build from
-v0.5.0 or earlier: those bundles were not signed at all, and Apple Silicon
-refuses an unsigned download outright rather than offering Open Anyway.
-Download the latest release instead — builds since v0.5.1 are signed ad-hoc and
-take the walkthrough above.
+**If macOS says Swept "is damaged and can't be opened"**, check the version:
+bundles from v0.5.0 and earlier were not signed at all, which risks exactly
+that dialog, and it offers no Open Anyway. Download the latest release instead
+— builds since v0.5.1 are signed ad-hoc and are meant for the walkthrough
+above. If a current build says it, please open an issue.
 
 ### The CLI from a download
 

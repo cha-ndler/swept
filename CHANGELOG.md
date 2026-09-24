@@ -7,16 +7,23 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Fixed
-- **The downloaded app opens on Apple Silicon.** Every `.dmg` published so far
-  held a `Swept.app` whose bundle was *not signed at all* — only the linker's
+- **The app bundle is signed.** Every `.dmg` published so far held a
+  `Swept.app` whose bundle was *not signed at all* — only the linker's
   automatic signature on the executable, with `Info.plist` and the resources
-  unsealed. Apple Silicon requires a signature on anything downloaded, so a
-  quarantined copy was reported as **"damaged"**, which offers no Open Anyway
-  and made the README's walkthrough impossible to follow. Unsigned builds are
-  now signed **ad-hoc** (the identity `-`, which needs no Apple account), and
-  both CI and `scripts/verify.sh --bundle` fail if the bundle is not sealed.
-  It is still an unsigned app from an unidentified developer, and macOS still
-  says so; what changed is that the walkthrough now works.
+  unsealed. `syspolicy_check` rates that **Fatal**, and Apple Silicon expects a
+  signature on anything downloaded; an unsealed bundle risks the "damaged"
+  dialog, which offers no Open Anyway. Unsigned builds are now signed
+  **ad-hoc** (the identity `-`, which needs no Apple account), which
+  `syspolicy_check` rates as the ordinary unsigned-app warning, and both CI and
+  `scripts/verify.sh --bundle` fail if the bundle is not sealed. It is still an
+  unsigned app from an unidentified developer, and macOS still says so.
+- **Signing with the entitlements file worked for nobody.** Its explanatory
+  comment used `--` as a dash, which XML forbids inside a comment; `plutil`
+  accepted it and the kernel's parser did not, so *any* signed build — ad-hoc
+  or Developer ID — failed with `AMFIUnserializeXML: syntax error`. The
+  "signing is wired up and waits only on a certificate" claim was untrue until
+  this. `scripts/verify.sh` now parses the file by signing a probe with it on
+  every run.
 - The README says how to run the downloaded **CLI**, which the quarantine flag
   blocks just as it blocks the app.
 

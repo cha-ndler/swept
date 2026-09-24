@@ -8,11 +8,11 @@
 # Why this exists: v0.5.0 shipped a bundle that was "not signed at all". The
 # linker ad-hoc signs every arm64 Mach-O on its own, so the executable looked
 # signed, but nothing sealed Info.plist or the resources. `syspolicy_check`
-# rates that Fatal, and a quarantined download in that state is the "Swept is
-# damaged and can't be opened" dialog — which has no Open Anyway, so the
-# README's walkthrough cannot work. An ad-hoc signature over the bundle
-# (identity `-`, no Apple account) turns it into the ordinary unsigned-app
-# warning the walkthrough is written for.
+# rates that Fatal, and Apple Silicon expects a signature on anything
+# downloaded — an unsealed bundle risks the "damaged and can't be opened"
+# dialog, which has no Open Anyway. An ad-hoc signature over the bundle
+# (identity `-`, no Apple account) is rated as the ordinary unsigned-app
+# warning the README's walkthrough is written for.
 #
 # `cargo tauri build` reports success either way, which is why this is a
 # separate check rather than something to read off the build log.

@@ -150,6 +150,30 @@ If you download a `.dmg` from a CI run or a release:
 Only do this for a build you obtained from this repository and are willing to
 trust. If that is not you, build from source instead — it is three commands.
 
+**If macOS says Swept "is damaged and can't be opened"**, check the version:
+bundles from v0.5.0 and earlier were not signed at all, which risks exactly
+that dialog, and it offers no Open Anyway. Download the latest release instead
+— builds since v0.5.1 are signed ad-hoc and are meant for the walkthrough
+above. If a current build says it, please open an issue.
+
+### The CLI from a download
+
+A browser marks the downloaded `swept` binary as quarantined too, and a
+quarantined command-line tool is refused the same way. In the folder you
+downloaded to, check it, clear the flag, and put it on your `PATH`:
+
+```bash
+shasum -c swept.sha256                     # must print "swept: OK"
+xattr -d com.apple.quarantine swept        # the flag the browser added
+chmod +x swept
+sudo mkdir -p /usr/local/bin               # absent on a fresh Apple Silicon Mac
+sudo mv swept /usr/local/bin/              # or anywhere on your PATH
+swept scan                                 # read-only preview
+```
+
+`xattr` here removes one attribute from one file you just verified — it is not
+a system-wide Gatekeeper switch, and nothing in this README asks you for one.
+
 ### Full Disk Access
 
 `~/.Trash` and `~/Library/Containers` are protected by macOS privacy controls.

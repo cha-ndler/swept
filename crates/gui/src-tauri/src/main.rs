@@ -379,6 +379,7 @@ fn main() {
             terms_status,
             terms_text,
             accept_terms,
+            check_for_update,
             quit_app
         ])
         .run(tauri::generate_context!())
@@ -402,12 +403,25 @@ async fn terms_status() -> Result<AcceptanceStatus, String> {
 
 /// The full text of the terms, compiled into this binary.
 ///
-/// Served from the binary rather than fetched, because the app has no network
-/// code and grants no general URL-opening permission — and because the text a
-/// build shows must be the text that build was made from.
+/// Served from the binary rather than fetched: the app's one network request is
+/// the opt-in update check, it grants no general URL-opening permission, and
+/// the text a build shows must be the text that build was made from.
 #[tauri::command]
 fn terms_text() -> &'static str {
     acceptance::terms_text()
+}
+
+/// Ask GitHub whether a newer release exists — the app's only network request.
+///
+/// Called only when the user presses *Check for updates*, or at launch if they
+/// ticked the box asking for that; the frontend owns that decision and its
+/// default is not to. Reports a version and a release-page link; downloads and
+/// installs nothing. See `swept_gui_core::update`.
+#[tauri::command]
+async fn check_for_update() -> Result<gui::update::UpdateStatus, String> {
+    tauri::async_runtime::spawn_blocking(gui::update::check)
+        .await
+        .map_err(|e| format!("update-check task failed: {e}"))?
 }
 
 /// Quit the app.

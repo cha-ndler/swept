@@ -23,8 +23,9 @@ import TermsMarkdown from "./TermsMarkdown";
  * Four properties make that difference real, and none of them is decoration:
  *
  *   1. **The terms are readable here, in full.** Not a link — the app grants no
- *      general URL-opening permission and has no network code, so the text is
- *      compiled into the binary and served by `terms_text`. It is therefore
+ *      general URL-opening permission and fetches nothing but the opt-in
+ *      update check, so the text is compiled into the binary and served by
+ *      `terms_text`. It is therefore
  *      necessarily the text this build was made from.
  *   2. **Two boxes, neither pre-ticked.** The same shape as the Privacy
  *      screen's per-consequence acknowledgements, for the same reason: a tick

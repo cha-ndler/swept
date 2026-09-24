@@ -544,3 +544,12 @@ export interface SmartScanRunReport {
    *  distinct from a step-level `refused`. */
   actions_refused: number;
 }
+
+// Mirrors swept_gui_core::update::UpdateStatus. `url` is rebuilt by the backend
+// from the parsed version number; nothing in it came from the network verbatim.
+export interface UpdateStatus {
+  current: string;
+  latest: string;
+  newer: boolean;
+  url: string;
+}

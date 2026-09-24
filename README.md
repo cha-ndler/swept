@@ -33,8 +33,10 @@ what it would do and acts only on explicit consent.
 Everything it plans and everything it carries out is appended to a JSON-lines
 audit log at `~/Library/Application Support/swept/audit.jsonl`.
 
-**Not here yet, stated so you do not go looking:** there is no auto-update, so
-updating means downloading again — and the published `.dmg` is not signed.
+**Not here yet, stated so you do not go looking:** there is no automatic
+*installation* of updates — the sidebar's **Check for updates** tells you when
+a newer release exists (only when you ask, or at launch if you turn that on),
+and updating means downloading it — and the published `.dmg` is not signed.
 Signing and notarization are wired up and wait only on a Developer ID
 certificate; until one exists, installing still means walking macOS through an
 unsigned app, and [`docs/RELEASING.md`](docs/RELEASING.md) is the sequence for
@@ -307,8 +309,9 @@ lost data. Swept records that acceptance on your own Mac and sends it nowhere.
 
 - [`TERMS.md`](TERMS.md) — the terms, in full. Sections 4 and 5 are the ones
   that matter.
-- [`PRIVACY.md`](PRIVACY.md) — short version: it collects nothing, sends
-  nothing, and has no network code at all.
+- [`PRIVACY.md`](PRIVACY.md) — short version: it collects nothing and sends
+  nothing about you. Its one network request is the update check, made only
+  when you ask.
 - [`NOTICE.md`](NOTICE.md) — trademarks and third-party licences.
 - [`docs/LEGAL.md`](docs/LEGAL.md) — why it is arranged this way, including why
   Swept is not and cannot be on the Mac App Store.

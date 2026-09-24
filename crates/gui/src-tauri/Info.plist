@@ -42,10 +42,12 @@
 	<string>Swept asks the Finder to move the items you confirmed to the Trash, so that they stay recoverable and can be put back. It is used for nothing else.</string>
 
 	<!--
-	  Declares that the app uses no non-exempt encryption, which is true: it has
-	  no network code at all. Without this key, every notarized upload asks the
-	  export-compliance question again. Revisit if the updater (roadmap D3) ever
-	  ships, since TLS is exempt but the answer should be made deliberately.
+	  Declares that the app uses no non-exempt encryption, which is true. Its one
+	  network request, the opt-in update check, is plain HTTPS made by the
+	  system's /usr/bin/curl: standard TLS, which is exempt, and not
+	  implemented by this app. Decided deliberately when that check shipped.
+	  Without this key, every notarized upload asks the export-compliance
+	  question again.
 	-->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>

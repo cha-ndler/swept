@@ -1,23 +1,47 @@
 # Privacy Policy — Swept
 
-**Version 1.0.** Last revised 2026-09-06. Published by cha-ndler, an
+**Version 1.1.** Last revised 2026-09-24. Published by cha-ndler, an
 individual — there is no company behind Swept, and nothing below changes if
 that ever stops being true.
 
 ## The short version
 
-**Swept collects nothing, sends nothing, and has no server.** It has no
-analytics, no crash reporting, no telemetry, no account, and no network code of
-any kind. It reads your disk to tell you what is on it, and everything it
-learns stays on your machine.
+**Swept collects nothing, sends nothing about you, and has no server.** It has
+no analytics, no crash reporting, no telemetry and no account. It reads your
+disk to tell you what is on it, and everything it learns stays on your machine.
+
+It makes **one** kind of network request, and **only when you ask**: the update
+check described below. Until you press *Check for updates* — or turn on *Check
+at launch*, which is off unless you turn it on — Swept does not touch the
+network at all.
 
 This is a verifiable claim, not a promise. The app's Content Security Policy
-permits no outbound connections (`connect-src 'self' ipc:`), and the source
-contains no HTTP client. You can check both:
+permits the window no outbound connections (`connect-src 'self' ipc:`), the
+source contains no HTTP client library, and the update check is the only place
+a request is made. You can check all three:
 
 ```bash
 grep -rn "reqwest\|hyper\|ureq\|curl\|fetch(" crates/*/src
+# → only crates/gui-core/src/update.rs
 ```
+
+## The update check
+
+When you ask, Swept sends **one HTTPS request** to GitHub —
+`https://api.github.com/repos/cha-ndler/swept/releases/latest` — to learn the
+number of the newest published release, and tells you whether it is newer than
+yours.
+
+- **What GitHub receives:** what any web request carries — your IP address —
+  plus a `User-Agent` header naming Swept and the version you are running.
+  Nothing about your files, your scans or your Mac is sent. GitHub's own
+  privacy statement governs what it does with the request.
+- **What Swept does with the answer:** reads the version number and nothing
+  else. It **downloads nothing and installs nothing**; if there is a newer
+  version, it shows you the link, and you download it yourself.
+- **When it happens:** only when you press *Check for updates*, or at launch if
+  you turned on *Check at launch*. That setting is stored only in the app's own
+  local storage on your Mac, and turning it off stops the launch check.
 
 ## What Swept reads
 
@@ -63,18 +87,13 @@ including children under 13.
 
 ## If this ever changes
 
-Two planned features would involve the network for the first time:
+**Crash reporting**, if it is ever added, would be **opt-in** and off by
+default. It does not exist today. Automatic *installation* of updates does not
+exist either, and the update check above is not it.
 
-- **Automatic updates** (roadmap D3) would contact a release server to ask
-  whether a newer version exists. That request necessarily reveals your IP
-  address and the version you are running.
-- **Crash reporting**, if it is ever added, would be **opt-in** and off by
-  default.
-
-Neither exists today. If either ships, this policy will be revised **before**
-the release that introduces it, the change will be called out in
-[`CHANGELOG.md`](CHANGELOG.md), and any update check will be one you can turn
-off.
+If anything here changes, this policy will be revised **before** the release
+that introduces it, and the change will be called out in
+[`CHANGELOG.md`](CHANGELOG.md).
 
 We will not add analytics, advertising identifiers, or data sharing with third
 parties. There is nothing to sell and no one to sell it to.

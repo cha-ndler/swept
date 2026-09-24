@@ -82,6 +82,8 @@ async function installBackend(
     hangSmart?: boolean;
     /** When set, `dispatch_smart_scan` rejects with this message. */
     smartReject?: string;
+    /** What `check_for_update` answers. Every call is counted. */
+    update?: unknown;
   } = {},
 ) {
   const payload = {
@@ -117,6 +119,12 @@ async function installBackend(
     largeOld: opts.largeOld ?? SAMPLE_LARGE_OLD,
     disposeSummary: opts.disposeSummary ?? SAMPLE_DISPOSE_SUMMARY,
     spaceLens: opts.spaceLens ?? SAMPLE_SPACE_LENS,
+    update: opts.update ?? {
+      current: "0.5.0",
+      latest: "0.5.0",
+      newer: false,
+      url: "https://github.com/cha-ndler/swept/releases/tag/v0.5.0",
+    },
   };
   await page.addInitScript((p) => {
     const w = window as unknown as Record<string, unknown>;
@@ -160,6 +168,12 @@ async function installBackend(
           return p.smartReject
             ? Promise.reject(p.smartReject)
             : Promise.resolve(p.smartRun);
+        // The app's one network request. Counted, because the property that
+        // matters most is that it is *not* made unless the user asked.
+        if (cmd === "check_for_update") {
+          w.__updateChecks = ((w.__updateChecks as number) ?? 0) + 1;
+          return Promise.resolve(p.update);
+        }
         // Best-effort in the app and swallowed there; stubbed so it does not
         // land in the unstubbed-command branch below and read as a defect.
         if (cmd === "set_tray_label") return Promise.resolve(null);
@@ -753,6 +767,61 @@ test("an app-data row needs its own attestation, per run", async ({
     );
   await expect.poll(async () => (await sent()).length).toBe(1);
   expect((await sent())[0]).toMatchObject({ attested: { app_support: true } });
+});
+
+test("nothing asks for updates unless the user does", async ({ page }) => {
+  await installBackend(page);
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Check for updates" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: "Check for updates at launch" }),
+  ).toHaveAttribute("aria-checked", "false");
+  // Give any mount-time effect its chance to fire.
+  await page.waitForTimeout(300);
+  const calls = await page.evaluate(
+    () => (window as unknown as { __updateChecks?: number }).__updateChecks ?? 0,
+  );
+  expect(calls).toBe(0);
+});
+
+test("a newer release is reported, with a link to copy", async ({
+  page,
+}, testInfo) => {
+  await installBackend(page, {
+    update: {
+      current: "0.5.0",
+      latest: "0.6.0",
+      newer: true,
+      url: "https://github.com/cha-ndler/swept/releases/tag/v0.6.0",
+    },
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Check for updates" }).click();
+  await expect(page.getByText("Swept 0.6.0 is available")).toBeVisible();
+  await expect(
+    page.getByText("https://github.com/cha-ndler/swept/releases/tag/v0.6.0"),
+  ).toBeVisible();
+  await capture(page, "update-available", testInfo.project.name);
+});
+
+test("check at launch is remembered, and only then does launch check", async ({
+  page,
+}) => {
+  await installBackend(page);
+  await page.goto("/");
+  const toggle = page.getByRole("switch", {
+    name: "Check for updates at launch",
+  });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await page.reload();
+  await expect(page.getByText("You have the latest version")).toBeVisible();
+  const calls = await page.evaluate(
+    () => (window as unknown as { __updateChecks?: number }).__updateChecks ?? 0,
+  );
+  expect(calls).toBe(1);
 });
 
 test("large-old loading", async ({ page }, testInfo) => {

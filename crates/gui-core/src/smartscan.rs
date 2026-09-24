@@ -68,8 +68,9 @@
 //! claim than "a floor". `treewalk::offer` guarantees `size_is_floor` implies
 //! `!offerable`, so summing offerable rows never sums a floor.
 
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use swept_core::audit::AuditLog;
@@ -613,6 +614,109 @@ pub fn dispatch_smart_scan_with_sink(
     sink: &dyn Sink,
     audit: &mut AuditLog,
 ) -> Result<SmartScanRunReport, String> {
+    dispatch_smart_scan_with_progress(cfg, req, sink, audit, &mut |_| {})
+}
+
+/// How far one step of a confirmed run has got.
+///
+/// `done` counts disposals *attempted* — moved or refused — because that is
+/// what the step has worked through, and a refusal is no less finished than a
+/// move. It is cosmetic and authorizes nothing: the frontend divides it by the
+/// count it confirmed, which the verb's own drift check keeps close to the
+/// truth.
+///
+/// A step's first event is always `done: 0`, sent before the verb's own rescan
+/// — which on a real home is tens of seconds with no disposals at all, and is
+/// otherwise indistinguishable from a hang. Its last is the final count. A step
+/// that never began, or that had nothing selected, sends nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DispatchProgress {
+    pub source: String,
+    pub done: u64,
+}
+
+/// The shortest interval between two progress events from one step.
+///
+/// A cleanup step is ~190k disposals on a real home. One IPC message each
+/// would cost more than the progress is worth; ten a second is smooth.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
+/// A [`Sink`] that counts what passes through it, and forwards **everything**,
+/// unchanged, to the sink it wraps.
+///
+/// It sees only calls that the executor has already re-guarded and authorized,
+/// and it adds no path of its own, so it cannot widen what is disposed of. It
+/// counts — and so may call the progress handler — *before* it forwards: the
+/// executor writes a trash's audit line only after the sink returns, so a
+/// handler that panicked after a move would unwind past that line and leave a
+/// file in the Trash with no record (item 6). Before the move, a panic leaves
+/// nothing moved and nothing to record. The cost is that `done` counts
+/// disposals begun rather than finished, which is off by at most one.
+struct ProgressSink<'a, 'f> {
+    inner: &'a dyn Sink,
+    source: &'static str,
+    done: Cell<u64>,
+    last: Cell<Instant>,
+    on_progress: RefCell<&'f mut dyn FnMut(&DispatchProgress)>,
+}
+
+impl<'a, 'f> ProgressSink<'a, 'f> {
+    fn new(
+        inner: &'a dyn Sink,
+        source: &'static str,
+        on_progress: &'f mut dyn FnMut(&DispatchProgress),
+    ) -> Self {
+        Self {
+            inner,
+            source,
+            done: Cell::new(0),
+            last: Cell::new(Instant::now()),
+            on_progress: RefCell::new(on_progress),
+        }
+    }
+
+    fn emit(&self) {
+        self.last.set(Instant::now());
+        (self.on_progress.borrow_mut())(&DispatchProgress {
+            source: self.source.to_string(),
+            done: self.done.get(),
+        });
+    }
+
+    fn tick(&self) {
+        self.done.set(self.done.get().saturating_add(1));
+        if self.last.get().elapsed() >= PROGRESS_INTERVAL {
+            self.emit();
+        }
+    }
+}
+
+impl Sink for ProgressSink<'_, '_> {
+    // Tick first. See the type's doc: this order is what keeps a panicking
+    // handler from producing an unrecorded move.
+    fn trash(&self, path: &Path) -> std::io::Result<()> {
+        self.tick();
+        self.inner.trash(path)
+    }
+
+    fn delete(&self, path: &Path) -> std::io::Result<()> {
+        self.tick();
+        self.inner.delete(path)
+    }
+}
+
+/// [`dispatch_smart_scan_with_sink`], reporting each step's progress.
+///
+/// The progress handler is the only difference. Every gate, every verb and
+/// every disposal is the same code path — the sink each verb receives is the
+/// caller's own, wrapped in a counter.
+pub fn dispatch_smart_scan_with_progress(
+    cfg: &SmartScanConfig,
+    req: &SmartScanRequest,
+    sink: &dyn Sink,
+    audit: &mut AuditLog,
+    on_progress: &mut dyn FnMut(&DispatchProgress),
+) -> Result<SmartScanRunReport, String> {
     let home = cfg.home.as_path();
 
     // The assertion every disposal verb in this layer makes. Repeated rather
@@ -774,6 +878,18 @@ pub fn dispatch_smart_scan_with_sink(
             continue;
         }
 
+        let selected = match source {
+            "cleanup" => !req.categories.is_empty(),
+            "privacy" => !req.privacy_paths.is_empty(),
+            "large-old" => !req.large_old_paths.is_empty(),
+            _ => false,
+        };
+        let progress = ProgressSink::new(sink, source, &mut *on_progress);
+        if selected {
+            progress.emit();
+        }
+        let sink: &dyn Sink = &progress;
+
         let outcome = match source {
             "cleanup" if req.categories.is_empty() => StepOutcome::NotSelected,
             // `req.filters`, not `cfg.filters`. The request carries what the
@@ -848,6 +964,9 @@ pub fn dispatch_smart_scan_with_sink(
                 reason: format!("unknown Smart Scan source {other:?}"),
             },
         };
+        if selected {
+            progress.emit();
+        }
 
         if let StepOutcome::Refused { reason } = &outcome {
             stopped = Some(format!("{source} refused: {reason}"));
@@ -881,15 +1000,19 @@ pub fn dispatch_smart_scan_with_sink(
 }
 
 /// Real-app entry point: the system Trash, and the default audit log.
-pub fn dispatch_smart_scan(req: SmartScanRequest) -> Result<SmartScanRunReport, String> {
+pub fn dispatch_smart_scan(
+    req: SmartScanRequest,
+    on_progress: &mut dyn FnMut(&DispatchProgress),
+) -> Result<SmartScanRunReport, String> {
     let home = crate::default_home().map_err(|e| e.to_string())?;
     let mut audit = AuditLog::open(&crate::default_audit_path().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    dispatch_smart_scan_with_sink(
+    dispatch_smart_scan_with_progress(
         &SmartScanConfig::new(home),
         &req,
         &swept_core::executor::SystemSink,
         &mut audit,
+        on_progress,
     )
 }
 

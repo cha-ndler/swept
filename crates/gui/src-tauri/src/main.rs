@@ -8,7 +8,9 @@ use tauri::{AppHandle, Emitter};
 use swept_core::loginitems::LoginItem;
 use swept_core::report::ScanReport;
 use swept_gui_core::acceptance::{self, AcceptanceStatus};
-use swept_gui_core::smartscan::{SmartScanReportDto, SmartScanRequest, SmartScanRunReport};
+use swept_gui_core::smartscan::{
+    SmartScanReportDto, SmartScanRequest, SmartScanRunReport, StepOutcome,
+};
 use swept_gui_core::{
     self as gui, Acknowledged, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto,
     Permissions, PrivacyReportDto, SpaceLensReportDto, StartupReportDto, StartupSummary,
@@ -17,6 +19,40 @@ use swept_gui_core::{
 
 /// Event channel the frontend listens on for scan progress.
 const SCAN_PROGRESS: &str = "scan://progress";
+
+/// Event channel for a confirmed Smart Scan run's per-step progress.
+const DISPATCH_PROGRESS: &str = "smartscan://progress";
+
+/// The Finder's own "moved to the Trash" sound. A fixed system path, like the
+/// two URLs below — nothing the frontend says can change what is played.
+const TRASH_SOUND: &str = "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/finder/move to trash.aif";
+
+/// Play the Trash sound once, for a whole gesture that moved something.
+///
+/// The system sink moves files silently — it used to go through Finder, which
+/// played this sound once *per file*, for as long as a 190k-file run took.
+/// Once per gesture is the feedback the Finder gives for one drag of many
+/// files. Fire-and-forget: a sound that fails to play is cosmetic, and never a
+/// reason to fail a run that has already happened.
+fn trash_sound(moved: bool) {
+    if moved {
+        if let Ok(mut child) = std::process::Command::new("/usr/bin/afplay")
+            .arg(TRASH_SOUND)
+            .spawn()
+        {
+            // Reaped off-thread, so the sound never delays the reply and never
+            // leaves a zombie behind.
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+    }
+}
+
+/// Whether a verb's summary moved anything worth announcing.
+fn moved(summary: &Result<CleanSummary, String>) -> bool {
+    matches!(summary, Ok(s) if !s.dry_run && s.executed > 0)
+}
 
 /// The one URL this app will ever open. Hardcoded on purpose: granting the
 /// webview a general "open a URL" permission would let any future frontend bug
@@ -105,11 +141,13 @@ async fn clean(
     expected: Option<Expected>,
     confirm_mass_delete: bool,
 ) -> Result<CleanSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let r = tauri::async_runtime::spawn_blocking(move || {
         gui::clean(&filters, categories, expected, confirm_mass_delete)
     })
     .await
-    .map_err(|e| format!("clean task failed: {e}"))?
+    .map_err(|e| format!("clean task failed: {e}"))?;
+    trash_sound(moved(&r));
+    r
 }
 
 /// Read-only: the largest (optionally oldest) files across the *discovery*
@@ -161,11 +199,27 @@ async fn smart_scan(filters: Filters) -> Result<SmartScanReportDto, String> {
 /// its own ceiling. Sequential and fail-fast — **no step begins after a step
 /// refused** — and the ledger it returns distinguishes "we did not try" from
 /// "we tried and there was nothing".
+///
+/// Progress goes out on `DISPATCH_PROGRESS` as each step works through its
+/// disposals, and the Trash sound plays once when the whole gesture is over.
 #[tauri::command]
-async fn dispatch_smart_scan(request: SmartScanRequest) -> Result<SmartScanRunReport, String> {
-    tauri::async_runtime::spawn_blocking(move || gui::smartscan::dispatch_smart_scan(request))
-        .await
-        .map_err(|e| format!("smart-scan dispatch task failed: {e}"))?
+async fn dispatch_smart_scan(
+    app: AppHandle,
+    request: SmartScanRequest,
+) -> Result<SmartScanRunReport, String> {
+    let r = tauri::async_runtime::spawn_blocking(move || {
+        gui::smartscan::dispatch_smart_scan(request, &mut |p| {
+            // A dropped progress event is cosmetic; never fail a run over one.
+            let _ = app.emit(DISPATCH_PROGRESS, p);
+        })
+    })
+    .await
+    .map_err(|e| format!("smart-scan dispatch task failed: {e}"))?;
+    trash_sound(matches!(&r, Ok(run) if run.steps.iter().any(|s| matches!(
+        &s.outcome,
+        StepOutcome::Executed { summary } if summary.executed > 0
+    ))));
+    r
 }
 
 /// Read-only: the size of everything in the discovery scope, as a tree.
@@ -201,11 +255,13 @@ async fn dispose_paths(
     attested: Option<gui::AppDataAttested>,
 ) -> Result<CleanSummary, String> {
     let attested = attested.unwrap_or_default();
-    tauri::async_runtime::spawn_blocking(move || {
+    let r = tauri::async_runtime::spawn_blocking(move || {
         gui::dispose_selected(paths, expected, confirm_mass_delete, attested)
     })
     .await
-    .map_err(|e| format!("dispose task failed: {e}"))?
+    .map_err(|e| format!("dispose task failed: {e}"))?;
+    trash_sound(moved(&r));
+    r
 }
 
 /// Read-only: the applications a user may pick from. Top-level bundles only.
@@ -241,11 +297,13 @@ async fn dispose_leftovers(
     expected: Option<Expected>,
     confirm_mass_delete: bool,
 ) -> Result<CleanSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let r = tauri::async_runtime::spawn_blocking(move || {
         gui::dispose_leftovers(&target, paths, expected, confirm_mass_delete)
     })
     .await
-    .map_err(|e| format!("dispose-leftovers task failed: {e}"))?
+    .map_err(|e| format!("dispose-leftovers task failed: {e}"))?;
+    trash_sound(moved(&r));
+    r
 }
 
 /// Read-only: what browsers remember. Takes nothing from the frontend, because
@@ -273,11 +331,13 @@ async fn dispose_privacy(
     expected: Option<Expected>,
     confirm_mass_delete: bool,
 ) -> Result<CleanSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let r = tauri::async_runtime::spawn_blocking(move || {
         gui::dispose_privacy(paths, acknowledged, expected, confirm_mass_delete)
     })
     .await
-    .map_err(|e| format!("dispose-privacy task failed: {e}"))?
+    .map_err(|e| format!("dispose-privacy task failed: {e}"))?;
+    trash_sound(moved(&r));
+    r
 }
 
 /// Open the pane that holds the login items this app cannot see.

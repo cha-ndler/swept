@@ -1384,3 +1384,90 @@ fn a_gesture_that_aborted_says_so_in_the_log() {
         "the abort must be reconstructable from the log alone:\n{text}"
     );
 }
+
+// --- progress ---------------------------------------------------------------
+//
+// A confirmed run over a real home is hundreds of thousands of disposals, and a
+// sheet that only says "Moving…" for all of them is indistinguishable from a
+// hung one. Progress is cosmetic — it authorizes nothing — so what these pin is
+// only that it is *truthful*: it starts at zero, never runs backwards, and ends
+// on the number of disposals the step actually attempted.
+
+use swept_gui_core::smartscan::{dispatch_smart_scan_with_progress, DispatchProgress};
+
+fn events_for<'a>(events: &'a [DispatchProgress], src: &str) -> Vec<&'a DispatchProgress> {
+    events.iter().filter(|e| e.source == src).collect()
+}
+
+#[test]
+fn each_step_reports_progress_from_zero_to_what_it_attempted() {
+    let (_g, home) = fixture_home();
+    for i in 0..3 {
+        write_sized(&home.join(format!("Library/Caches/app/blob{i}.bin")), 1024);
+    }
+    let profile = chromium_profile(&home, "Default");
+    write_sized(&profile.join("GPUCache/data_1"), 1024);
+
+    let report = smart_scan_in(&config(&home));
+    let mut req = request(report.scanned_at_ms);
+    req.categories = vec!["user-caches".to_string()];
+    req.expected.cleanup = confirmed(3, 3 * 1024);
+    req.privacy_paths = report.privacy.iter().map(|r| r.path.clone()).collect();
+    assert_eq!(req.privacy_paths.len(), 1, "fixture should offer one row");
+    req.expected.privacy = confirmed(1, report.privacy[0].size_bytes);
+
+    let mut events = Vec::new();
+    let mut log = audit(&home);
+    let run =
+        dispatch_smart_scan_with_progress(&config(&home), &req, &sink(&home), &mut log, &mut |p| {
+            events.push(p.clone())
+        })
+        .unwrap();
+    assert!(run.completed, "{run:?}");
+
+    for (src, attempted) in [("cleanup", 3), ("privacy", 1)] {
+        let seen = events_for(&events, src);
+        assert!(!seen.is_empty(), "{src} reported no progress");
+        assert_eq!(seen.first().unwrap().done, 0, "{src} must start at zero");
+        assert_eq!(
+            seen.last().unwrap().done,
+            attempted,
+            "{src} must end on what it attempted"
+        );
+        assert!(
+            seen.windows(2).all(|w| w[0].done <= w[1].done),
+            "{src} progress ran backwards: {seen:?}"
+        );
+    }
+    // The wrapper forwards; it does not stand in for the sink.
+    assert!(!home.join("Library/Caches/app/blob0.bin").exists());
+}
+
+/// A step that never began must not look like one that began and stalled.
+#[test]
+fn a_step_that_is_not_attempted_or_not_selected_reports_no_progress() {
+    let (_g, home) = fixture_home();
+    write_sized(&home.join("Library/Caches/app/blob.bin"), 4096);
+    write_sized(&home.join("Downloads/big.iso"), 4096);
+
+    let mut req = request(now_ms());
+    req.categories = vec!["user-caches".to_string()];
+    req.expected.cleanup = some_cleanup();
+    // Privacy refuses, so large-old is never attempted.
+    req.privacy_paths = vec![s(&home.join("Library/nope"))];
+    req.expected.privacy = confirmed(1, 0);
+    req.large_old_paths = vec![s(&home.join("Downloads/big.iso"))];
+    req.expected.large_old = confirmed(1, 4096);
+
+    let mut events = Vec::new();
+    let mut log = audit(&home);
+    let run =
+        dispatch_smart_scan_with_progress(&config(&home), &req, &sink(&home), &mut log, &mut |p| {
+            events.push(p.clone())
+        })
+        .unwrap();
+
+    assert!(!run.completed);
+    assert!(events_for(&events, "large-old").is_empty(), "{events:?}");
+    assert!(home.join("Downloads/big.iso").exists());
+}

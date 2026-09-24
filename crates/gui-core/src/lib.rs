@@ -458,6 +458,11 @@ pub struct LargeOldItem {
     pub path: String,
     pub size_bytes: u64,
     pub modified_ms: Option<u64>,
+    /// Inside `~/Library/Application Support`, so acting on it takes an
+    /// [`AppDataAttested`] for the run. Computed here rather than in the UI,
+    /// which does not know the home directory and should not reimplement the
+    /// predicate the disposal verb enforces.
+    pub app_private: bool,
 }
 
 /// What the Large & Old walk found, for the UI.
@@ -489,6 +494,7 @@ pub fn large_and_old(
     // files to the user as old, which are then exactly the rows they grant.
     let min_age = older_than_days.map(|d| Duration::from_secs(d.saturating_mul(86_400)));
     let report = largeold::find_in(home, min_size_bytes, min_age);
+    let app_support = AppSupport::new(home);
     LargeOldReportDto {
         items: report
             .items
@@ -504,6 +510,7 @@ pub fn large_and_old(
                     path: p.to_string(),
                     size_bytes: f.size_bytes,
                     modified_ms: f.modified_ms,
+                    app_private: app_support.contains(&f.path),
                 })
             })
             .collect(),
@@ -763,11 +770,108 @@ fn consequence_of(
 ///   sizes and dates, which is the wrong vocabulary for "you will be signed out
 ///   everywhere". So it refuses and names the screen that does ask, rather than
 ///   acting on consent it never obtained.
+/// - **Nothing under `~/Library/Application Support` is granted by this entry
+///   point.** See [`dispose_selected_attested_with_sink`], which is the only
+///   way in for those paths; this one is never attested.
 pub fn dispose_selected_with_sink(
     home: &Path,
     paths: &[String],
     expected: Option<Expected>,
     confirm_mass_delete: bool,
+    sink: &dyn Sink,
+    audit: &mut AuditLog,
+) -> Result<CleanSummary, String> {
+    dispose_selected_attested_with_sink(
+        home,
+        paths,
+        expected,
+        confirm_mass_delete,
+        AppDataAttested::default(),
+        sink,
+        audit,
+    )
+}
+
+/// Whether the user attested, for this run, to acting on an app's own data.
+///
+/// `~/Library/Application Support` is where apps keep what they cannot
+/// regenerate — a password manager's vault, a messaging database, the only
+/// copy of an app's documents — and no list of paths can enumerate that. So
+/// the directory stays *readable* (Large & Old and Space Lens show it, because
+/// the picture should be true) but is not *grantable* without this.
+///
+/// Shaped like [`Acknowledged`] and for the same reason **refused by default**:
+/// `#[serde(default)]` means a frontend that drops the field, or loses the
+/// checkbox on a re-render, gets a refusal rather than the wider behaviour. It
+/// is per request and never persisted — "attested" means attested for this
+/// action, or it is the old behaviour with a checkbox in front of it.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(default)]
+pub struct AppDataAttested {
+    pub app_support: bool,
+}
+
+/// Where `~/Library/Application Support` data actually lives, for gating.
+///
+/// The root itself (declared and canonical spellings), **plus the canonical
+/// target of every direct child that is a symlink**. Relocating one app's data
+/// with a symlink — a device-backup folder moved to another volume, say — is
+/// common, and the walk lists those files under their canonical path, which is
+/// no longer under this root. Checking the canonical path alone would miss
+/// them; the browser boundary had exactly that bug (F9).
+///
+/// Built once per request or report rather than per path, because it reads a
+/// directory. An unreadable root yields the two spellings only — which gates
+/// less, but a root that cannot be listed is not one the walk listed either.
+pub(crate) struct AppSupport {
+    roots: Vec<PathBuf>,
+}
+
+impl AppSupport {
+    pub(crate) fn new(home: &Path) -> Self {
+        let declared = home.join("Library/Application Support");
+        let mut roots = vec![declared.clone()];
+        if let Ok(canonical) = std::fs::canonicalize(&declared) {
+            if let Ok(entries) = std::fs::read_dir(&canonical) {
+                for entry in entries.flatten() {
+                    let is_link = entry.file_type().map(|t| t.is_symlink()).unwrap_or(false);
+                    if is_link {
+                        if let Ok(target) = std::fs::canonicalize(entry.path()) {
+                            roots.push(target);
+                        }
+                    }
+                }
+            }
+            roots.push(canonical);
+        }
+        AppSupport { roots }
+    }
+
+    /// Compared **case-insensitively**, the way the denylist compares: macOS
+    /// volumes fold case, so `application support` names the same files.
+    /// Folding can only widen what is gated, never narrow it.
+    pub(crate) fn contains(&self, path: &Path) -> bool {
+        self.roots
+            .iter()
+            .any(|root| safety::denylist::starts_with_ci(path, root))
+    }
+}
+
+/// Is this path inside `~/Library/Application Support`? See [`AppSupport`].
+pub(crate) fn inside_app_support(home: &Path, path: &Path) -> bool {
+    AppSupport::new(home).contains(path)
+}
+
+/// [`dispose_selected_with_sink`], with the Application Support attestation
+/// as an explicit argument. Everything else is identical: one path that fails
+/// any check — including an un-attested Application Support path — refuses
+/// the whole request, and the refusal is recorded.
+pub fn dispose_selected_attested_with_sink(
+    home: &Path,
+    paths: &[String],
+    expected: Option<Expected>,
+    confirm_mass_delete: bool,
+    attested: AppDataAttested,
     sink: &dyn Sink,
     audit: &mut AuditLog,
 ) -> Result<CleanSummary, String> {
@@ -816,6 +920,8 @@ pub fn dispose_selected_with_sink(
     let mut actions = Vec::with_capacity(paths.len());
     let mut granted = Vec::with_capacity(paths.len());
     let mut rejected: Vec<String> = Vec::new();
+    let mut unattested: Vec<String> = Vec::new();
+    let app_support = AppSupport::new(home);
     // The roots as the WALK resolves them, not as `discovery_roots` spells
     // them. Comparing against the literal spelling would refuse every row the
     // feature had just offered on any Mac whose ~/Documents is a symlink into
@@ -895,6 +1001,16 @@ pub fn dispose_selected_with_sink(
             rejected.push(format!("{raw}: {why}"));
             continue;
         }
+        // An app's own data, which this run was not attested for. After the
+        // browser boundary on purpose: attestation widens exactly this and
+        // never opens a browser's data. Kept apart from `rejected` because
+        // "no longer valid, scan again" is the wrong thing to tell someone
+        // whose file is exactly as it was listed.
+        let app_private = app_support.contains(safe.as_path());
+        if app_private && !attested.app_support {
+            unattested.push(raw.clone());
+            continue;
+        }
         // Re-read the size from disk. The frontend's number is a display value;
         // this one is what the mass-delete threshold is measured against.
         let size_bytes = match std::fs::symlink_metadata(safe.as_path()) {
@@ -946,7 +1062,14 @@ pub fn dispose_selected_with_sink(
             path: safe,
             size_bytes,
             disposal: Disposal::Trash,
-            category: "large-and-old".to_string(),
+            // The audit log names what authorised an app-data disposal, so
+            // "attested" is a record and not only a UI state.
+            category: if app_private {
+                "large-and-old-app-support-attested"
+            } else {
+                "large-and-old"
+            }
+            .to_string(),
         });
     }
 
@@ -969,6 +1092,21 @@ pub fn dispose_selected_with_sink(
                 paths.len(),
                 shown.join("; "),
                 suffix
+            ),
+        );
+    }
+
+    if !unattested.is_empty() {
+        let shown: Vec<&str> = unattested.iter().take(3).map(|s| s.as_str()).collect();
+        return refuse_and_record(
+            audit,
+            format!(
+                "refused: {} of {} selected items are inside ~/Library/Application Support, \
+                 where apps keep their own data, and this run was not attested for that — \
+                 so nothing was touched. First: {}",
+                unattested.len(),
+                paths.len(),
+                shown.join("; "),
             ),
         );
     }
@@ -1021,15 +1159,17 @@ pub fn dispose_selected(
     paths: Vec<String>,
     expected: Option<Expected>,
     confirm_mass_delete: bool,
+    attested: AppDataAttested,
 ) -> Result<CleanSummary, String> {
     let home = default_home().map_err(|e| e.to_string())?;
     let audit_path = default_audit_path().map_err(|e| e.to_string())?;
     let mut audit = AuditLog::open(&audit_path).map_err(|e| e.to_string())?;
-    dispose_selected_with_sink(
+    dispose_selected_attested_with_sink(
         &home,
         &paths,
         expected,
         confirm_mass_delete,
+        attested,
         &SystemSink,
         &mut audit,
     )
@@ -2083,6 +2223,21 @@ pub fn dispose_privacy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The case folding pinned on its own. Through the verb, the identity
+    /// check refuses a case variant first on APFS, so an end-to-end test
+    /// cannot tell whether this comparison folds.
+    #[test]
+    fn the_app_support_predicate_folds_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(home.join("Library/Application Support")).unwrap();
+        let gate = AppSupport::new(&home);
+        assert!(gate.contains(&home.join("library/APPLICATION SUPPORT/x/y.db")));
+        assert!(gate.contains(&home.join("Library/Application Support/x")));
+        assert!(!gate.contains(&home.join("Library/Application Supportive/x")));
+        assert!(!gate.contains(&home.join("Documents/x")));
+    }
 
     /// The rules in [`vet_member`] are mutually redundant by design, and a
     /// fresh scan has already dropped anything that would trip them — so none

@@ -792,6 +792,35 @@ fn a_consequence_carrying_path_sent_as_a_large_and_old_path_is_refused() {
     assert!(cookies.exists());
 }
 
+/// The report never offers an Application Support row, so a request naming one
+/// is the frontend and the disk disagreeing — refused up front, and never
+/// attested on this screen, which has no way to ask.
+#[test]
+fn an_application_support_path_sent_as_a_large_and_old_path_is_refused() {
+    let (_g, home) = fixture_home();
+    let vault = home.join("Library/Application Support/Vault/data.db");
+    write_sized(&vault, 4096);
+    // A cleanup step ahead of Large & Old. Its file surviving is what proves
+    // the refusal came *before* any step ran, rather than from the
+    // un-attested verb after the cleaners had already acted.
+    let cache = home.join("Library/Caches/app/blob.bin");
+    write_sized(&cache, 4096);
+
+    let mut req = request(now_ms());
+    req.categories = vec!["user-caches".to_string()];
+    req.expected.cleanup = some_cleanup();
+    req.large_old_paths = vec![vault.display().to_string()];
+    req.expected.large_old = confirmed(1, 4096);
+
+    let mut log = audit(&home);
+    let err =
+        dispatch_smart_scan_with_sink(&config(&home), &req, &sink(&home), &mut log).unwrap_err();
+
+    assert!(err.contains("Application Support"), "{err}");
+    assert!(vault.exists());
+    assert!(cache.exists(), "no step may run ahead of the refusal");
+}
+
 /// `deny_unknown_fields` — a frontend sending a field this backend does not know
 /// gets a refusal rather than a silent omission. It is also what stops a
 /// `leftover_paths` field appearing later without a deliberate edit.

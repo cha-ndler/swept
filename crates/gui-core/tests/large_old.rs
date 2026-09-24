@@ -14,7 +14,27 @@ use std::path::{Path, PathBuf};
 
 use swept_core::audit::AuditLog;
 use swept_core::executor::{DirSink, MAX_GRANTS};
-use swept_gui_core::{dispose_selected_with_sink, large_and_old, Expected};
+use swept_gui_core::{
+    dispose_selected_attested_with_sink, dispose_selected_with_sink, large_and_old,
+    AppDataAttested, CleanSummary, Expected,
+};
+
+/// A run the user attested for `~/Library/Application Support`. The tests that
+/// use it are about some *other* boundary (the browser one) and must not be
+/// passing merely because the attestation gate refused first; the gate itself
+/// is covered in `tests/app_support.rs`.
+fn dispose_attested(home: &Path, path: &Path) -> Result<CleanSummary, String> {
+    let (_p, mut log) = audit_at(home);
+    dispose_selected_attested_with_sink(
+        home,
+        &[s(path)],
+        None,
+        false,
+        AppDataAttested { app_support: true },
+        &sink(home),
+        &mut log,
+    )
+}
 
 fn fixture_home() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -685,27 +705,25 @@ fn a_file_inside_a_regenerable_row_is_still_disposable() {
     let blob = profile.join("GPUCache/data_1");
     write_sized(&blob, 4096);
 
-    let (_p, mut log) = audit_at(&home);
-    let summary =
-        dispose_selected_with_sink(&home, &[s(&blob)], None, false, &sink(&home), &mut log)
-            .unwrap();
+    // Attested, because a browser profile is inside Application Support; what
+    // is under test is that the *browser* boundary does not refuse this.
+    let summary = dispose_attested(&home, &blob).unwrap();
 
     assert_eq!(summary.executed, 1);
     assert!(!blob.exists());
 }
 
 /// And the wider negative: `~/Library/Application Support` stays in the
-/// discovery scope for everything that is not a browser's private data.
+/// discovery scope for everything that is not a browser's private data —
+/// once the run is attested. Without the attestation it is refused; see
+/// `tests/app_support.rs`.
 #[test]
 fn an_ordinary_large_file_in_application_support_is_still_disposable() {
     let (_g, home) = fixture_home();
     let blob = home.join("Library/Application Support/Some App/render.cache");
     write_sized(&blob, 4096);
 
-    let (_p, mut log) = audit_at(&home);
-    let summary =
-        dispose_selected_with_sink(&home, &[s(&blob)], None, false, &sink(&home), &mut log)
-            .unwrap();
+    let summary = dispose_attested(&home, &blob).unwrap();
 
     assert_eq!(summary.executed, 1);
     assert!(!blob.exists());
@@ -994,9 +1012,7 @@ fn the_refusal_boundary_does_not_widen_to_the_vendor_directory() {
     let p = home.join("Library/Application Support/Google/GoogleSoftwareUpdate/blob.bin");
     write_sized(&p, 4096);
 
-    let (_a, mut log) = audit_at(&home);
-    let summary =
-        dispose_selected_with_sink(&home, &[s(&p)], None, false, &sink(&home), &mut log).unwrap();
+    let summary = dispose_attested(&home, &p).unwrap();
 
     assert_eq!(summary.executed, 1);
     assert!(!p.exists());

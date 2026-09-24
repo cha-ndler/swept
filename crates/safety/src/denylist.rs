@@ -29,7 +29,11 @@ fn component_eq_ci(a: &Component<'_>, b: &Component<'_>) -> bool {
 /// vs `/Users/josé`) would not be recognized as the same path. That is no worse
 /// than the byte-exact comparison this replaced, but it is not full Unicode
 /// case folding — worth revisiting if a non-ASCII entry is ever added.
-fn starts_with_ci(path: &Path, prefix: &Path) -> bool {
+///
+/// Public so that a boundary drawn outside this crate (the Application Support
+/// attestation in `gui-core`) folds case exactly the way the denylist does,
+/// rather than growing a second, subtly different copy.
+pub fn starts_with_ci(path: &Path, prefix: &Path) -> bool {
     let mut got = path.components();
     for want in prefix.components() {
         match got.next() {

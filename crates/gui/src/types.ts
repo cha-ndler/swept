@@ -92,6 +92,16 @@ export interface LargeOldItem {
   size_bytes: number;
   /** Epoch milliseconds, or null if the mtime could not be read. */
   modified_ms: number | null;
+  /**
+   * Inside ~/Library/Application Support — an app's own data. Acting on it
+   * needs `AppDataAttested` for the run, and the backend refuses without it.
+   */
+  app_private: boolean;
+}
+
+// Mirrors swept_gui_core::AppDataAttested. Per request, never persisted.
+export interface AppDataAttested {
+  app_support: boolean;
 }
 
 // Mirrors swept_gui_core::LargeOldReportDto.

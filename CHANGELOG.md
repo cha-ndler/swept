@@ -6,7 +6,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **An app's own data needs its own confirmation.** Large & Old still *lists*
+  files in `~/Library/Application Support`, but moving one to the Trash now
+  takes a separate, un-ticked acknowledgement on the confirmation sheet —
+  asked every time, never remembered — because that folder is where a password
+  manager keeps its vault and a messenger its database. The sheet names the
+  file and the app, and marks the row. Without it the backend refuses the
+  whole request, and the refusal is in the audit log.
+
 ### Fixed
+- **Smart Scan could move a file out of Application Support.** Its report never
+  offered one, but the dispatcher accepted a request naming one and passed it
+  on. It now refuses before any step runs.
+- The Large & Old scope line names Application Support, which it always
+  searched.
+- The Large & Old confirmation sheet scrolls rather than pushing its buttons off
+  a short window, and a blocked **Move to Trash** now looks blocked.
 - **The app bundle is signed.** Every `.dmg` published so far held a
   `Swept.app` whose bundle was *not signed at all* — only the linker's
   automatic signature on the executable, with `Info.plist` and the resources

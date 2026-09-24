@@ -636,6 +636,125 @@ test("a refused disposal is surfaced, not swallowed", async ({
   await capture(page, "large-old-refused", testInfo.project.name);
 });
 
+test("an app-data row needs its own attestation, per run", async ({
+  page,
+}, testInfo) => {
+  // ~/Library/Application Support is readable but not grantable without a
+  // second, un-pre-ticked acknowledgement. The sheet must show it only when
+  // the selection reaches there, keep the action disabled until it is ticked,
+  // and send exactly what was ticked — the backend refuses otherwise.
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    const sent: unknown[] = [];
+    w.__disposeArgs = sent;
+    w.__TAURI_INTERNALS__ = {
+      invoke: (cmd: string, args: unknown) => {
+        if (cmd === "plugin:event|listen") return Promise.resolve(1);
+        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        if (cmd === "terms_status")
+          return Promise.resolve({
+            accepted: true,
+            terms_version: "1.0",
+            terms_digest: "",
+            accepted_version: null,
+          });
+        if (cmd === "permissions")
+          return Promise.resolve({
+            trash_readable: true,
+            containers_readable: true,
+            all_readable: true,
+          });
+        if (cmd === "large_and_old")
+          return Promise.resolve({
+            items: [
+              {
+                path: "/Users/tester/Library/Application Support/SomeApp/library.db",
+                size_bytes: 2_147_483_648,
+                modified_ms: Date.now() - 400 * 86_400_000,
+                app_private: true,
+              },
+              {
+                path: "/Users/tester/Downloads/big.iso",
+                size_bytes: 1_073_741_824,
+                modified_ms: Date.now() - 90 * 86_400_000,
+                app_private: false,
+              },
+            ],
+            matched: 2,
+            matched_bytes: 3_221_225_472,
+            examined: 1000,
+            truncated: false,
+            skipped_unreadable: 0,
+            skipped_hardlinked: 0,
+            skipped_unrepresentable: 0,
+            partial: false,
+          });
+        if (cmd === "dispose_paths") {
+          sent.push(args);
+          return Promise.resolve({
+            dry_run: false,
+            executed: 1,
+            refused: 0,
+            bytes_freed: 2_147_483_648,
+            entries_freed: 1,
+          });
+        }
+        return Promise.reject(new Error(`unstubbed command: ${cmd}`));
+      },
+      transformCallback: (cb: unknown) => cb,
+    };
+  });
+  await page.goto("/?tab=large-old");
+
+  // An ordinary file alone: no attestation box, action enabled.
+  await page.getByRole("checkbox").nth(1).check();
+  await page.getByRole("button", { name: /to Trash…$/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("checkbox", { name: /an app's own data/ }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+
+  // Add the app-data row: the box appears unticked and gates the action.
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: /to Trash…$/ }).click();
+  const attest = dialog.getByRole("checkbox", { name: /an app's own data/ });
+  await expect(attest).not.toBeChecked();
+  const move = dialog.getByRole("button", {
+    name: "Move to Trash",
+    exact: true,
+  });
+  await expect(move).toBeDisabled();
+  await capture(page, "large-old-confirm-app-data", testInfo.project.name);
+
+  // At the window's minimum height the sheet must fit and scroll, never push
+  // its own action row off-screen — the 800px captures cannot show that.
+  const size = page.viewportSize()!;
+  await page.setViewportSize({ width: size.width, height: 560 });
+  const box = await dialog.locator(":scope > div").boundingBox();
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(560);
+  await page.setViewportSize(size);
+
+  // Ticked, cancelled, reopened: not remembered.
+  await attest.check();
+  await expect(move).toBeEnabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: /to Trash…$/ }).click();
+  await expect(attest).not.toBeChecked();
+  await expect(move).toBeDisabled();
+
+  await attest.check();
+  await move.click();
+  const sent = () =>
+    page.evaluate(
+      () => (window as unknown as { __disposeArgs: unknown[] }).__disposeArgs,
+    );
+  await expect.poll(async () => (await sent()).length).toBe(1);
+  expect((await sent())[0]).toMatchObject({ attested: { app_support: true } });
+});
+
 test("large-old loading", async ({ page }, testInfo) => {
   await installBackend(page, { hang: true });
   await page.goto("/?tab=large-old");

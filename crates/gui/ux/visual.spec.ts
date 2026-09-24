@@ -1708,11 +1708,20 @@ test("smart scan moving", async ({ page }, testInfo) => {
   await expect(page.getByText(/checking cleanup against the disk/i)).toBeVisible();
   await emit({ source: "cleanup", done: 2000 });
   await expect(page.getByText(/moving cleanup · 2,000 of/i)).toBeVisible();
-  expect(Number(await bar.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+  const pct = Number(await bar.getAttribute("aria-valuenow"));
+  expect(pct).toBeGreaterThan(0);
   // Measured, not read: a bar whose fill renders at zero width passes every
-  // markup check.
-  const fill = await bar.locator("div").boundingBox();
-  expect(fill?.width ?? 0).toBeGreaterThan(0);
+  // markup check. Polled, because the fill animates its width — measuring the
+  // instant the label changes caught it at 0 px on CI. Waiting for the width
+  // the percentage implies also keeps the capture off a mid-transition frame.
+  await expect
+    .poll(async () => {
+      const track = await bar.boundingBox();
+      const fill = await bar.locator("div").boundingBox();
+      if (!track || !fill) return -1;
+      return Math.round((fill.width / track.width) * 100);
+    })
+    .toBeGreaterThanOrEqual(pct);
   await capture(page, "smart-scan-moving", testInfo.project.name);
 });
 

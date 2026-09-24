@@ -30,24 +30,15 @@ gates CI does, in the same order, and names anything it skipped rather than
 counting a skip as a pass. Never report success you haven't observed — run the
 `verifier` subagent if unsure.
 
-**Local verification is the primary oracle, not a rehearsal for CI.** The
-reason has changed, but the practice has not.
-
-It used to be money: GitHub bills macOS runners at **10x** on a *private*
-repository, and the monthly allowance was exhausted once. **The repository is
-public now**, so standard runners are free and that constraint is gone. Do not
-cite the 10x multiplier as a live reason — it no longer applies, and the
-workflow's own header comment is stale in the same way.
-
-What has not changed is why local-first is right anyway. A macOS run is minutes
-of wall-clock against seconds here; the jobs cannot move to Linux without
-giving up the thing they test (macOS path semantics for the safety kernel,
-`*-darwin.png` baselines for the visual gate); and a red X on a merge queue is
-a worse place to learn something than a terminal. Keep the frugal shape —
-`paths-ignore` for prose, tags-only packaging — because it keeps runs fast and
-signal-dense, not because minutes are scarce.
-
-Going private again would restore the old constraint, so this note stays.
+**Local verification is the primary oracle, not a rehearsal for CI.** A macOS
+run is minutes of wall-clock against seconds here; the jobs cannot move to Linux
+without giving up the thing they test (macOS path semantics for the safety
+kernel, `*-darwin.png` baselines for the visual gate); and a red X on a merge
+queue is a worse place to learn something than a terminal. Keep the frugal CI
+shape — `paths-ignore` for prose, tags-only packaging — because it keeps runs
+fast and signal-dense. (The repository is public, so runner minutes are free; if
+it ever goes private, macOS minutes bill at 10x and the allowance becomes a real
+constraint.)
 
 ---
 
@@ -163,12 +154,10 @@ into a fresh session. Hard-won conventions baked into them:
 - **CI is the second opinion; `./scripts/verify.sh` is the first.** Merge on a
   confirmed-green local run, and say in the PR that verification was local when
   CI did not run. Never write "CI green" for a run that never started.
-- **The workflow is shaped around the 10x macOS multiplier** (see the header
-  comment in `.github/workflows/ci.yml`): prose and design assets are
-  `paths-ignore`d entirely, superseded PR runs are cancelled, and
-  `release-build`/`package` are main-and-tags only because they produce
-  artifacts rather than signal. Before adding a job or widening a trigger, work
-  out what it costs — a macOS minute is ten.
+- **CI is kept lean on purpose:** prose and design assets are `paths-ignore`d
+  entirely, superseded PR runs are cancelled, and `release-build`/`package` are
+  main-and-tags only because they produce artifacts rather than signal. Before
+  adding a job or widening a trigger, check it adds signal worth the wall-clock.
 - **Sync local main after every merge.** `gh pr merge` can drop you on a stale
   local `main`; start each iteration with `git checkout -B main origin/main -q`.
 - **Verify the branch before committing and the push after.** A blocked `checkout`

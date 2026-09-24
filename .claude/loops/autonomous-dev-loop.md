@@ -2,8 +2,8 @@
 
 Paste the block below as your message to a new agent session working in this
 repo. It runs ONE backlog task per turn, then re-arms itself. Lessons from prior
-sessions are baked in (CI-confirm, main-sync, branch/push verify, command-position
-hook). Keep it verbatim so each wake-up repeats the loop.
+sessions are baked in (CI-confirm, main-sync, branch/push verify, fail-closed
+deletion-guard hook). Keep it verbatim so each wake-up repeats the loop.
 
 ---
 

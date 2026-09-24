@@ -14,7 +14,10 @@ for the human taste gate.
    `feat/prettify-<screen>` from origin/main.
 2. Raise the screen beyond default Tailwind: deliberate type scale, intentional
    accent/state palette, category iconography, a size visualization with
-   character, depth/layering, restrained motion (~150–200ms). Edit design tokens
+   character, depth/layering, restrained motion (~150–200ms). Avoid stock
+   defaults the artboard doesn't call for: cream/off-white background, italic
+   accent words in headings, numbered "01/02/03" section labels, monospace
+   eyebrow labels, pill-shaped buttons. Edit design tokens
    in `crates/gui/src/styles.css`. **Visual only** — never touch deletion/safety
    logic; deletion stays Trash-only + consent-gated.
 3. Exercise the oracle: `cd crates/gui && npm run build && npm run ux:update`,

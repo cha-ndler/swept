@@ -403,7 +403,13 @@ jobs:
           if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
             echo "Signing as: $APPLE_SIGNING_IDENTITY"
           else
-            echo "No signing identity present — building unsigned."
+            # Ad-hoc, not unsigned. Without an identity Tauri skips signing
+            # entirely, leaving only the linker's signature on the executable:
+            # a bundle that is "not signed at all", which a quarantined Apple
+            # Silicon download reports as "damaged" with no Open Anyway.
+            # `-` needs no certificate. See scripts/check-bundle-signature.sh.
+            echo "No signing identity present — signing ad-hoc."
+            export APPLE_SIGNING_IDENTITY=-
           fi
           cargo tauri build --target universal-apple-darwin
 
@@ -424,6 +430,13 @@ jobs:
       # proves the notarization ticket is attached to the file rather than only
       # present on Apple's servers — which is the difference between the app
       # opening offline and not.
+      # Runs on both paths. v0.5.0 shipped an unsealed bundle because the
+      # unsigned path had no check at all.
+      - name: Verify the bundle is sealed
+        run: |
+          app=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)
+          ../../scripts/check-bundle-signature.sh "$app"
+
       - name: Verify signature and notarization
         if: env.HAVE_IDENTITY == 'true'
         run: |

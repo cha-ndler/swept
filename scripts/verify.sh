@@ -231,8 +231,15 @@ if [ "$WANT_GUI" = 1 ]; then
         skip "tauri bundle (.app + .dmg, universal)" \
              "$MISSING_TARGET"
       else
+        # Ad-hoc (`-`) unless a real identity is set, exactly as CI's
+        # unsigned path does — see scripts/check-bundle-signature.sh for why
+        # an unsealed bundle is not a shippable one.
         step "tauri bundle (.app + .dmg, universal)" \
-             in_gui cargo tauri build --target universal-apple-darwin
+             in_gui env APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" \
+             cargo tauri build --target universal-apple-darwin
+        step "bundle signature covers the .app" \
+             "$ROOT/scripts/check-bundle-signature.sh" \
+             "$ROOT/crates/gui/src-tauri/target/universal-apple-darwin/release/bundle/macos/Swept.app"
       fi
     fi
   fi

@@ -6,14 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-## [Unreleased]
-
 ### Fixed
-- **The `.dmg` no longer makes you click through the MIT License to open it.**
-  A `licenseFile` in the bundle config turned `LICENSE` into a mount-time
-  agreement, so the first thing a download asked for was assent to a document
-  that does not require any — and `TERMS.md` §0 says so in as many words.
-  It also put the wrong consent surface in front of the right one.
+- **The downloaded app opens on Apple Silicon.** Every `.dmg` published so far
+  held a `Swept.app` whose bundle was *not signed at all* — only the linker's
+  automatic signature on the executable, with `Info.plist` and the resources
+  unsealed. Apple Silicon requires a signature on anything downloaded, so a
+  quarantined copy was reported as **"damaged"**, which offers no Open Anyway
+  and made the README's walkthrough impossible to follow. Unsigned builds are
+  now signed **ad-hoc** (the identity `-`, which needs no Apple account), and
+  both CI and `scripts/verify.sh --bundle` fail if the bundle is not sealed.
+  It is still an unsigned app from an unidentified developer, and macOS still
+  says so; what changed is that the walkthrough now works.
+- The README says how to run the downloaded **CLI**, which the quarantine flag
+  blocks just as it blocks the app.
 
 ## [0.5.0] — 2026-09-06
 
@@ -91,6 +96,13 @@ what would change it.
   acknowledgement was sitting under the pinned action row, so the frame showed
   one checkbox above the words "Tick both boxes to continue". Found by looking
   at it on a real display, after measurement had rated it acceptable.
+
+### Fixed
+- **The `.dmg` no longer makes you click through the MIT License to open it.**
+  A `licenseFile` in the bundle config turned `LICENSE` into a mount-time
+  agreement, so the first thing a download asked for was assent to a document
+  that does not require any — and `TERMS.md` §0 says so in as many words.
+  It also put the wrong consent surface in front of the right one.
 
 ### Changed
 - The CLI prints a one-line warranty notice to stderr before it acts for real.
@@ -441,7 +453,7 @@ property-tested safety substrate.
 - Recursive/large removals require confirmation; audit failures abort the run.
 - Tests run only against throwaway temp-dir fixtures.
 
-[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/cha-ndler/swept/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/cha-ndler/swept/releases/tag/v0.4.1
 [0.4.0]: https://github.com/cha-ndler/swept/releases/tag/v0.4.0

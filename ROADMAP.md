@@ -359,7 +359,7 @@ instead.**
   *inside* the allowlist would still reach `remove_dir_all`. No caller produces
   one (`scanner.rs` plans files only), and closing it generally is `guard_dir`'s
   job — see the v0.3 item, which M4 depends on.
-- [ ] **M2 — Large & Old Files** — *module shipped; one follow-up open.*
+- [x] **M2 — Large & Old Files** — *module shipped; follow-ups done.*
   - [x] **Engine + command layer.** `core/src/largeold.rs` walks
     `discovery_roots` read-only with size/age thresholds, prunes protected
     subtrees wholesale (so `.git` working trees and `/Applications` never
@@ -388,7 +388,7 @@ instead.**
     holding hex — tokens are now RGB channels), and **every confirmation-sheet
     screenshot since the clean flow shipped was a mid-animation frame**
     (`page.screenshot` does not disable animations; `toHaveScreenshot` does).
-  - [ ] **Is `~/Library/Application Support` a *grantable* scope, or only a
+  - [x] **Is `~/Library/Application Support` a *grantable* scope, or only a
     readable one?** It is a discovery root, so Large & Old lists what is in it
     and `dispose_selected_with_sink` will act on a selection from that list.
     That directory is application-private data by definition. The browser case
@@ -419,7 +419,24 @@ instead.**
     *not* become is a preference set once and forgotten — "attested" has to mean
     attested for this action, or it is the old behaviour with a checkbox in
     front of it.
-  - [ ] **The scope line under-states the scope.** `LargeOldView` prints
+    **Built.** `AppDataAttested` on `dispose_selected_attested_with_sink`; the
+    plain entry point is never attested. The gate covers the directory's own
+    spellings (case-folded, as the denylist folds) **and the canonical target
+    of every symlinked child**, since relocated app data is listed under its
+    real path — the browser boundary's F9 in another form, found by
+    `deletion-safety-reviewer`. Attested actions are audited as
+    `large-and-old-app-support-attested`. **Smart Scan was a live hole**: its
+    dispatch passed a hand-built App Support path straight to the verb and a
+    test watched it dispose one; it now refuses up front, before any step. The
+    sheet shows a separate un-ticked box only when the selection reaches there,
+    names the file and the app, and resets on every open. The CLI has no
+    Large & Old disposal, so no flag yet.
+    Not covered, recorded: the **Uninstaller** still offers an uninstalled
+    app's Application Support folder as a leftover — its own per-row consent
+    for a named app, but a password manager's vault left behind is exactly
+    such a row. And Swept's own `audit.jsonl` lives in a discovery root; it is
+    now behind the attestation but not denylisted.
+  - [x] **The scope line under-states the scope.** `LargeOldView` prints
     "Documents · Downloads · Desktop · Movies · Music · Pictures", but
     `discovery_roots` also includes `~/Library/Application Support` — which the
     walk really does search. Found while writing the user docs. A one-string fix,

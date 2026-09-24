@@ -66,6 +66,9 @@ export default function LargeOldView({
   const [phase, setPhase] = useState<Phase>("none");
   const [actionError, setActionError] = useState("");
   const [summary, setSummary] = useState<CleanSummary | null>(null);
+  // The Application Support attestation. Per run: reset every time the sheet
+  // opens, never remembered — "attested" means attested for this action.
+  const [attested, setAttested] = useState(false);
   // Bumped to force a fresh walk after files have been moved — the list we were
   // showing describes a disk that has just changed.
   const [reloadKey, setReloadKey] = useState(0);
@@ -111,6 +114,7 @@ export default function LargeOldView({
   const largest = items.length > 0 ? items[0].size_bytes : 0;
   const crossesMassThreshold =
     selectedItems.length > MASS_COUNT || selectedBytes > MASS_BYTES;
+  const needsAttest = selectedItems.some((i) => i.app_private);
 
   function toggle(path: string) {
     setSelected((s) => {
@@ -135,6 +139,8 @@ export default function LargeOldView({
         // user confirmed a large action", so the UI must not supply it for a
         // magnitude it kept to itself.
         confirmMassDelete: crossesMassThreshold,
+        // Only ever true when the sheet showed the box and the user ticked it.
+        attested: { app_support: attested && needsAttest },
       });
       setSummary(result);
       // The figure in the sidebar described a disk that no longer exists.
@@ -222,7 +228,7 @@ export default function LargeOldView({
                   <div>
                     <p className="text-subtle text-micro font-semibold uppercase">
                       Documents · Downloads · Desktop · Movies · Music ·
-                      Pictures
+                      Pictures · Application Support
                     </p>
                     <h2 className="mt-1 text-title font-semibold">
                       {report.matched.toLocaleString()} file
@@ -277,6 +283,7 @@ export default function LargeOldView({
           bytes={selectedBytes}
           onAct={() => {
             setActionError("");
+            setAttested(false);
             setPhase("confirm");
           }}
         />
@@ -289,7 +296,12 @@ export default function LargeOldView({
           mass={crossesMassThreshold}
           busy={phase === "working"}
           error={actionError}
-          onCancel={() => setPhase("none")}
+          attested={attested}
+          onAttest={() => setAttested((a) => !a)}
+          onCancel={() => {
+            setAttested(false);
+            setPhase("none");
+          }}
           onConfirm={dispose}
         />
       )}
@@ -492,12 +504,37 @@ function ActionBar({
   );
 }
 
+/**
+ * "SomeApp's", or "SomeApp's and Other's": the folder directly under
+ * Application Support, which is by convention the app's name. Stated as a
+ * possessive so the sentence says whose data it is.
+ */
+function appNames(items: LargeOldItem[]): string {
+  const marker = "/Application Support/";
+  const names = [
+    ...new Set(
+      items.map((i) => {
+        const at = i.path.indexOf(marker);
+        const rest = at < 0 ? "" : i.path.slice(at + marker.length);
+        return rest.split("/")[0] || "an app";
+      }),
+    ),
+  ];
+  const shown = names.slice(0, 3).map((n) => `${n}'s`);
+  if (names.length > 3) shown.push(`${names.length - 3} more apps'`);
+  return shown.length === 1
+    ? shown[0]
+    : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
+
 function ConfirmModal({
   items,
   bytes,
   mass,
   busy,
   error,
+  attested,
+  onAttest,
   onCancel,
   onConfirm,
 }: {
@@ -506,11 +543,19 @@ function ConfirmModal({
   mass: boolean;
   busy: boolean;
   error: string;
+  attested: boolean;
+  onAttest: () => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const shown = items.slice(0, 5);
+  // App data first, so a file that needs the attestation is never the one
+  // hidden behind "and N more".
+  const shown = [...items]
+    .sort((a, b) => Number(b.app_private) - Number(a.app_private))
+    .slice(0, 5);
   const more = items.length - shown.length;
+  const appData = items.filter((i) => i.app_private);
+  const blocked = appData.length > 0 && !attested;
 
   return (
     <div
@@ -522,7 +567,11 @@ function ConfirmModal({
       {/* Framed in the module's own hue, not the app's blue, so the two
           confirmation sheets are different objects at a glance rather than the
           same object with one recoloured glyph. */}
-      <div className="sheet-in w-full max-w-md rounded-panel border border-cat-large/40 bg-surface3 p-6 shadow-e3">
+      {/* Height-capped and scrollable, as the Smart Scan and Privacy sheets
+          are: the window can be 560px tall, and a sheet with five files, the
+          large-action note and the app-data box would otherwise push its own
+          buttons off-screen. */}
+      <div className="sheet-in flex max-h-[calc(100vh-3rem)] w-full max-w-md flex-col overflow-y-auto rounded-panel border border-cat-large/40 bg-surface3 p-6 shadow-e3">
         <div className="flex items-start gap-3">
           {/* Deliberately NOT the shield. The shield is the app's "we vetted
               this" mark, and this is the one sheet where it has not. */}
@@ -556,8 +605,15 @@ function ConfirmModal({
                 }`}
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-caption font-medium text-text">
-                    {name}
+                  <span className="flex items-center gap-2">
+                    <span className="block truncate text-caption font-medium text-text">
+                      {name}
+                    </span>
+                    {item.app_private && (
+                      <span className="flex-none rounded-[4px] border border-cat-large/60 bg-cat-large/[.16] px-1.5 text-micro font-semibold uppercase text-text">
+                        App data
+                      </span>
+                    )}
                   </span>
                   <span className="text-subtle block truncate text-micro normal-case tracking-normal">
                     {dir}
@@ -604,6 +660,44 @@ function ConfirmModal({
           </div>
         </div>
 
+        {/* A second consent axis, shown only when the selection reaches into
+            an app's own data. Never pre-ticked, and the action stays disabled
+            until it is — the backend refuses without it either way. */}
+        {appData.length > 0 && (
+          <fieldset className="mt-4">
+            <legend className="text-subtle mb-1.5 text-micro font-semibold uppercase">
+              Confirm app data
+            </legend>
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-card border border-separator bg-surface px-3 py-2.5">
+              <span className="mt-px flex-none">
+                <Checkbox
+                  checked={attested}
+                  onChange={onAttest}
+                  label="I understand these files are an app's own data"
+                />
+              </span>
+              <span className="text-body leading-snug">
+                {appData.length === 1 ? (
+                  <>
+                    <b>{split(appData[0].path).name}</b> is
+                  </>
+                ) : (
+                  <>{appData.length.toLocaleString()} of these are</>
+                )}{" "}
+                {appNames(appData)} own data, kept in{" "}
+                <b>Application Support</b> — possibly a password manager's
+                vault, a messaging database, or the only copy of its
+                documents. I understand the app may break or lose what it
+                stored, and that restoring from the Trash may not undo what it
+                did in the meantime.
+              </span>
+            </label>
+            <p className="text-subtle mt-1.5 text-caption">
+              Tick the box to enable <b>Move to Trash</b>.
+            </p>
+          </fieldset>
+        )}
+
         {error && (
           <p className="mt-3 text-body text-danger" role="alert">
             {error}
@@ -620,8 +714,11 @@ function ConfirmModal({
           </button>
           <button
             onClick={onConfirm}
-            disabled={busy}
-            className="rounded-control bg-accent px-4 py-2 text-body font-semibold text-white transition-colors duration-fast ease-mac disabled:opacity-60"
+            disabled={busy || blocked}
+            // The Privacy sheet's disabled treatment, not a dimmed accent: at
+            // 60% the blue still read as a live button beside the unticked
+            // box that gates it.
+            className="rounded-control bg-accent px-4 py-2 text-body font-semibold text-white transition-colors duration-fast ease-mac disabled:cursor-not-allowed disabled:border disabled:border-border disabled:bg-surface2 disabled:text-muted"
           >
             {busy ? "Moving…" : "Move to Trash"}
           </button>

@@ -734,6 +734,25 @@ pub fn dispatch_smart_scan_with_sink(
         );
     }
 
+    // Nor anything in ~/Library/Application Support: the report filters it
+    // out at offer time, so a request naming one is the frontend and the disk
+    // disagreeing. Refused here, before any step runs, rather than left to the
+    // un-attested verb below — which would also refuse, but only after the
+    // cleaners ahead of it had already acted.
+    if let Some(bad) = req
+        .large_old_paths
+        .iter()
+        .find(|raw| crate::inside_app_support(home, Path::new(raw)))
+    {
+        return refuse_and_record(
+            audit,
+            format!(
+                "refused: {bad:?} is inside ~/Library/Application Support, where apps keep \
+                 their own data. This gesture never offers it; use Large & Old, which asks."
+            ),
+        );
+    }
+
     let mut steps: Vec<Step> = Vec::with_capacity(DISPATCH_ORDER.len());
     let mut stopped: Option<String> = None;
 

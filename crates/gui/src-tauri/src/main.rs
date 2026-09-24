@@ -195,9 +195,14 @@ async fn dispose_paths(
     paths: Vec<String>,
     expected: Option<Expected>,
     confirm_mass_delete: bool,
+    // Absent means not attested: `AppDataAttested` is `#[serde(default)]`,
+    // so a frontend that drops it gets a refusal for any Application Support
+    // path rather than the wider behaviour.
+    attested: Option<gui::AppDataAttested>,
 ) -> Result<CleanSummary, String> {
+    let attested = attested.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        gui::dispose_selected(paths, expected, confirm_mass_delete)
+        gui::dispose_selected(paths, expected, confirm_mass_delete, attested)
     })
     .await
     .map_err(|e| format!("dispose task failed: {e}"))?

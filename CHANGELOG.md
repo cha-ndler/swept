@@ -6,6 +6,41 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-09-26
+
+**A quiet, visible clean-up.** Confirming a large Smart Scan played the Finder's
+Trash sound once for every file — for as long as the run took, which on a real
+cleanup of ~190,000 files was hours — while the sheet said only *Moving…*.
+Moves are now silent and far faster, the sound plays once when the whole
+clean-up is done, and the sheet shows how far it has got.
+
+Still unsigned and published by an individual; `docs/LEGAL.md` says why. Check
+the `.sha256` beside each download before you open it.
+
+### Changed
+- **Files reach the Trash without going through the Finder.** Swept used to
+  ask the Finder to move each file, one request per file — one sound and one
+  extra process each time, and a "Swept wants to control Finder" prompt the
+  first time. It now moves them itself, straight into the same Trash. Nothing
+  is less recoverable, but **the Finder's *Put Back* no longer appears** for
+  files Swept moved: drag them out of the Trash instead. The audit log records
+  every original path. Swept no longer asks for permission to control the
+  Finder.
+- **One Trash sound per clean-up**, not one per file — for Smart Scan,
+  Cleanup, Large & Old, the Uninstaller and Privacy alike.
+
+### Added
+- **Progress while Smart Scan moves files.** The confirmation sheet says which
+  source it is re-checking against the disk, then *Moving Cleanup · 12,345 of
+  187,023* with a bar across everything you confirmed — so a long run no
+  longer looks like a hang.
+
+### Fixed
+- A file name that is not valid UTF-8 is now refused rather than being handed
+  to the Trash under an encoded spelling that could name a different file. macOS
+  disks do not allow such names, so this closes a gap rather than changing
+  anything you would see.
+
 ## [0.5.1] — 2026-09-24
 
 **A signed app bundle, and an app's own data asks first.** Every `.dmg`
@@ -497,7 +532,8 @@ property-tested safety substrate.
 - Recursive/large removals require confirmation; audit failures abort the run.
 - Tests run only against throwaway temp-dir fixtures.
 
-[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/cha-ndler/swept/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/cha-ndler/swept/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/cha-ndler/swept/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/cha-ndler/swept/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/cha-ndler/swept/releases/tag/v0.4.1

@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 use safety::{allowlist, guard, guard_dir, DirLimits, SafeDir, SafePath};
 
 use crate::audit::{now_ms, AuditEntry, AuditLog, Disposition, Phase};
-use crate::plan::{Disposal, Plan, PlannedMove, StashPlan};
+use crate::plan::{
+    strictly_inside_trash, user_trash_root, Disposal, Plan, PlannedMove, PlannedPrune, StashPlan,
+};
 use crate::privilege;
 
 /// Where disposed files go. Abstracted so tests avoid the real system Trash.
@@ -75,6 +77,23 @@ pub trait Sink {
     /// a `SystemSink` directly still gets `unlink(2)`'s own semantics, which is
     /// why the refusal lives at the run boundary rather than only here.
     fn delete(&self, path: &Path) -> io::Result<()>;
+
+    /// Irreversibly remove one *empty* folder inside the user Trash.
+    ///
+    /// Implementations must use `rmdir(2)` (`std::fs::remove_dir`) and nothing
+    /// else — never `remove_dir_all`. `rmdir` fails on a folder that is not
+    /// empty, which is the backstop for the race between planning and removal:
+    /// a folder that gained content survives with it.
+    ///
+    /// **Fails closed by default.** A sink must opt in, so one written for
+    /// another purpose (a progress wrapper, a test double) cannot remove
+    /// folders by accident.
+    fn remove_empty_dir(&self, _path: &Path) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this sink does not remove folders",
+        ))
+    }
 }
 
 /// Production sink: real macOS Trash, real `unlink`.
@@ -130,6 +149,11 @@ impl Sink for SystemSink {
         // fail-closed backstop for the unavoidable check/use race.
         std::fs::remove_file(path)
     }
+
+    fn remove_empty_dir(&self, path: &Path) -> io::Result<()> {
+        // `rmdir(2)`: refuses a non-empty folder. See the trait doc.
+        std::fs::remove_dir(path)
+    }
 }
 
 /// Test sink: "trash" = move into a directory; "delete" = real removal (used
@@ -151,6 +175,11 @@ impl Sink for DirSink {
         // Files only — never `remove_dir_all`. See the trait doc: this is the
         // fail-closed backstop for the unavoidable check/use race.
         std::fs::remove_file(path)
+    }
+
+    fn remove_empty_dir(&self, path: &Path) -> io::Result<()> {
+        // `rmdir(2)`: refuses a non-empty folder. See the trait doc.
+        std::fs::remove_dir(path)
     }
 }
 
@@ -371,6 +400,21 @@ fn execute_as(
                         reason,
                     )?;
                 }
+                // The same no-op rule the run applies, so the preview does not
+                // promise a move the run will refuse.
+                auth if !permanent_granted(a.disposal, &consent, auth)
+                    && already_in_trash(a.path.as_path(), home) =>
+                {
+                    refuse(
+                        &mut report,
+                        audit,
+                        Phase::Planned,
+                        a.path.as_path(),
+                        a.size_bytes,
+                        None,
+                        ALREADY_IN_TRASH,
+                    )?;
+                }
                 auth => {
                     record(
                         audit,
@@ -389,7 +433,14 @@ fn execute_as(
         // under: by grant, and by nothing else. No re-walk here, for the
         // reason given above — there is no mutation to precede.
         for d in &plan.dirs {
-            match authorize_dir(&d.dir, &consent.granted_dirs) {
+            let verdict = authorize_dir(&d.dir, &consent.granted_dirs).and_then(|()| {
+                if already_in_trash(d.dir.as_path(), home) {
+                    Err(ALREADY_IN_TRASH)
+                } else {
+                    Ok(())
+                }
+            });
+            match verdict {
                 Err(reason) => refuse(
                     &mut report,
                     audit,
@@ -481,10 +532,67 @@ fn execute_as(
         // in ~/Documents that the user picked out of a list — the least
         // replaceable data this tool will ever touch, and the least vetted. A
         // granted `Permanent` action therefore falls back to the Trash.
-        let permanent = matches!(a.disposal, Disposal::Permanent)
-            && consent.allow_permanent
-            && matches!(auth, Authorization::Allowlisted);
+        let permanent = permanent_granted(a.disposal, &consent, auth);
         let disposition = disposition_for(a.disposal, permanent);
+        // An irreversible line names the gesture that authorized it.
+        let note = if permanent {
+            Some(format!("[{}]", a.category))
+        } else {
+            note
+        };
+
+        // A Trash move of something already in the Trash is a rename: it frees
+        // nothing, and counting its bytes as executed would be a false claim.
+        // Checked on the effective disposition, so a `Permanent` action that
+        // fell back to the Trash is caught too.
+        if !permanent && already_in_trash(safe.as_path(), home) {
+            refuse(
+                &mut report,
+                audit,
+                Phase::Executed,
+                safe.as_path(),
+                a.size_bytes,
+                None,
+                ALREADY_IN_TRASH,
+            )?;
+            continue;
+        }
+
+        // An irreversible removal is bound to the exact path that was planned
+        // and shown. The re-guard above resolves symlinks afresh, so a folder
+        // swapped for a link since planning would otherwise send the unlink to
+        // wherever the link now points — anywhere the allowlist admits. The
+        // directory branch below has always required this; files now do too.
+        if permanent && safe.as_path() != a.path.as_path() {
+            refuse(
+                &mut report,
+                audit,
+                Phase::Executed,
+                a.path.as_path(),
+                a.size_bytes,
+                None,
+                &format!(
+                    "the path now resolves elsewhere, to {}",
+                    safe.as_path().display()
+                ),
+            )?;
+            continue;
+        }
+        // Emptying the Trash reaches into the Trash and nowhere else.
+        if a.category == crate::emptytrash::EMPTIED_CATEGORY
+            && !strictly_inside_trash(safe.as_path(), home)
+        {
+            refuse(
+                &mut report,
+                audit,
+                Phase::Executed,
+                safe.as_path(),
+                a.size_bytes,
+                None,
+                "emptying the Trash reached outside the Trash",
+            )?;
+            continue;
+        }
 
         // Item 6: record an irreversible delete BEFORE it happens, so a crash
         // mid-unlink still leaves a durable record. (Trash is recoverable, so we
@@ -603,7 +711,14 @@ fn execute_as(
         // Authorization sits behind the re-walk, exactly as for files: a grant
         // widens where we may act, it never bypasses the denylist. Matched
         // against the fresh path.
-        if let Err(reason) = authorize_dir(&fresh, &consent.granted_dirs) {
+        let verdict = authorize_dir(&fresh, &consent.granted_dirs).and_then(|()| {
+            if already_in_trash(fresh.as_path(), home) {
+                Err(ALREADY_IN_TRASH)
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(reason) = verdict {
             refuse(
                 &mut report,
                 audit,
@@ -818,6 +933,27 @@ fn refuse_run(audit: &mut AuditLog, reason: &str) -> Result<(), ExecError> {
     )
 }
 
+/// Refusal reason for a Trash move of something already in the user Trash.
+const ALREADY_IN_TRASH: &str = "already in the Trash; moving it there again would free nothing";
+
+/// Whether `path` lies inside the user Trash.
+///
+/// Case-insensitive and component-wise, as the denylist matches, because the
+/// only cost of a false match is refusing a move that would have freed nothing.
+fn already_in_trash(path: &Path, home: &Path) -> bool {
+    safety::denylist::starts_with_ci(path, &user_trash_root(home))
+}
+
+/// Whether an action is irreversibly removed rather than moved to the Trash.
+///
+/// Grants widen *where* we may act, never *how*: irreversible removal stays
+/// confined to the allowlist (see the execute loop for why).
+fn permanent_granted(disposal: Disposal, consent: &Consent, auth: Authorization) -> bool {
+    matches!(disposal, Disposal::Permanent)
+        && consent.allow_permanent
+        && matches!(auth, Authorization::Allowlisted)
+}
+
 fn disposition_for(disposal: Disposal, permanent_granted: bool) -> Disposition {
     match disposal {
         Disposal::Permanent if permanent_granted => Disposition::Permanent,
@@ -872,6 +1008,166 @@ fn refuse(
         entries,
         Some(note.to_string()),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Emptying the Trash: the folders its files leave behind
+//
+// `execute` removes the files of an emptied Trash as ordinary `Permanent`
+// actions. What is left is a skeleton of empty folders, and this removes them —
+// non-recursively, one `rmdir` each, deepest first, so that the only folder a
+// call can remove is one that is already empty.
+
+/// The outcome of [`prune_emptied_trash_dirs`].
+#[derive(Debug, Default)]
+pub struct PruneReport {
+    pub planned: usize,
+    pub removed: usize,
+    pub refused: usize,
+    pub dry_run: bool,
+}
+
+/// Audit note on each pruned folder.
+const PRUNE_NOTE: &str = "empty folder left by emptying the Trash [trash-emptied]";
+
+/// Remove the empty folders an emptied Trash leaves behind.
+///
+/// Call only after [`execute`] has removed the files, and not at all if it
+/// failed. Same gates as the file path: refused wholesale as the super-user, a
+/// dry run by default, `allow_permanent` required, every folder re-guarded
+/// immediately before removal, and each removal recorded *before* it happens
+/// because it cannot be undone.
+pub fn prune_emptied_trash_dirs(
+    prune: &[PlannedPrune],
+    consent: &Consent,
+    home: &Path,
+    sink: &dyn Sink,
+    audit: &mut AuditLog,
+) -> Result<PruneReport, ExecError> {
+    prune_as(
+        prune,
+        consent,
+        home,
+        sink,
+        audit,
+        privilege::effective_uid(),
+    )
+}
+
+/// [`prune_emptied_trash_dirs`] with the effective user supplied, for the same
+/// reason [`execute_as`] exists.
+fn prune_as(
+    prune: &[PlannedPrune],
+    consent: &Consent,
+    home: &Path,
+    sink: &dyn Sink,
+    audit: &mut AuditLog,
+    euid: u32,
+) -> Result<PruneReport, ExecError> {
+    if let Some(why) = privilege::refusal(euid) {
+        return Err(ExecError::SuperUser(why));
+    }
+    let mut report = PruneReport::default();
+    let mut refused = ExecReport::default();
+
+    if !consent.execute {
+        report.dry_run = true;
+        for d in prune {
+            record(
+                audit,
+                Phase::Planned,
+                Disposition::Permanent,
+                d.path(),
+                0,
+                Some(0),
+                Some(PRUNE_NOTE.to_string()),
+            )?;
+            report.planned += 1;
+        }
+        return Ok(report);
+    }
+
+    let allowed = allowlist::default_roots(home);
+    for d in prune {
+        report.planned += 1;
+        let planned = d.path();
+        if !consent.allow_permanent {
+            refuse(
+                &mut refused,
+                audit,
+                Phase::Executed,
+                planned,
+                0,
+                Some(0),
+                "removing a folder is irreversible and was not consented to",
+            )?;
+            continue;
+        }
+        // The TOCTOU re-check, all of it again: the folder may have been
+        // swapped for a symlink, or for something that resolves elsewhere,
+        // since it was planned. `PlannedPrune::new` is exactly that check.
+        let fresh = match PlannedPrune::new(planned, home) {
+            Ok(f) => f,
+            Err(reason) => {
+                refuse(
+                    &mut refused,
+                    audit,
+                    Phase::Executed,
+                    planned,
+                    0,
+                    Some(0),
+                    &reason,
+                )?;
+                continue;
+            }
+        };
+        if !allowlist::is_allowed(fresh.path(), &allowed) {
+            refuse(
+                &mut refused,
+                audit,
+                Phase::Executed,
+                planned,
+                0,
+                Some(0),
+                "outside the disposal allowlist",
+            )?;
+            continue;
+        }
+        // Irreversible, so recorded before it happens (item 6).
+        //
+        // The residual, stated rather than assumed: between the re-check above
+        // and the `rmdir` below, an *intermediate* component could be swapped
+        // for a symlink, and `rmdir` follows those. The last component cannot
+        // be (`rmdir` on a link fails), and `rmdir` removes only an empty
+        // folder, so the worst case is one empty folder elsewhere going — no
+        // file content. Closing it needs `unlinkat` on an `O_NOFOLLOW` parent.
+        record(
+            audit,
+            Phase::Executed,
+            Disposition::Permanent,
+            fresh.path(),
+            0,
+            Some(0),
+            Some(PRUNE_NOTE.to_string()),
+        )?;
+        match sink.remove_empty_dir(fresh.path()) {
+            Ok(()) => report.removed += 1,
+            // A correcting refusal, so the trail is honest about a removal
+            // that was recorded and then did not happen — most often a folder
+            // that is no longer empty.
+            Err(e) => refuse(
+                &mut refused,
+                audit,
+                Phase::Executed,
+                fresh.path(),
+                0,
+                Some(0),
+                &e.to_string(),
+            )?,
+        }
+    }
+    report.refused = refused.refused;
+    Ok(report)
 }
 
 // ---------------------------------------------------------------------------
@@ -1665,6 +1961,28 @@ mod privilege_tests {
             home.join("Library/Caches/app/a.bin").exists(),
             "the file was disposed of despite the refusal"
         );
+    }
+
+    /// Folder pruning is irreversible too, and refused as root the same way.
+    #[test]
+    fn pruning_is_refused_as_the_super_user() {
+        let (_g, home, _plan) = fixture();
+        let d = home.join(".Trash/empty");
+        fs::create_dir_all(&d).unwrap();
+        let prune = vec![PlannedPrune::new(&d, &home).unwrap()];
+        let (_p, mut log) = log_at(&home);
+        let sink = DirSink {
+            trash_dir: home.join("fixture-trash"),
+        };
+        let consent = Consent {
+            execute: true,
+            allow_permanent: true,
+            ..Default::default()
+        };
+
+        let err = prune_as(&prune, &consent, &home, &sink, &mut log, SUPER_USER).unwrap_err();
+        assert!(matches!(err, ExecError::SuperUser(_)), "{err:?}");
+        assert!(d.is_dir(), "the folder was removed despite the refusal");
     }
 
     /// A dry run mutates nothing, so refusing it is a choice rather than a

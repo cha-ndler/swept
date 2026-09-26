@@ -706,3 +706,135 @@ fn a_file_that_goes_away_mid_walk_is_not_a_gap() {
     );
     assert_eq!(plan.skipped_protected, 0);
 }
+
+// --- The user Trash is a destination, not a source for more Trash moves. ---
+//
+// Moving something already in `~/.Trash` to the Trash is a rename: nothing is
+// freed, yet the run used to count the bytes as done. These pin the refusal.
+
+/// Execute `plan` with consent into a fixture bin, returning the report.
+fn run_consented(
+    plan: &swept_core::plan::Plan,
+    home: &Path,
+    execute_it: bool,
+) -> (swept_core::executor::ExecReport, String, PathBuf) {
+    let bin = home.join("fixture-bin");
+    let (audit_path, mut audit) = audit_at(home);
+    let consent = Consent {
+        execute: execute_it,
+        ..Default::default()
+    };
+    let report = execute(
+        plan,
+        consent,
+        home,
+        &DirSink {
+            trash_dir: bin.clone(),
+        },
+        &mut audit,
+    )
+    .unwrap();
+    (report, fs::read_to_string(audit_path).unwrap(), bin)
+}
+
+#[test]
+fn a_trash_move_of_a_file_already_in_the_trash_is_refused() {
+    let (_g, home) = fake_home();
+    let f = home.join(".Trash/old.bin");
+    write(&f, b"0123456789");
+
+    let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+    assert_eq!(
+        plan.count(),
+        1,
+        "the scan still reports what the Trash holds"
+    );
+    let (report, log, bin) = run_consented(&plan, &home, true);
+
+    assert_eq!(report.executed, 0);
+    assert_eq!(report.refused, 1);
+    assert_eq!(
+        report.bytes_executed, 0,
+        "nothing was freed, so nothing is claimed"
+    );
+    assert!(f.exists(), "the file stays where it was");
+    assert!(!bin.join("old.bin").exists());
+    assert!(log.contains("\"disposition\":\"refused\""));
+    assert!(log.contains("already in the Trash"));
+}
+
+#[test]
+fn a_preview_refuses_re_trashing_as_the_run_would() {
+    let (_g, home) = fake_home();
+    write(&home.join(".Trash/old.bin"), b"0123456789");
+
+    let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+    let (report, log, _bin) = run_consented(&plan, &home, false);
+
+    assert!(report.dry_run);
+    assert_eq!(report.planned, 0);
+    assert_eq!(report.refused, 1);
+    assert!(log.contains("\"phase\":\"planned\""));
+    assert!(log.contains("already in the Trash"));
+}
+
+#[test]
+fn refusing_the_trash_does_not_affect_other_categories() {
+    let (_g, home) = fake_home();
+    write(&home.join(".Trash/old.bin"), b"0123456789");
+    let cache = home.join("Library/Caches/app/a.bin");
+    write(&cache, b"abc");
+
+    let plan = scan(&ScanConfig::with_default_roots(home.clone()));
+    let (report, _log, bin) = run_consented(&plan, &home, true);
+
+    assert_eq!(report.executed, 1);
+    assert_eq!(report.refused, 1);
+    assert_eq!(
+        report.bytes_executed, 3,
+        "only the cache file's bytes count"
+    );
+    assert!(!cache.exists());
+    assert!(bin.join("a.bin").exists());
+}
+
+#[test]
+fn a_permanent_action_inside_the_trash_is_not_caught_by_the_no_op_rule() {
+    let (_g, home) = fake_home();
+    let f = home.join(".Trash/old.bin");
+    write(&f, b"0123456789");
+
+    let mut plan = scan(&ScanConfig::with_default_roots(home.clone()));
+    for a in &mut plan.actions {
+        a.disposal = Disposal::Permanent;
+    }
+    let (audit_path, mut audit) = audit_at(&home);
+    let report = execute(
+        &plan,
+        Consent {
+            execute: true,
+            allow_permanent: true,
+            ..Default::default()
+        },
+        &home,
+        &DirSink {
+            trash_dir: home.join("fixture-bin"),
+        },
+        &mut audit,
+    )
+    .unwrap();
+
+    assert_eq!(report.executed, 1);
+    assert_eq!(report.refused, 0);
+    assert!(!f.exists());
+    let log = fs::read_to_string(audit_path).unwrap();
+    assert!(log.contains("\"disposition\":\"permanent\""));
+}
+
+#[test]
+fn the_user_trash_root_is_an_allowlist_root() {
+    let (_g, home) = fake_home();
+    let root = swept_core::plan::user_trash_root(&home);
+    assert_eq!(root, home.join(".Trash"));
+    assert!(safety::allowlist::default_roots(&home).contains(&root));
+}

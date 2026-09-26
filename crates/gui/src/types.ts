@@ -49,6 +49,41 @@ export interface CleanSummary {
   entries_freed: number;
 }
 
+// Mirrors swept_gui_core::TrashContents. Read-only preview of Empty Trash.
+export interface TrashContents {
+  /** False without Full Disk Access; every figure is then meaningless. */
+  readable: boolean;
+  /** Top-level entries — what Finder shows. */
+  items: number;
+  files: number;
+  folders: number;
+  bytes: number;
+  /** Top-level entries that would be left whole (links, repositories…). */
+  left_behind: number;
+  requires_confirmation: boolean;
+  /** Identifies exactly what would be removed; echoed back in the request. */
+  fingerprint: string;
+}
+
+// Mirrors swept_gui_core::EmptyTrashRequest.
+export interface EmptyTrashRequest {
+  expected: { count: number; bytes: number };
+  fingerprint: string;
+  acknowledged_unrecoverable: boolean;
+  confirm_mass_delete: boolean;
+}
+
+// Mirrors swept_gui_core::EmptyTrashSummary. Deliberately not a CleanSummary:
+// nothing here went to the Trash, and the result must never say it did.
+export interface EmptyTrashSummary {
+  files_deleted: number;
+  folders_removed: number;
+  refused: number;
+  bytes_deleted: number;
+  /** Top-level entries still in the Trash afterwards. */
+  left_behind: number;
+}
+
 // Mirrors swept_core::loginitems::LoginItem.
 export interface LoginItem {
   label: string;

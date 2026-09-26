@@ -1,6 +1,7 @@
 import type {
   CategorySummary,
   CleanSummary,
+  EmptyTrashSummary,
   InstalledApp,
   LargeOldReport,
   LeftoverRow,
@@ -17,6 +18,7 @@ import type {
   StartupSummary,
   SpaceLensReport,
   SpaceNode,
+  TrashContents,
   UninstallReport,
 } from "../src/types";
 
@@ -133,6 +135,63 @@ export const SAMPLE_SUMMARY: CleanSummary = {
   refused: 0,
   bytes_freed: Math.round(6.44 * GiB),
   entries_freed: 0,
+};
+
+// SAMPLE_REPORT plus a non-empty Trash. A separate fixture so the existing
+// baselines and their "6.4 GiB" assertion do not move.
+export const SAMPLE_REPORT_WITH_TRASH: ScanReport = {
+  ...SAMPLE_REPORT,
+  total_count: SAMPLE_REPORT.total_count + 1873,
+  total_bytes: SAMPLE_REPORT.total_bytes + Math.round(14.7 * GiB),
+  by_category: [
+    ...SAMPLE_REPORT.by_category,
+    {
+      category: "trash",
+      smart_scan_default: false,
+      name: "Trash",
+      description: "Files already sitting in the user Trash.",
+      count: 1873,
+      bytes: Math.round(14.7 * GiB),
+    },
+  ],
+};
+
+// What `trash_contents` answers for that Trash.
+export const SAMPLE_TRASH_CONTENTS: TrashContents = {
+  readable: true,
+  items: 42,
+  files: 1873,
+  folders: 96,
+  bytes: Math.round(14.7 * GiB),
+  left_behind: 0,
+  requires_confirmation: true,
+  fingerprint: "00c0ffee00c0ffee",
+};
+
+// The same Trash, holding one trashed repository that is left whole.
+export const SAMPLE_TRASH_LEFT_BEHIND: TrashContents = {
+  ...SAMPLE_TRASH_CONTENTS,
+  left_behind: 1,
+};
+
+// No Full Disk Access: the Trash cannot be looked into at all.
+export const SAMPLE_TRASH_NO_ACCESS: TrashContents = {
+  readable: false,
+  items: 0,
+  files: 0,
+  folders: 0,
+  bytes: 0,
+  left_behind: 0,
+  requires_confirmation: false,
+  fingerprint: "",
+};
+
+export const SAMPLE_EMPTY_TRASH_SUMMARY: EmptyTrashSummary = {
+  files_deleted: 1873,
+  folders_removed: 96,
+  refused: 0,
+  bytes_deleted: Math.round(14.7 * GiB),
+  left_behind: 0,
 };
 
 // A representative Large & Old result. Deliberately includes the "partial"

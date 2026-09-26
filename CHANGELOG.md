@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Empty Trash, as a separate second step.** Cleanup still only moves files
+  to the Trash, so anything can be put back. When you're sure, *Empty Trash…*
+  — on the Trash row in Cleanup, and on the result screen after a clean —
+  permanently deletes everything in the Trash, after you tick a box
+  acknowledging it cannot be undone. It is never part of a clean, and Smart
+  Scan never selects it. It refuses if the Trash changed in any way since you
+  reviewed it, leaves whole anything it can't delete cleanly (a link, a trashed
+  repository, something unreadable), needs Full Disk Access, and records every
+  deletion in the audit log before it happens.
+
+### Fixed
+- **Selecting the Trash in Cleanup no longer "moves it to the Trash".** That
+  was a rename that freed nothing, while the result screen reported the Trash's
+  whole size as moved. Files already in the Trash are now refused for a Trash
+  move — in the CLI too — and the Trash is no longer counted in Cleanup's
+  reclaimable ring (it's shown beside it instead).
+
 ## [0.5.2] — 2026-09-26
 
 **A quiet, visible clean-up.** Confirming a large Smart Scan played the Finder's

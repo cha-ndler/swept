@@ -36,8 +36,14 @@ use swept_core::uninstall::{
 };
 
 pub mod acceptance;
+pub mod empty_trash;
 pub mod smartscan;
 pub mod update;
+
+pub use empty_trash::{
+    empty_trash, empty_trash_at, empty_trash_with_sink, real_trash_contents, trash_contents,
+    EmptyTrashRequest, EmptyTrashSummary, TrashContents,
+};
 
 /// Scan/clean filters as the frontend sends them.
 ///
@@ -74,6 +80,10 @@ pub struct Expected {
 /// was confirmed.
 const CHURN_ITEMS: usize = 25;
 const CHURN_BYTES: u64 = 64 * 1024 * 1024;
+
+/// The registry id of the user-Trash category, which [`clean_with_sink`] never
+/// acts on.
+const TRASH_CATEGORY: &str = "trash";
 
 fn grew_beyond(fresh_count: usize, fresh_bytes: u64, expected: Expected) -> bool {
     let count_cap = expected
@@ -242,11 +252,29 @@ pub fn clean_with_sink(
     sink: &dyn Sink,
     audit: &mut AuditLog,
 ) -> Result<CleanSummary, String> {
+    // The Trash is where a clean sends things, so it cannot also be a source:
+    // moving its contents there again is a rename that frees nothing. Emptying
+    // it is its own permanent gesture with its own consent, never a row folded
+    // into this one — so a request naming it is refused outright, not trimmed.
+    if categories.is_some_and(|cats| cats.iter().any(|c| c == TRASH_CATEGORY)) {
+        return refuse_and_record(
+            audit,
+            "refused: the Trash is not cleaned with other categories. Use Empty Trash, \
+             which asks about it on its own."
+                .to_string(),
+        );
+    }
     let mut plan = scan(&build_config(home, filters));
     if let Some(cats) = categories {
         plan.actions
             .retain(|a| cats.iter().any(|c| c == &a.category));
     }
+    // Left out rather than refused, whatever the filter (including none), so
+    // `refused` stays a count of real refusals. Before the growth check, so the
+    // magnitude the user confirmed is measured without it.
+    let bin = swept_core::plan::user_trash_root(home);
+    plan.actions
+        .retain(|a| !safety::denylist::starts_with_ci(a.path.as_path(), &bin));
     // Bind the consent to a magnitude: refuse if the rebuilt plan is materially
     // bigger than the one the user was shown.
     if let Some(exp) = expected {

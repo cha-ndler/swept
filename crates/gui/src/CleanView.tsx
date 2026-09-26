@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { formatBytes } from "./format";
 import type {
   CleanSummary,
+  EmptyTrashSummary,
   Filters,
   Permissions,
   ScanReport,
@@ -22,6 +23,13 @@ import { NumberField, Segmented } from "./Controls";
 import { CategoryRow } from "./CategoryRow";
 import { ScanRing } from "./ScanRing";
 import type { RingSegment } from "./ScanRing";
+import {
+  EmptyTrashDone,
+  EmptyTrashModal,
+  EmptyTrashPrompt,
+  TRASH_CATEGORY,
+  TrashRow,
+} from "./EmptyTrash";
 
 type View = "loading" | "results" | "empty" | "error";
 type Phase = "none" | "confirm" | "cleaning" | "done";
@@ -57,6 +65,10 @@ export default function CleanView({
   const [minSize, setMinSize] = useState("");
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [perms, setPerms] = useState<Permissions | null>(null);
+  // Stage two — Empty Trash — has its own dialog and its own result, and is
+  // never part of `selected`.
+  const [binOpen, setBinOpen] = useState(false);
+  const [binSummary, setBinSummary] = useState<EmptyTrashSummary | null>(null);
 
   // Advisory, and deliberately silent on failure: an unavailable probe must not
   // turn into an error state, because the scan itself is unaffected.
@@ -83,7 +95,15 @@ export default function CleanView({
 
   function seed(r: ScanReport) {
     setReport(r);
-    setSelected(new Set(r.by_category.map((c) => c.category)));
+    // The Trash is never pre-selected, and never selectable: moving what is
+    // already there to the Trash frees nothing. It has its own row and button.
+    setSelected(
+      new Set(
+        r.by_category
+          .map((c) => c.category)
+          .filter((id) => id !== TRASH_CATEGORY),
+      ),
+    );
   }
 
   // A scan either succeeds or reports why it failed. It must never fall back to
@@ -156,7 +176,9 @@ export default function CleanView({
     });
   }
 
-  const cats = report?.by_category ?? [];
+  const all = report?.by_category ?? [];
+  const cats = all.filter((c) => c.category !== TRASH_CATEGORY);
+  const binCat = all.find((c) => c.category === TRASH_CATEGORY && c.count > 0);
   const sel = useMemo(
     () => cats.filter((c) => selected.has(c.category)),
     [cats, selected],
@@ -181,7 +203,8 @@ export default function CleanView({
     try {
       const s = await call<CleanSummary>("clean", {
         filters: currentFilters(),
-        categories: Array.from(selected),
+        // The backend refuses a request naming the Trash; never send one.
+        categories: Array.from(selected).filter((id) => id !== TRASH_CATEGORY),
         // Bind the consent to what the sheet actually showed. The backend
         // rebuilds the plan (the disk may have changed since the scan), so it
         // needs both: the mass-delete acknowledgement — derived from the
@@ -199,7 +222,14 @@ export default function CleanView({
     }
   }
 
-  const done = phase === "done" && summary !== null;
+  const done = (phase === "done" && summary !== null) || binSummary !== null;
+
+  function backToCleanup() {
+    setPhase("none");
+    setSummary(null);
+    setBinSummary(null);
+    void runScan(currentFilters());
+  }
 
   return (
     <>
@@ -215,14 +245,13 @@ export default function CleanView({
       </Toolbar>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-        {done && summary ? (
+        {binSummary ? (
+          <EmptyTrashDone summary={binSummary} onBack={backToCleanup} />
+        ) : done && summary ? (
           <DoneCard
             summary={summary}
-            onBack={() => {
-              setPhase("none");
-              setSummary(null);
-              void runScan(currentFilters());
-            }}
+            onBack={backToCleanup}
+            onEmptyTrash={() => setBinOpen(true)}
           />
         ) : (
           <>
@@ -280,6 +309,11 @@ export default function CleanView({
                     {selCount.toLocaleString()} items in {sel.length} categor
                     {sel.length === 1 ? "y" : "ies"}
                   </p>
+                  {binCat && (
+                    <p className="text-subtle mt-1 font-mono text-caption tabular-nums">
+                      + {formatBytes(binCat.bytes)} already in the Trash
+                    </p>
+                  )}
                 </div>
 
                 <div className="min-w-0 flex-1">
@@ -297,6 +331,9 @@ export default function CleanView({
                       />
                     ))}
                   </Group>
+                  {binCat && (
+                    <TrashRow cat={binCat} onEmpty={() => setBinOpen(true)} />
+                  )}
                   {report && report.skipped_protected > 0 && (
                     <div className="mt-4">
                       <Banner icon={<LockIcon size={15} />}>
@@ -325,6 +362,19 @@ export default function CleanView({
           error={cleanError}
           onCancel={() => setPhase("none")}
           onConfirm={runClean}
+        />
+      )}
+
+      {binOpen && (
+        <EmptyTrashModal
+          onCancel={() => setBinOpen(false)}
+          onDone={(s) => {
+            setBinOpen(false);
+            setBinSummary(s);
+          }}
+          onOpenSettings={() =>
+            void call("open_privacy_settings").catch(() => {})
+          }
         />
       )}
     </>
@@ -479,9 +529,11 @@ function StatusIcon({
 function DoneCard({
   summary,
   onBack,
+  onEmptyTrash,
 }: {
   summary: CleanSummary;
   onBack: () => void;
+  onEmptyTrash: () => void;
 }) {
   return (
     <section className="rounded-card border border-separator bg-surface p-10 text-center">
@@ -505,6 +557,7 @@ function DoneCard({
       >
         Back to Cleanup
       </button>
+      <EmptyTrashPrompt onEmpty={onEmptyTrash} />
     </section>
   );
 }

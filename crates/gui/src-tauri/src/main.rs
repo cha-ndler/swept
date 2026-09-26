@@ -12,9 +12,9 @@ use swept_gui_core::smartscan::{
     SmartScanReportDto, SmartScanRequest, SmartScanRunReport, StepOutcome,
 };
 use swept_gui_core::{
-    self as gui, Acknowledged, CleanSummary, Expected, Filters, InstalledAppDto, LargeOldReportDto,
-    Permissions, PrivacyReportDto, SpaceLensReportDto, StartupReportDto, StartupSummary,
-    UninstallReportDto, UninstallTarget,
+    self as gui, Acknowledged, CleanSummary, EmptyTrashRequest, EmptyTrashSummary, Expected,
+    Filters, InstalledAppDto, LargeOldReportDto, Permissions, PrivacyReportDto, SpaceLensReportDto,
+    StartupReportDto, StartupSummary, TrashContents, UninstallReportDto, UninstallTarget,
 };
 
 /// Event channel the frontend listens on for scan progress.
@@ -36,16 +36,24 @@ const TRASH_SOUND: &str = "/System/Library/Components/CoreAudio.component/Conten
 /// reason to fail a run that has already happened.
 fn trash_sound(moved: bool) {
     if moved {
-        if let Ok(mut child) = std::process::Command::new("/usr/bin/afplay")
-            .arg(TRASH_SOUND)
-            .spawn()
-        {
-            // Reaped off-thread, so the sound never delays the reply and never
-            // leaves a zombie behind.
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
-        }
+        play(TRASH_SOUND);
+    }
+}
+
+/// The Finder's own "empty the Trash" sound, for the one permanent gesture.
+const EMPTY_SOUND: &str = "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/finder/empty trash.aif";
+
+/// Play a fixed system sound, fire-and-forget. See [`trash_sound`].
+fn play(sound: &'static str) {
+    if let Ok(mut child) = std::process::Command::new("/usr/bin/afplay")
+        .arg(sound)
+        .spawn()
+    {
+        // Reaped off-thread, so the sound never delays the reply and never
+        // leaves a zombie behind.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
     }
 }
 
@@ -147,6 +155,29 @@ async fn clean(
     .await
     .map_err(|e| format!("clean task failed: {e}"))?;
     trash_sound(moved(&r));
+    r
+}
+
+/// Read-only: what emptying the Trash would remove, for the Empty Trash dialog.
+#[tauri::command]
+async fn trash_contents() -> Result<TrashContents, String> {
+    tauri::async_runtime::spawn_blocking(gui::real_trash_contents)
+        .await
+        .map_err(|e| format!("trash-contents task failed: {e}"))?
+}
+
+/// Permanently empty the Trash — the app's only irreversible removal. The
+/// request must carry the user's acknowledgement and the figures the dialog
+/// showed; `swept-gui-core` refuses anything else, and routes the rest through
+/// the consent-gated executor like every other disposal.
+#[tauri::command]
+async fn empty_trash(request: EmptyTrashRequest) -> Result<EmptyTrashSummary, String> {
+    let r = tauri::async_runtime::spawn_blocking(move || gui::empty_trash(&request))
+        .await
+        .map_err(|e| format!("empty-trash task failed: {e}"))?;
+    if matches!(&r, Ok(s) if s.files_deleted > 0) {
+        play(EMPTY_SOUND);
+    }
     r
 }
 
@@ -422,6 +453,8 @@ fn main() {
             open_privacy_settings,
             set_tray_label,
             clean,
+            trash_contents,
+            empty_trash,
             large_and_old,
             dispose_paths,
             installed_apps,

@@ -15,6 +15,73 @@ pub enum Disposal {
     Permanent,
 }
 
+/// The user Trash: where every recoverable disposal lands.
+///
+/// Named once so the executor's "already in the Trash" refusal and the
+/// allowlist root it sits beside cannot drift apart — a test pins that this is
+/// one of [`safety::allowlist::default_roots`].
+pub fn user_trash_root(home: &Path) -> PathBuf {
+    home.join(".Trash")
+}
+
+/// A folder inside the user Trash, to be removed once emptied of its files.
+///
+/// The one directory removal this tool performs irreversibly, and it is
+/// **non-recursive by construction**: the sink's `remove_empty_dir` is
+/// `rmdir(2)`, which fails on a folder that is not empty, so a folder that
+/// gained content after planning survives with it. Recursive irreversible
+/// removal is still something no type here can express.
+///
+/// The field is private and [`PlannedPrune::new`] is the only constructor, so
+/// every instance names a real folder — not a symlink — strictly inside the
+/// Trash, never the Trash itself.
+#[derive(Debug)]
+pub struct PlannedPrune {
+    path: SafePath,
+}
+
+impl PlannedPrune {
+    /// Vouch for `path` as a prunable Trash folder, or say why not.
+    ///
+    /// The path must already be canonical: `guard` resolving it anywhere else
+    /// means some component is a symlink, and that is refused rather than
+    /// followed.
+    pub fn new(path: &Path, home: &Path) -> Result<Self, String> {
+        let safe = safety::guard(path, home).map_err(|e| e.to_string())?;
+        if safe.as_path() != path {
+            return Err(format!(
+                "refused: {} resolves elsewhere, to {}",
+                path.display(),
+                safe.as_path().display()
+            ));
+        }
+        let meta = std::fs::symlink_metadata(path)
+            .map_err(|e| format!("refused: cannot inspect {}: {e}", path.display()))?;
+        if !meta.is_dir() {
+            return Err(format!("refused: {} is not a folder", path.display()));
+        }
+        if !strictly_inside_trash(path, home) {
+            return Err(format!(
+                "refused: {} is not a folder inside the Trash",
+                path.display()
+            ));
+        }
+        Ok(Self { path: safe })
+    }
+
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+}
+
+/// Whether `path` lies strictly beneath the user Trash — never the Trash
+/// itself. Exact, case-sensitive component match: this gates an irreversible
+/// removal, so a casing mismatch refuses rather than matches.
+pub fn strictly_inside_trash(path: &Path, home: &Path) -> bool {
+    let root = user_trash_root(home);
+    path != root && path.starts_with(&root)
+}
+
 #[derive(Debug)]
 pub struct PlannedAction {
     pub path: SafePath,

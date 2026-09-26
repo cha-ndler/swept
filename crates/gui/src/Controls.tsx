@@ -83,7 +83,7 @@ export function Checkbox({
         checked={checked}
         onChange={onChange}
         aria-label={label}
-        className="peer h-[14px] w-[14px] cursor-pointer appearance-none rounded-[4px] border border-borderStrong bg-white/[.04] transition-colors duration-fast ease-mac checked:border-accent checked:bg-accent"
+        className="peer h-[14px] w-[14px] cursor-pointer appearance-none rounded-[4px] border border-subtle/80 bg-white/[.04] transition-colors duration-fast ease-mac checked:border-accent checked:bg-accent"
       />
       <svg
         viewBox="0 0 14 14"

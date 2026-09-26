@@ -403,3 +403,71 @@ fn the_probe_never_writes() {
     let after = fs::read_dir(&home).unwrap().count();
     assert_eq!(before, after, "the probe must not create anything");
 }
+
+// --- The Trash category is never part of an ordinary clean. ---
+//
+// A clean moves things *to* the Trash; including the Trash itself is a rename
+// that frees nothing. Emptying it is a separate, permanent gesture.
+
+#[test]
+fn clean_refuses_a_request_naming_the_trash() {
+    let (_g, home) = fake_home();
+    let t = home.join(".Trash/old.bin");
+    write(&t, b"0123456789");
+    let cache = home.join("Library/Caches/app/a.bin");
+    write(&cache, b"abc");
+    let audit_path = home.join("audit.jsonl");
+
+    let err = swept_gui_core::clean_at(
+        &home,
+        &audit_path,
+        &Filters::default(),
+        vec!["user-caches".to_string(), "trash".to_string()],
+        None,
+        true,
+        &DirSink {
+            trash_dir: home.join("fixture-bin"),
+        },
+    )
+    .unwrap_err();
+
+    assert!(err.contains("Empty Trash"), "got: {err}");
+    assert!(t.exists(), "the Trash file is untouched");
+    assert!(cache.exists(), "a refused request moves nothing at all");
+    let log = fs::read_to_string(&audit_path).unwrap();
+    assert!(log.contains("Empty Trash"), "the refusal is recorded");
+}
+
+#[test]
+fn an_unfiltered_clean_never_includes_the_trash() {
+    let (_g, home) = fake_home();
+    let t = home.join(".Trash/old.bin");
+    write(&t, b"0123456789");
+    let cache = home.join("Library/Caches/app/a.bin");
+    write(&cache, b"abc");
+    let mut audit = AuditLog::open(&home.join("audit.jsonl")).unwrap();
+
+    let summary = clean_with_sink(
+        &home,
+        &Filters::default(),
+        None,
+        None,
+        gui_consent(true),
+        &DirSink {
+            trash_dir: home.join("fixture-bin"),
+        },
+        &mut audit,
+    )
+    .unwrap();
+
+    assert_eq!(summary.executed, 1);
+    assert_eq!(summary.bytes_freed, 3, "only the cache file counts");
+    assert_eq!(summary.refused, 0, "left out, not refused");
+    assert!(t.exists());
+}
+
+#[test]
+fn gui_consent_never_allows_permanent() {
+    assert!(!gui_consent(true).allow_permanent);
+    assert!(!gui_consent(false).allow_permanent);
+}

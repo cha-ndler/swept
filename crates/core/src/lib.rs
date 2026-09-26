@@ -8,6 +8,7 @@
 
 pub mod audit;
 pub mod categories;
+pub mod emptytrash;
 pub mod executor;
 pub mod largeold;
 pub mod loginitems;

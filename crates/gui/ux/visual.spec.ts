@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdirSync } from "node:fs";
+import type { EmptyTrashRequest } from "../src/types";
 import {
   SAMPLE_DISPOSE_SUMMARY,
   SAMPLE_INSTALLED_APPS,
@@ -11,7 +12,9 @@ import {
   SAMPLE_PRIVACY_COMPLETE,
   SAMPLE_PRIVACY_EMPTY,
   SAMPLE_PRIVACY_SUMMARY,
+  SAMPLE_EMPTY_TRASH_SUMMARY,
   SAMPLE_REPORT,
+  SAMPLE_REPORT_WITH_TRASH,
   SAMPLE_SMART_SCAN,
   SAMPLE_SMART_SCAN_MANY_FILES,
   SAMPLE_SMART_SCAN_PARTIAL,
@@ -24,6 +27,9 @@ import {
   SAMPLE_SPACE_LENS_COMPLETE,
   SAMPLE_SPACE_LENS_EMPTY,
   SAMPLE_SUMMARY,
+  SAMPLE_TRASH_CONTENTS,
+  SAMPLE_TRASH_LEFT_BEHIND,
+  SAMPLE_TRASH_NO_ACCESS,
   SAMPLE_UNINSTALL,
   SAMPLE_UNINSTALL_COMPLETE,
   SAMPLE_UNINSTALL_EMPTY,
@@ -86,6 +92,13 @@ async function installBackend(
     hangSmartRun?: boolean;
     /** What `check_for_update` answers. Every call is counted. */
     update?: unknown;
+    /** What `trash_contents` answers. */
+    trashContents?: unknown;
+    emptyTrashSummary?: unknown;
+    /** When set, `empty_trash` rejects with this message. */
+    emptyTrashReject?: string;
+    /** Hang only `empty_trash`, for the deleting state. */
+    hangEmptyTrash?: boolean;
   } = {},
 ) {
   const payload = {
@@ -122,6 +135,10 @@ async function installBackend(
     largeOld: opts.largeOld ?? SAMPLE_LARGE_OLD,
     disposeSummary: opts.disposeSummary ?? SAMPLE_DISPOSE_SUMMARY,
     spaceLens: opts.spaceLens ?? SAMPLE_SPACE_LENS,
+    trashContents: opts.trashContents ?? SAMPLE_TRASH_CONTENTS,
+    emptyTrashSummary: opts.emptyTrashSummary ?? SAMPLE_EMPTY_TRASH_SUMMARY,
+    emptyTrashReject: opts.emptyTrashReject ?? null,
+    hangEmptyTrash: opts.hangEmptyTrash ?? false,
     update: opts.update ?? {
       current: "0.5.0",
       latest: "0.5.0",
@@ -161,7 +178,19 @@ async function installBackend(
         if (p.hang) return new Promise(() => {});
         if (cmd === "scan") return Promise.resolve(p.report);
         if (cmd === "login_items") return Promise.resolve(p.items);
-        if (cmd === "clean") return Promise.resolve(p.summary);
+        if (cmd === "clean") {
+          // Recorded so a test can assert what a clean was asked to touch.
+          w.__cleanArgs = args;
+          return Promise.resolve(p.summary);
+        }
+        if (cmd === "trash_contents") return Promise.resolve(p.trashContents);
+        if (cmd === "empty_trash") {
+          w.__emptyTrashArgs = args;
+          if (p.hangEmptyTrash) return new Promise(() => {});
+          return p.emptyTrashReject
+            ? Promise.reject(p.emptyTrashReject)
+            : Promise.resolve(p.emptyTrashSummary);
+        }
         if (cmd === "large_and_old") return Promise.resolve(p.largeOld);
         if (cmd === "dispose_paths") return Promise.resolve(p.disposeSummary);
         if (cmd === "space_lens") return Promise.resolve(p.spaceLens);
@@ -449,6 +478,195 @@ test("scan done", async ({ page }, testInfo) => {
     page.getByRole("button", { name: /back to cleanup/i }),
   ).toBeVisible();
   await capture(page, "scan-done", testInfo.project.name);
+});
+
+// --- Empty Trash: the second, permanent stage ---
+
+async function openEmptyTrash(page: Page) {
+  await page.goto("/?tab=cleanup");
+  await page.getByRole("button", { name: "Empty Trash…" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+}
+
+const ACK = "I understand these files will be permanently deleted";
+
+test("the done screen offers to empty the Trash", async ({ page }) => {
+  await installBackend(page);
+  await page.goto("/?tab=cleanup");
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await page.getByRole("button", { name: /^move to/i }).click();
+  await expect(
+    page.getByRole("button", { name: "Empty Trash…" }),
+  ).toBeVisible();
+});
+
+test("the done screen offers nothing it cannot do", async ({ page }) => {
+  await installBackend(page, { trashContents: SAMPLE_TRASH_NO_ACCESS });
+  await page.goto("/?tab=cleanup");
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await page.getByRole("button", { name: /^move to/i }).click();
+  await expect(page.getByText(/give it Full Disk Access/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Empty Trash…" })).toHaveCount(
+    0,
+  );
+});
+
+test("cleanup trash row", async ({ page }, testInfo) => {
+  await installBackend(page, { report: SAMPLE_REPORT_WITH_TRASH });
+  await page.goto("/?tab=cleanup");
+  await expect(
+    page.getByRole("button", { name: "Empty Trash…" }),
+  ).toBeVisible();
+  // A button, never a checkbox: it cannot be ticked into a clean.
+  await expect(
+    page.getByRole("checkbox", { name: "Select Trash" }),
+  ).toHaveCount(0);
+  // The ring and the selection leave it out.
+  await expect(page.getByText(/already in the Trash/)).toBeVisible();
+  await capture(page, "cleanup-trash-row", testInfo.project.name);
+});
+
+test("the trash is never sent with clean", async ({ page }) => {
+  await installBackend(page, { report: SAMPLE_REPORT_WITH_TRASH });
+  await page.goto("/?tab=cleanup");
+  await page.getByRole("button", { name: /review & clean/i }).click();
+  await page.getByRole("button", { name: /^move to/i }).click();
+  await expect(page.getByText(/moved to the Trash/i)).toBeVisible();
+  const args = await page.evaluate(
+    () =>
+      (window as unknown as Record<string, { categories: string[] }>)
+        .__cleanArgs,
+  );
+  expect(args.categories).not.toContain("trash");
+  expect(args.categories.length).toBeGreaterThan(0);
+});
+
+test("empty-trash confirm, unticked", async ({ page }, testInfo) => {
+  await installBackend(page, { report: SAMPLE_REPORT_WITH_TRASH });
+  await openEmptyTrash(page);
+  await expect(page.getByRole("checkbox", { name: ACK })).not.toBeChecked();
+  await expect(
+    page.getByRole("button", { name: "Delete Permanently" }),
+  ).toBeDisabled();
+  await capture(page, "empty-trash-confirm-unticked", testInfo.project.name);
+});
+
+test("empty-trash confirm, ticked", async ({ page }, testInfo) => {
+  await installBackend(page, { report: SAMPLE_REPORT_WITH_TRASH });
+  await openEmptyTrash(page);
+  await page.getByRole("checkbox", { name: ACK }).check();
+  await expect(
+    page.getByRole("button", { name: "Delete Permanently" }),
+  ).toBeEnabled();
+  await capture(page, "empty-trash-confirm-ticked", testInfo.project.name);
+});
+
+test("empty_trash carries the acknowledgement and the previewed figures", async ({
+  page,
+}) => {
+  await installBackend(page, { report: SAMPLE_REPORT_WITH_TRASH });
+  await openEmptyTrash(page);
+  await page.getByRole("checkbox", { name: ACK }).check();
+  await page.getByRole("button", { name: "Delete Permanently" }).click();
+  await expect(page.getByText(/permanently deleted/i)).toBeVisible();
+  const args = await page.evaluate(
+    () =>
+      (window as unknown as Record<string, { request: EmptyTrashRequest }>)
+        .__emptyTrashArgs,
+  );
+  const c = SAMPLE_TRASH_CONTENTS;
+  expect(args.request).toEqual({
+    expected: { count: c.files + c.folders, bytes: c.bytes },
+    fingerprint: c.fingerprint,
+    acknowledged_unrecoverable: true,
+    confirm_mass_delete: c.requires_confirmation,
+  });
+});
+
+test("the acknowledgement resets when the dialog is reopened", async ({
+  page,
+}) => {
+  await installBackend(page, { report: SAMPLE_REPORT_WITH_TRASH });
+  await openEmptyTrash(page);
+  await page.getByRole("checkbox", { name: ACK }).check();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Empty Trash…" }).click();
+  await expect(page.getByRole("checkbox", { name: ACK })).not.toBeChecked();
+});
+
+test("escape cancels the dialog", async ({ page }) => {
+  await installBackend(page, { report: SAMPLE_REPORT_WITH_TRASH });
+  await openEmptyTrash(page);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("empty-trash busy", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    report: SAMPLE_REPORT_WITH_TRASH,
+    hangEmptyTrash: true,
+  });
+  await openEmptyTrash(page);
+  await page.getByRole("checkbox", { name: ACK }).check();
+  await page.getByRole("button", { name: "Delete Permanently" }).click();
+  await expect(page.getByRole("button", { name: "Deleting…" })).toBeDisabled();
+  await capture(page, "empty-trash-busy", testInfo.project.name);
+});
+
+test("empty-trash done", async ({ page }, testInfo) => {
+  await installBackend(page, { report: SAMPLE_REPORT_WITH_TRASH });
+  await openEmptyTrash(page);
+  await page.getByRole("checkbox", { name: ACK }).check();
+  await page.getByRole("button", { name: "Delete Permanently" }).click();
+  await expect(page.getByText(/permanently deleted:/i)).toBeVisible();
+  // Never the first stage's wording: nothing went to the Trash.
+  await expect(page.getByText(/moved to the Trash/i)).toHaveCount(0);
+  await expect(page.getByText(/recover/i)).toHaveCount(0);
+  await capture(page, "empty-trash-done", testInfo.project.name);
+});
+
+test("empty-trash left behind", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    report: SAMPLE_REPORT_WITH_TRASH,
+    trashContents: SAMPLE_TRASH_LEFT_BEHIND,
+  });
+  await openEmptyTrash(page);
+  await expect(page.getByText(/1 item will stay/)).toBeVisible();
+  await capture(page, "empty-trash-left-behind", testInfo.project.name);
+});
+
+test("empty-trash no access", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    report: SAMPLE_REPORT_WITH_TRASH,
+    trashContents: SAMPLE_TRASH_NO_ACCESS,
+  });
+  await openEmptyTrash(page);
+  await expect(page.getByText(/Full Disk Access/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Delete Permanently" }),
+  ).toHaveCount(0);
+  await capture(page, "empty-trash-no-access", testInfo.project.name);
+});
+
+test("empty-trash refused", async ({ page }, testInfo) => {
+  await installBackend(page, {
+    report: SAMPLE_REPORT_WITH_TRASH,
+    emptyTrashReject:
+      "refused: the Trash changed since you reviewed it. Review it again before emptying.",
+  });
+  await openEmptyTrash(page);
+  await page.getByRole("checkbox", { name: ACK }).check();
+  await page.getByRole("button", { name: "Delete Permanently" }).click();
+  await expect(page.getByRole("alert")).toContainText("changed since");
+  await expect(page.getByRole("alert")).not.toContainText("refused:");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  // The tick was given for figures that no longer hold; it must be given again.
+  await expect(page.getByRole("checkbox", { name: ACK })).not.toBeChecked();
+  await expect(
+    page.getByRole("button", { name: "Delete Permanently" }),
+  ).toBeDisabled();
+  await capture(page, "empty-trash-refused", testInfo.project.name);
 });
 
 test("scan error", async ({ page }, testInfo) => {

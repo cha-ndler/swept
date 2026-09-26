@@ -568,12 +568,16 @@ test("empty_trash carries the acknowledgement and the previewed figures", async 
   await openEmptyTrash(page);
   await page.getByRole("checkbox", { name: ACK }).check();
   await page.getByRole("button", { name: "Delete Permanently" }).click();
-  await expect(page.getByText(/permanently deleted/i)).toBeVisible();
-  const args = await page.evaluate(
-    () =>
-      (window as unknown as Record<string, { request: EmptyTrashRequest }>)
-        .__emptyTrashArgs,
-  );
+  // Wait on the request itself. "permanently deleted" also appears in the
+  // dialog's own acknowledgement, so waiting on that text raced the click.
+  const read = () =>
+    page.evaluate(
+      () =>
+        (window as unknown as Record<string, { request: EmptyTrashRequest }>)
+          .__emptyTrashArgs,
+    );
+  await expect.poll(read).toBeTruthy();
+  const args = await read();
   const c = SAMPLE_TRASH_CONTENTS;
   expect(args.request).toEqual({
     expected: { count: c.files + c.folders, bytes: c.bytes },

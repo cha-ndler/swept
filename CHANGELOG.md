@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-26
+
+**Empty the Trash — deliberately, as a second step.** Cleanup has always moved
+files to the Trash so a mistake can be put back, and selecting the Trash itself
+only "moved it to the Trash" again, freeing nothing while reporting its whole
+size. The Trash now has its own row and its own button: empty it when you're
+sure, after ticking a box that says it cannot be undone. It is the first thing
+Swept can do that is not recoverable, and it is built to be hard to do by
+accident.
+
+Still unsigned and published by an individual; `docs/LEGAL.md` says why. Check
+the `.sha256` beside each download before you open it.
+
 ### Added
 - **Empty Trash, as a separate second step.** Cleanup still only moves files
   to the Trash, so anything can be put back. When you're sure, *Empty Trash…*
